@@ -65,3 +65,13 @@ class ActivityService:
 
     def get_activity(self, activity_id: str) -> dict | None:
         return self._activity_repo.get(activity_id)
+
+    def delete_activity(self, user: User, activity_id: str) -> bool:
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+            raise PermissionDenied("仅组织者或管理员可删除活动")
+        if user.role != Role.SUPER_ADMIN and activity["owner_id"] != user.id:
+            raise PermissionDenied("无权删除该活动")
+        return self._activity_repo.delete(activity_id)
