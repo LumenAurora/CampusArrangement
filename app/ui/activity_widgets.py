@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QMessageBox,
 )
 
 from app.application.activity_service import ActivityService
@@ -49,6 +50,16 @@ class ActivityPanel(QWidget):
         activity_list_layout = QVBoxLayout()
         activity_list_layout.setContentsMargins(12, 12, 12, 12)
         activity_list_layout.addWidget(self._activity_table)
+
+        # 删除按钮
+        delete_btn_layout = QHBoxLayout()
+        delete_btn_layout.addStretch(1)
+        self._delete_btn = QPushButton("删除选中活动")
+        self._delete_btn.setObjectName("dangerButton")
+        self._delete_btn.clicked.connect(self._delete_activity)
+        delete_btn_layout.addWidget(self._delete_btn)
+        activity_list_layout.addLayout(delete_btn_layout)
+
         self._activity_list_group.setLayout(activity_list_layout)
 
         self._slot_list_group = QGroupBox("时段列表")
@@ -226,13 +237,42 @@ class ActivityPanel(QWidget):
                 signup_start=self._signup_start.dateTime().toPython(),
                 signup_end=self._signup_end.dateTime().toPython(),
                 details=self._details.text().strip(),
-                signup_mode=self._signup_mode.currentData(),
-                allocation_mode=self._allocation_mode.currentData(),
+                signup_mode=SignupMode(self._signup_mode.currentData()),
+                allocation_mode=AllocationMode(self._allocation_mode.currentData()),
             )
             self.refresh()
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._activity_message, "error", str(exc))
+
+    def _delete_activity(self) -> None:
+        # 获取当前选中的活动
+        selected_rows = self._activity_table.selectedItems()
+        if not selected_rows:
+            QMessageBox.warning(self, "提示", "请先选择要删除的活动")
+            return
+
+        # 获取选中行的活动 ID（第 0 列）
+        row = selected_rows[0].row()
+        activity_id = self._activity_table.item(row, 0).text()
+        activity_name = self._activity_table.item(row, 1).text()
+
+        # 确认删除
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除活动「{activity_name}」吗？\n删除后无法恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                self._service.delete_activity(user=self._user, activity_id=activity_id)
+                self.refresh()
+                set_banner(self._activity_message, "success", f"已删除活动：{activity_name}")
+            except (PermissionDenied, ValidationError) as exc:
+                set_banner(self._activity_message, "error", str(exc))
 
     def _add_slot(self) -> None:
         try:

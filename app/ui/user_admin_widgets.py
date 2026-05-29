@@ -13,10 +13,11 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QMessageBox,
 )
 
 from app.application.user_service import UserService
-from app.domain.exceptions import ValidationError
+from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import Role, User
 from app.infrastructure.repositories import UserRepository
 from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
@@ -39,6 +40,16 @@ class UserAdminPanel(QWidget):
         list_layout = QVBoxLayout()
         list_layout.setContentsMargins(12, 12, 12, 12)
         list_layout.addWidget(self._table)
+
+        # 删除按钮
+        delete_btn_layout = QHBoxLayout()
+        delete_btn_layout.addStretch(1)
+        self._delete_btn = QPushButton("删除选中用户")
+        self._delete_btn.setObjectName("dangerButton")
+        self._delete_btn.clicked.connect(self._delete_user)
+        delete_btn_layout.addWidget(self._delete_btn)
+        list_layout.addLayout(delete_btn_layout)
+
         list_group.setLayout(list_layout)
 
         header = make_page_header("用户管理", "创建账号并查看用户列表")
@@ -119,9 +130,49 @@ class UserAdminPanel(QWidget):
             user = self._user_service.register(
                 username=self._username.text().strip(),
                 password=self._password.text(),
-                role=self._role.currentData(),
+                role=Role(self._role.currentData()),
             )
             set_banner(self._message, "success", f"已创建用户：{user.username}")
             self.refresh()
-        except ValidationError as exc:
+        except (PermissionDenied, ValidationError) as exc:
             set_banner(self._message, "error", str(exc))
+
+    def _delete_user(self) -> None:
+        if self._current_user.role != Role.SUPER_ADMIN:
+            set_banner(self._message, "error", "无权限删除用户")
+            return
+
+        # 获取当前选中的用户
+        selected_rows = self._table.selectedItems()
+        if not selected_rows:
+            QMessageBox.warning(self, "提示", "请先选择要删除的用户")
+            return
+
+        # 获取选中行的用户名
+        row = selected_rows[0].row()
+        username = self._table.item(row, 0).text()
+
+        # 从数据库获取用户 ID
+        user_data = self._user_repo.get_by_username(username)
+        if not user_data:
+            QMessageBox.warning(self, "错误", "用户不存在")
+            return
+
+        user_id = user_data["id"]
+
+        # 确认删除
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除用户「{username}」吗？\n删除后无法恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                self._user_service.delete_user(current_user=self._current_user, user_id=user_id)
+                set_banner(self._message, "success", f"已删除用户：{username}")
+                self.refresh()
+            except (PermissionDenied, ValidationError) as exc:
+                set_banner(self._message, "error", str(exc))

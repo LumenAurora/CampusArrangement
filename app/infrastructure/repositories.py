@@ -32,6 +32,15 @@ class UserRepository:
         finally:
             conn.close()
 
+    def delete(self, user_id: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
     def create(self, user, password_hash: str) -> None:
         conn = get_connection()
         try:
@@ -90,6 +99,15 @@ class ActivityRepository:
         try:
             row = conn.execute("SELECT COUNT(*) AS total FROM activities").fetchone()
             return int(row["total"]) if row else 0
+        finally:
+            conn.close()
+
+    def delete(self, activity_id: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.execute("DELETE FROM activities WHERE id = ?", (activity_id,))
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             conn.close()
 
