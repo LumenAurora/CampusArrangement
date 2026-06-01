@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,8 +37,9 @@ class NavigationWindow(QMainWindow):
         self._nav = QListWidget()
         self._nav.setObjectName("navList")
         self._nav.setIconSize(QSize(18, 18))
-        self._nav.setFixedWidth(200)
+        self._nav.setFixedWidth(220)
         self._nav.setSpacing(2)
+        self._nav.setFocusPolicy(Qt.NoFocus)
 
         self._stack = QStackedWidget()
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
@@ -48,13 +49,13 @@ class NavigationWindow(QMainWindow):
 
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(12)
+        body_layout.setSpacing(16)
         body_layout.addWidget(self._nav)
         body_layout.addWidget(self._stack, 1)
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(16, 16, 16, 16)
-        root_layout.setSpacing(12)
+        root_layout.setSpacing(16)
         root_layout.addWidget(top_bar)
         root_layout.addLayout(body_layout)
 
@@ -125,7 +126,7 @@ class NavigationWindow(QMainWindow):
         view_menu.addAction(compact_action)
 
         about_action = QAction("关于", self)
-        about_action.triggered.connect(lambda: self.statusBar().showMessage("校园报名与排班系统 · 商业级桌面应用"))
+        about_action.triggered.connect(lambda: self.statusBar().showMessage("Campus Scheduler · 校园报名与排班系统"))
         help_menu.addAction(about_action)
 
     def _apply_default_page(self) -> None:
@@ -158,17 +159,17 @@ class NavigationWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("topBar")
         layout = QHBoxLayout()
-        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setContentsMargins(20, 12, 20, 12)
         layout.setSpacing(12)
-
-        title = QLabel("校园报名与排班系统")
-        title.setObjectName("appTitle")
-        subtitle = QLabel("Campus Scheduler")
-        subtitle.setObjectName("appSubtitle")
 
         title_col = QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
         title_col.setSpacing(2)
+
+        title = QLabel("Campus Scheduler")
+        title.setObjectName("appTitle")
+        subtitle = QLabel("校园报名与排班系统")
+        subtitle.setObjectName("appSubtitle")
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
 

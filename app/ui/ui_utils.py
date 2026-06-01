@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
-from app.ui.style import THEME_DARK, get_theme
+from app.ui.style import get_palette
 
 
 def configure_table(table: QTableWidget) -> None:
@@ -15,6 +13,7 @@ def configure_table(table: QTableWidget) -> None:
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     table.verticalHeader().setVisible(False)
     table.setShowGrid(False)
+    table.verticalHeader().setDefaultSectionSize(40)
     header = table.horizontalHeader()
     header.setSectionResizeMode(QHeaderView.Stretch)
 
@@ -22,8 +21,8 @@ def configure_table(table: QTableWidget) -> None:
 def make_page_header(title: str, subtitle: str | None = None) -> QWidget:
     container = QWidget()
     layout = QVBoxLayout()
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(2)
+    layout.setContentsMargins(0, 0, 0, 4)
+    layout.setSpacing(4)
     title_label = QLabel(title)
     title_label.setObjectName("pageTitle")
     layout.addWidget(title_label)
@@ -36,6 +35,8 @@ def make_page_header(title: str, subtitle: str | None = None) -> QWidget:
 
 
 def format_datetime(value: str) -> str:
+    from datetime import datetime
+
     try:
         dt = datetime.fromisoformat(value)
     except ValueError:
@@ -63,25 +64,22 @@ def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数
     item = QTableWidgetItem(message)
     item.setFlags(Qt.ItemIsEnabled)
     item.setTextAlignment(Qt.AlignCenter)
+    p = get_palette()
+    item.setForeground(QBrush(QColor(p.text_tertiary)))
     table.setItem(0, 0, item)
 
 
 def make_status_item(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setTextAlignment(Qt.AlignCenter)
-    dark = get_theme() == THEME_DARK
-    if text == "报名中":
-        fg = QColor("#bdeccf" if dark else "#1f6b3d")
-        bg = QColor("#223428" if dark else "#e7f6ed")
-    elif text == "已结束":
-        fg = QColor("#f2b6b6" if dark else "#8f1d1d")
-        bg = QColor("#3a1f22" if dark else "#fdeaea")
-    elif text == "未开始":
-        fg = QColor("#e6e9f0" if dark else "#2b2f36")
-        bg = QColor("#2b3244" if dark else "#eef2f8")
-    else:
-        fg = QColor("#e6e9f0" if dark else "#2b2f36")
-        bg = QColor("#2b3244" if dark else "#eef2f8")
-    item.setForeground(QBrush(fg))
-    item.setBackground(QBrush(bg))
+    p = get_palette()
+    color_map = {
+        "报名中": (p.success_fg, p.success_bg),
+        "已结束": (p.error_fg, p.error_bg),
+        "已归档": (p.text_tertiary, p.bg_sidebar),
+        "草稿": (p.warning_fg, p.warning_bg),
+    }
+    fg, bg = color_map.get(text, (p.text_secondary, p.bg_base))
+    item.setForeground(QBrush(QColor(fg)))
+    item.setBackground(QBrush(QColor(bg)))
     return item

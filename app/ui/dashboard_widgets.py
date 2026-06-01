@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.domain.models import User
-from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, ScheduleRepository, TimeSlotRepository
-from app.ui.ui_utils import make_page_header
+from app.infrastructure.repositories import (
+    ActivityRepository,
+    RegistrationRepository,
+    ScheduleRepository,
+    TimeSlotRepository,
+)
+from app.ui.style import get_palette
 
 
 class DashboardPanel(QWidget):
@@ -24,14 +31,25 @@ class DashboardPanel(QWidget):
         self._schedule_repo = schedule_repo
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
-        layout.addWidget(make_page_header("概览", "关键指标与最新动态"))
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+
+        # 标题
+        header = QLabel("概览")
+        header.setObjectName("pageTitle")
+        layout.addWidget(header)
+
+        desc = QLabel("关键指标与最新动态")
+        desc.setObjectName("pageSubtitle")
+        layout.addWidget(desc)
+
+        layout.addSpacing(8)
 
         self._grid = QGridLayout()
-        self._grid.setHorizontalSpacing(12)
-        self._grid.setVerticalSpacing(12)
+        self._grid.setHorizontalSpacing(16)
+        self._grid.setVerticalSpacing(16)
         layout.addLayout(self._grid)
+        layout.addStretch(1)
         self.setLayout(layout)
 
         self.refresh()
@@ -42,6 +60,7 @@ class DashboardPanel(QWidget):
             if item and item.widget():
                 item.widget().setParent(None)
 
+        icons = ["📋", "⏰", "📝", "📊"]
         if self._user.role.value in {"super_admin", "organizer"}:
             cards = [
                 ("活动总数", self._activity_repo.count_all()),
@@ -58,22 +77,40 @@ class DashboardPanel(QWidget):
             ]
 
         for index, (label, value) in enumerate(cards):
-            card = _StatCard(label, value)
+            icon = icons[index % len(icons)]
+            card = _StatCard(icon, label, value)
             row, col = divmod(index, 2)
             self._grid.addWidget(card, row, col)
 
 
 class _StatCard(QFrame):
-    def __init__(self, label: str, value: int) -> None:
+    """Claude 风格统计卡片 — 带图标和大数字。"""
+
+    def __init__(self, icon: str, label: str, value: int) -> None:
         super().__init__()
         self.setObjectName("statCard")
+        self.setFixedHeight(120)
+
         layout = QVBoxLayout()
-        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(6)
+
+        # 图标 + 标签
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        icon_label = QLabel(icon)
+        icon_label.setStyleSheet("font-size: 18px; background: transparent;")
+        name_label = QLabel(label)
+        name_label.setObjectName("statLabel")
+        top_row.addWidget(icon_label)
+        top_row.addWidget(name_label)
+        top_row.addStretch(1)
+        layout.addLayout(top_row)
+
+        # 大数字
         value_label = QLabel(str(value))
         value_label.setObjectName("statValue")
-        label_label = QLabel(label)
-        label_label.setObjectName("statLabel")
         layout.addWidget(value_label)
-        layout.addWidget(label_label)
+
+        layout.addStretch(1)
         self.setLayout(layout)
