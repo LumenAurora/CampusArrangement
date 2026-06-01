@@ -92,3 +92,15 @@ class RemoteUserRepository:
 
     def list_all(self) -> list[dict]:
         return self._api.get("/users")
+
+    def get_by_username(self, username: str) -> dict | None:
+        for user in self.list_all():
+            if user["username"] == username:
+                return user
+        return None
+
+    def get_by_id(self, user_id: str) -> dict | None:
+        for user in self.list_all():
+            if user["id"] == user_id:
+                return user
+        return None

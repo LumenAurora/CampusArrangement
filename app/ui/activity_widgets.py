@@ -294,12 +294,15 @@ class ActivityPanel(QWidget):
 
     @staticmethod
     def _format_status(start: str, end: str) -> str:
-        now = datetime.now()
         try:
             start_dt = datetime.fromisoformat(start)
             end_dt = datetime.fromisoformat(end)
         except ValueError:
             return "未知"
+        # 统一去除时区信息，避免 aware/naive 比较报错
+        now = datetime.now().replace(tzinfo=None)
+        start_dt = start_dt.replace(tzinfo=None)
+        end_dt = end_dt.replace(tzinfo=None)
         if now < start_dt:
             return "未开始"
         if start_dt <= now <= end_dt:
