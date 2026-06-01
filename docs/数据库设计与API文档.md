@@ -66,22 +66,28 @@
 - `get_by_username(username)`：按用户名查询用户
 - `list_all()`：返回用户列表
 - `create(user, password_hash)`：创建用户
+- `delete(user_id)`：删除用户
 
 ### 3.2 ActivityRepository
 - `create(activity)`：创建活动
 - `get(activity_id)`：按 ID 查询活动
 - `list_all()`：按报名开始时间倒序返回活动列表
 - `count_all()`：统计活动总数
+- `delete(activity_id)`：删除活动
 
 ### 3.3 TimeSlotRepository
+- `get(slot_id)`：按 ID 查询时段
 - `create(slot)`：创建时段
 - `list_by_activity(activity_id)`：查询活动下所有时段
 - `count_all()`：统计时段总数
 - `lock_slot(slot_id)`：原子扣减名额，成功返回 `True`
+- `release_slot(slot_id)`：释放名额（`used_count` 减 1，不低于 0）
 
 ### 3.4 RegistrationRepository
 - `create(registration)`：创建报名记录
 - `list_pending(activity_id)`：查询待排班报名记录
+- `list_by_user_activity(user_id, activity_id)`：查询用户对某活动的报名记录
+- `update_status(registration_id, status)`：更新报名状态
 - `count_all()`：统计报名总数
 - `count_by_user(user_id)`：统计用户报名数
 
