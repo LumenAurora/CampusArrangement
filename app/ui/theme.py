@@ -1,4 +1,4 @@
-"""Claude 风格主题系统 — 暖色调、圆润、极简。"""
+"""Claude 风格主题系统 — 无界感、暖色调、极简。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class Palette:
     error_bg: str
     warning_fg: str
     warning_bg: str
-    # 边框
+    # 边框（仅用于输入框聚焦等必要场景）
     border: str
     border_light: str
     # 导航
@@ -57,7 +57,7 @@ LIGHT = Palette(
     bg_card="#ffffff",
     bg_elevated="#ffffff",
     bg_sidebar="#f5f4f2",
-    bg_input="#ffffff",
+    bg_input="#f5f4f2",
     bg_input_focus="#ffffff",
     text_primary="#1a1a1a",
     text_secondary="#6b6b6b",
@@ -86,16 +86,16 @@ LIGHT = Palette(
     btn_secondary_fg="#1a1a1a",
     btn_disabled_bg="#e8e8e8",
     btn_disabled_fg="#b0b0b0",
-    btn_danger_bg="#ffebee",
-    btn_danger_hover="#ffcdd2",
+    btn_danger_bg="#fff0ee",
+    btn_danger_hover="#ffe0da",
 )
 
 DARK = Palette(
     bg_base="#1a1a1a",
-    bg_card="#262626",
+    bg_card="#242424",
     bg_elevated="#2e2e2e",
-    bg_sidebar="#222222",
-    bg_input="#2e2e2e",
+    bg_sidebar="#202020",
+    bg_input="#2a2a2a",
     bg_input_focus="#333333",
     text_primary="#ececec",
     text_secondary="#a0a0a0",
@@ -130,13 +130,14 @@ DARK = Palette(
 
 
 def build_stylesheet(p: Palette) -> str:
-    """从 Palette 生成完整 QSS。"""
+    """从 Palette 生成无界风格 QSS。"""
     return f"""
 /* ===== 全局 ===== */
 * {{
     font-family: "SF Pro Text", "Helvetica Neue", ".AppleSystemUIFont", "Segoe UI", sans-serif;
     font-size: 13px;
     color: {p.text_primary};
+    border: none;
 }}
 
 QMainWindow, QDialog {{
@@ -151,8 +152,8 @@ QLabel {{
 /* ===== 菜单栏 ===== */
 QMenuBar {{
     background: {p.bg_base};
-    border-bottom: 1px solid {p.border};
-    padding: 2px 0;
+    border: none;
+    padding: 4px 8px;
 }}
 QMenuBar::item {{
     padding: 6px 12px;
@@ -163,13 +164,13 @@ QMenuBar::item:selected {{
 }}
 QMenu {{
     background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 10px;
-    padding: 4px;
+    border: none;
+    border-radius: 12px;
+    padding: 6px;
 }}
 QMenu::item {{
-    padding: 8px 24px 8px 12px;
-    border-radius: 6px;
+    padding: 8px 24px 8px 14px;
+    border-radius: 8px;
 }}
 QMenu::item:selected {{
     background: {p.accent_soft};
@@ -178,54 +179,32 @@ QMenu::item:selected {{
 
 /* ===== 顶栏 ===== */
 QFrame#topBar {{
-    background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 14px;
+    background: transparent;
 }}
 QLabel#appTitle {{
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 700;
     color: {p.text_primary};
     letter-spacing: -0.3px;
 }}
 QLabel#appSubtitle {{
-    font-size: 12px;
+    font-size: 11px;
     color: {p.text_tertiary};
-    letter-spacing: 0.5px;
 }}
 QLabel#userBadge {{
     background: {p.accent_soft};
     color: {p.accent};
-    border: none;
     border-radius: 20px;
     padding: 5px 14px;
     font-size: 12px;
     font-weight: 600;
 }}
 
-/* ===== 统计卡片 ===== */
-QFrame#statCard {{
-    background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 14px;
-}}
-QLabel#statValue {{
-    font-size: 28px;
-    font-weight: 700;
-    color: {p.text_primary};
-    letter-spacing: -1px;
-}}
-QLabel#statLabel {{
-    font-size: 12px;
-    color: {p.text_secondary};
-    letter-spacing: 0.3px;
-}}
-
 /* ===== 侧边导航 ===== */
 QListWidget#navList {{
     background: {p.bg_sidebar};
-    border: 1px solid {p.border};
-    border-radius: 14px;
+    border: none;
+    border-radius: 16px;
     outline: none;
 }}
 QListWidget#navList::item {{
@@ -249,8 +228,8 @@ QListWidget#navList::item:selected {{
 /* ===== 分组框 ===== */
 QGroupBox {{
     background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 14px;
+    border: none;
+    border-radius: 16px;
     margin-top: 14px;
     padding-top: 16px;
 }}
@@ -261,20 +240,18 @@ QGroupBox::title {{
     color: {p.text_secondary};
     font-weight: 600;
     font-size: 12px;
-    letter-spacing: 0.3px;
 }}
 
 /* ===== 输入框 ===== */
 QLineEdit, QComboBox, QDateTimeEdit, QSpinBox {{
     background: {p.bg_input};
     color: {p.text_primary};
-    border: 1.5px solid {p.border};
+    border: none;
     border-radius: 10px;
     padding: 8px 12px;
-    selection-background-color: {p.accent_soft};
 }}
 QLineEdit:focus, QComboBox:focus, QDateTimeEdit:focus, QSpinBox:focus {{
-    border-color: {p.accent};
+    background: {p.bg_input_focus};
 }}
 QComboBox::drop-down {{
     border: none;
@@ -283,8 +260,8 @@ QComboBox::drop-down {{
 QComboBox QAbstractItemView {{
     background: {p.bg_card};
     color: {p.text_primary};
-    border: 1px solid {p.border};
-    border-radius: 10px;
+    border: none;
+    border-radius: 12px;
     padding: 4px;
     selection-background-color: {p.accent_soft};
     selection-color: {p.accent};
@@ -320,7 +297,6 @@ QPushButton#primaryButton:hover {{
 QPushButton#secondaryButton {{
     background: {p.btn_secondary_bg};
     color: {p.btn_secondary_fg};
-    border: 1px solid {p.border};
 }}
 QPushButton#secondaryButton:hover {{
     background: {p.btn_secondary_hover};
@@ -328,24 +304,35 @@ QPushButton#secondaryButton:hover {{
 QPushButton#dangerButton {{
     background: {p.btn_danger_bg};
     color: {p.error_fg};
-    border: 1px solid transparent;
 }}
 QPushButton#dangerButton:hover {{
     background: {p.btn_danger_hover};
+}}
+QPushButton#sidebarToggle {{
+    background: transparent;
+    color: {p.text_secondary};
+    font-size: 18px;
+    padding: 8px;
+    border-radius: 8px;
+    min-width: 36px;
+    max-width: 36px;
+}}
+QPushButton#sidebarToggle:hover {{
+    background: {p.nav_hover_bg};
+    color: {p.text_primary};
 }}
 
 /* ===== 表格 ===== */
 QTableWidget {{
     background: {p.bg_card};
     alternate-background-color: {p.table_alt_bg};
-    border: 1px solid {p.border};
-    border-radius: 10px;
+    border: none;
+    border-radius: 12px;
     gridline-color: transparent;
 }}
 QTableView::item {{
     color: {p.text_primary};
     padding: 6px 8px;
-    border-bottom: 1px solid {p.border_light};
 }}
 QTableView::item:selected {{
     background: {p.table_selected_bg};
@@ -355,30 +342,10 @@ QHeaderView::section {{
     background: {p.table_header_bg};
     padding: 8px 10px;
     border: none;
-    border-bottom: 1px solid {p.border};
     font-weight: 600;
     font-size: 11px;
     letter-spacing: 0.5px;
     color: {p.text_tertiary};
-    text-transform: uppercase;
-}}
-
-/* ===== 标签页 ===== */
-QTabWidget::pane {{
-    background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 12px;
-}}
-QTabBar::tab {{
-    background: transparent;
-    padding: 8px 16px;
-    border-bottom: 2px solid transparent;
-    color: {p.text_secondary};
-    font-weight: 500;
-}}
-QTabBar::tab:selected {{
-    color: {p.accent};
-    border-bottom-color: {p.accent};
 }}
 
 /* ===== 页面标题 ===== */
@@ -391,14 +358,29 @@ QLabel#pageTitle {{
 QLabel#pageSubtitle {{
     font-size: 13px;
     color: {p.text_secondary};
-    letter-spacing: 0.2px;
+}}
+
+/* ===== 统计卡片 ===== */
+QFrame#statCard {{
+    background: {p.bg_card};
+    border: none;
+    border-radius: 16px;
+}}
+QLabel#statValue {{
+    font-size: 28px;
+    font-weight: 700;
+    color: {p.text_primary};
+    letter-spacing: -1px;
+}}
+QLabel#statLabel {{
+    font-size: 12px;
+    color: {p.text_secondary};
 }}
 
 /* ===== 横幅消息 ===== */
 QLabel#bannerSuccess {{
     background: {p.success_bg};
     color: {p.success_fg};
-    border: 1px solid {p.success_fg}20;
     border-radius: 10px;
     padding: 8px 14px;
     font-weight: 500;
@@ -406,35 +388,31 @@ QLabel#bannerSuccess {{
 QLabel#bannerError {{
     background: {p.error_bg};
     color: {p.error_fg};
-    border: 1px solid {p.error_fg}20;
     border-radius: 10px;
     padding: 8px 14px;
     font-weight: 500;
 }}
 QLabel#bannerInfo {{
-    background: {p.bg_card};
+    background: transparent;
     color: {p.text_secondary};
-    border: 1px solid {p.border};
-    border-radius: 10px;
     padding: 8px 14px;
 }}
 
 /* ===== 状态栏 ===== */
 QStatusBar {{
-    background: {p.bg_base};
+    background: transparent;
     color: {p.text_tertiary};
-    border-top: 1px solid {p.border};
 }}
 
 /* ===== 滚动条 ===== */
 QScrollBar:vertical {{
     background: transparent;
-    width: 8px;
+    width: 6px;
     margin: 0;
 }}
 QScrollBar::handle:vertical {{
     background: {p.border};
-    border-radius: 4px;
+    border-radius: 3px;
     min-height: 32px;
 }}
 QScrollBar::handle:vertical:hover {{
@@ -447,19 +425,19 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
 
+/* ===== 登录卡片 ===== */
+QFrame#loginCard {{
+    background: {p.bg_card};
+    border: none;
+    border-radius: 24px;
+}}
+
 /* ===== 工具提示 ===== */
 QToolTip {{
     background: {p.bg_card};
     color: {p.text_primary};
-    border: 1px solid {p.border};
+    border: none;
     border-radius: 8px;
     padding: 6px 10px;
-}}
-
-/* ===== 登录卡片 ===== */
-QFrame#loginCard {{
-    background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 20px;
 }}
 """
