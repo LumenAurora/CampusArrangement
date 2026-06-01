@@ -75,3 +75,39 @@ class ActivityService:
         if user.role != Role.SUPER_ADMIN and activity["owner_id"] != user.id:
             raise PermissionDenied("无权删除该活动")
         return self._activity_repo.delete(activity_id)
+
+    def _check_owner_or_admin(self, user: User, activity: dict) -> None:
+        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+            raise PermissionDenied("仅组织者或管理员可操作")
+        if user.role != Role.SUPER_ADMIN and activity["owner_id"] != user.id:
+            raise PermissionDenied("无权操作该活动")
+
+    def publish_activity(self, user: User, activity_id: str) -> None:
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        self._check_owner_or_admin(user, activity)
+        if activity["status"] != ActivityStatus.DRAFT.value:
+            raise ValidationError("只有草稿状态的活动可以发布")
+        slots = self._slot_repo.list_by_activity(activity_id)
+        if not slots:
+            raise ValidationError("请先添加至少一个时段再发布")
+        self._activity_repo.update_status(activity_id, ActivityStatus.OPEN)
+
+    def close_activity(self, user: User, activity_id: str) -> None:
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        self._check_owner_or_admin(user, activity)
+        if activity["status"] != ActivityStatus.OPEN.value:
+            raise ValidationError("只有报名中的活动可以结束报名")
+        self._activity_repo.update_status(activity_id, ActivityStatus.CLOSED)
+
+    def archive_activity(self, user: User, activity_id: str) -> None:
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        self._check_owner_or_admin(user, activity)
+        if activity["status"] != ActivityStatus.CLOSED.value:
+            raise ValidationError("只有已结束的活动可以归档")
+        self._activity_repo.update_status(activity_id, ActivityStatus.ARCHIVED)

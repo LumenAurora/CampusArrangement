@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.domain.models import AllocationMode
+from app.domain.models import AllocationMode, RegistrationStatus
 from app.domain.services import schedule_registrations
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, ScheduleRepository, TimeSlotRepository
 
@@ -29,6 +29,12 @@ class SchedulingService:
             mode=allocation_mode,
         )
         self._schedule_repo.clear_for_activity(activity_id)
+        assigned_user_ids: set[str] = set()
         for assignment in assignments:
             self._schedule_repo.create(assignment)
+            assigned_user_ids.add(assignment.user_id)
+        # 将已分配的报名记录标记为 ASSIGNED
+        for reg in registrations:
+            if reg["user_id"] in assigned_user_ids:
+                self._reg_repo.update_status(reg["id"], RegistrationStatus.ASSIGNED)
         return len(assignments)

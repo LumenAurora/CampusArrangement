@@ -51,14 +51,27 @@ class ActivityPanel(QWidget):
         activity_list_layout.setContentsMargins(12, 12, 12, 12)
         activity_list_layout.addWidget(self._activity_table)
 
-        # 删除按钮
-        delete_btn_layout = QHBoxLayout()
-        delete_btn_layout.addStretch(1)
-        self._delete_btn = QPushButton("删除选中活动")
+        # 状态操作按钮
+        status_btn_layout = QHBoxLayout()
+        status_btn_layout.setSpacing(8)
+        self._publish_btn = QPushButton("发布")
+        self._publish_btn.setObjectName("primaryButton")
+        self._publish_btn.clicked.connect(lambda: self._change_status("publish"))
+        self._close_btn = QPushButton("结束报名")
+        self._close_btn.setObjectName("secondaryButton")
+        self._close_btn.clicked.connect(lambda: self._change_status("close"))
+        self._archive_btn = QPushButton("归档")
+        self._archive_btn.setObjectName("secondaryButton")
+        self._archive_btn.clicked.connect(lambda: self._change_status("archive"))
+        self._delete_btn = QPushButton("删除")
         self._delete_btn.setObjectName("dangerButton")
         self._delete_btn.clicked.connect(self._delete_activity)
-        delete_btn_layout.addWidget(self._delete_btn)
-        activity_list_layout.addLayout(delete_btn_layout)
+        status_btn_layout.addWidget(self._publish_btn)
+        status_btn_layout.addWidget(self._close_btn)
+        status_btn_layout.addWidget(self._archive_btn)
+        status_btn_layout.addStretch(1)
+        status_btn_layout.addWidget(self._delete_btn)
+        activity_list_layout.addLayout(status_btn_layout)
 
         self._activity_list_group.setLayout(activity_list_layout)
 
@@ -99,6 +112,7 @@ class ActivityPanel(QWidget):
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_slots)
+        self._activity_table.itemSelectionChanged.connect(self._update_status_buttons)
         self.refresh()
 
     def _init_activity_form(self) -> None:
@@ -193,11 +207,16 @@ class ActivityPanel(QWidget):
             }.get(allocation_mode, "志愿优先")
             self._activity_table.setItem(row_index, 4, QTableWidgetItem(signup_mode_text))
             self._activity_table.setItem(row_index, 5, QTableWidgetItem(allocation_text))
-            status_text = self._format_status(activity["signup_start"], activity["signup_end"])
+            status_text = self._format_status(
+                activity.get("status", "draft"),
+                activity["signup_start"],
+                activity["signup_end"],
+            )
             self._activity_table.setItem(row_index, 6, make_status_item(status_text))
             self._activity_selector.addItem(activity["name"], activity["id"])
 
         self._activity_table.setColumnHidden(0, True)
+        self._update_status_buttons()
         self._load_slots()
 
     def _load_slots(self) -> None:
@@ -274,6 +293,53 @@ class ActivityPanel(QWidget):
             except (PermissionDenied, ValidationError) as exc:
                 set_banner(self._activity_message, "error", str(exc))
 
+    def _change_status(self, action: str) -> None:
+        selected_rows = self._activity_table.selectedItems()
+        if not selected_rows:
+            QMessageBox.warning(self, "提示", "请先选择要操作的活动")
+            return
+        row = selected_rows[0].row()
+        activity_id = self._activity_table.item(row, 0).text()
+        activity_name = self._activity_table.item(row, 1).text()
+        action_map = {"publish": "发布", "close": "结束报名", "archive": "归档"}
+        action_text = action_map.get(action, action)
+        reply = QMessageBox.question(
+            self,
+            "确认操作",
+            f"确定要{action_text}活动「{activity_name}」吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            if action == "publish":
+                self._service.publish_activity(user=self._user, activity_id=activity_id)
+            elif action == "close":
+                self._service.close_activity(user=self._user, activity_id=activity_id)
+            elif action == "archive":
+                self._service.archive_activity(user=self._user, activity_id=activity_id)
+            self.refresh()
+            set_banner(self._activity_message, "success", f"活动「{activity_name}」已{action_text}")
+        except (PermissionDenied, ValidationError) as exc:
+            set_banner(self._activity_message, "error", str(exc))
+
+    def _update_status_buttons(self) -> None:
+        selected_rows = self._activity_table.selectedItems()
+        if not selected_rows:
+            self._publish_btn.setEnabled(False)
+            self._close_btn.setEnabled(False)
+            self._archive_btn.setEnabled(False)
+            self._delete_btn.setEnabled(False)
+            return
+        row = selected_rows[0].row()
+        status_item = self._activity_table.item(row, 6)
+        status_text = status_item.text() if status_item else ""
+        self._delete_btn.setEnabled(True)
+        self._publish_btn.setEnabled(status_text == "草稿")
+        self._close_btn.setEnabled(status_text == "报名中")
+        self._archive_btn.setEnabled(status_text == "已结束")
+
     def _add_slot(self) -> None:
         try:
             set_banner(self._slot_message, "info", "")
@@ -293,15 +359,11 @@ class ActivityPanel(QWidget):
             set_banner(self._slot_message, "error", str(exc))
 
     @staticmethod
-    def _format_status(start: str, end: str) -> str:
-        now = datetime.now()
-        try:
-            start_dt = datetime.fromisoformat(start)
-            end_dt = datetime.fromisoformat(end)
-        except ValueError:
-            return "未知"
-        if now < start_dt:
-            return "未开始"
-        if start_dt <= now <= end_dt:
-            return "报名中"
-        return "已结束"
+    def _format_status(status: str, start: str, end: str) -> str:
+        status_map = {
+            "draft": "草稿",
+            "open": "报名中",
+            "closed": "已结束",
+            "archived": "已归档",
+        }
+        return status_map.get(status, "未知")

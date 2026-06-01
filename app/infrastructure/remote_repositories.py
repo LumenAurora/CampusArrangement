@@ -43,6 +43,9 @@ class RemoteActivityRepository:
     def count_all(self) -> int:
         return int(self._metrics.get_overview().get("activities", 0))
 
+    def update_status(self, activity_id: str, status) -> None:
+        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"status": status.value if hasattr(status, 'value') else status})
+
 
 class RemoteTimeSlotRepository:
     def __init__(self, api_client: ApiClient, metrics_cache: MetricsCache) -> None:
@@ -92,3 +95,15 @@ class RemoteUserRepository:
 
     def list_all(self) -> list[dict]:
         return self._api.get("/users")
+
+    def get_by_username(self, username: str) -> dict | None:
+        for user in self.list_all():
+            if user["username"] == username:
+                return user
+        return None
+
+    def get_by_id(self, user_id: str) -> dict | None:
+        for user in self.list_all():
+            if user["id"] == user_id:
+                return user
+        return None

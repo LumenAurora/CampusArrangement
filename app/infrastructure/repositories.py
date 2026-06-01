@@ -111,8 +111,27 @@ class ActivityRepository:
         finally:
             conn.close()
 
+    def update_status(self, activity_id: str, status: ActivityStatus) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE activities SET status = ? WHERE id = ?",
+                (status.value, activity_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class TimeSlotRepository:
+    def get(self, slot_id: str) -> dict | None:
+        conn = get_connection()
+        try:
+            row = conn.execute("SELECT * FROM slots WHERE id = ?", (slot_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     def create(self, slot: TimeSlot) -> None:
         conn = get_connection()
         try:
@@ -157,6 +176,13 @@ class TimeSlotRepository:
                 return False
             conn.execute("UPDATE slots SET used_count = used_count + 1 WHERE id = ?", (slot_id,))
             return True
+
+    def release_slot(self, slot_id: str) -> None:
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE slots SET used_count = MAX(used_count - 1, 0) WHERE id = ?",
+                (slot_id,),
+            )
 
     @staticmethod
     def to_models(rows: Iterable[dict]) -> list[TimeSlot]:
@@ -204,6 +230,28 @@ class RegistrationRepository:
                 (activity_id, RegistrationStatus.PENDING.value),
             ).fetchall()
             return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_user_activity(self, user_id: str, activity_id: str) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ?",
+                (user_id, activity_id),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def update_status(self, registration_id: str, status: RegistrationStatus) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE registrations SET status = ? WHERE id = ?",
+                (status.value, registration_id),
+            )
+            conn.commit()
         finally:
             conn.close()
 
