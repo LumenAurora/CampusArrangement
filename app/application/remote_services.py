@@ -27,6 +27,10 @@ class RemoteUserService:
     def authenticate(self, username: str, password: str) -> User:
         return self._api.login(username, password)
 
+    def delete_user(self, current_user: User, user_id: str) -> bool:
+        self._api._request("DELETE", f"/users/{user_id}")
+        return True
+
 
 class RemoteActivityService:
     def __init__(self, api_client: ApiClient) -> None:
@@ -98,6 +102,10 @@ class RemoteActivityService:
 
     def get_activity(self, activity_id: str) -> dict | None:
         return self._api.get(f"/activities/{activity_id}")
+
+    def delete_activity(self, user: User, activity_id: str) -> bool:
+        self._api._request("DELETE", f"/activities/{activity_id}")
+        return True
 
 
 class RemoteRegistrationService:

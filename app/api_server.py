@@ -154,6 +154,17 @@ def create_user(payload: UserCreateRequest, current_user: User = Depends(_get_cu
     return {"id": user.id, "username": user.username, "role": user.role.value}
 
 
+@app.delete("/users/{user_id}")
+def delete_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    _require_roles(current_user, {Role.SUPER_ADMIN})
+    try:
+        user_service.delete_user(current_user, user_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"ok": True}
+
+
 @app.get("/activities")
 def list_activities(_: User = Depends(_get_current_user)) -> list[dict]:
     return activity_service.list_activities()
@@ -193,6 +204,16 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         "signup_mode": activity.signup_mode.value,
         "allocation_mode": activity.allocation_mode.value,
     }
+
+
+@app.delete("/activities/{activity_id}")
+def delete_activity(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    try:
+        activity_service.delete_activity(user=current_user, activity_id=activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"ok": True}
 
 
 @app.get("/activities/{activity_id}/slots")
