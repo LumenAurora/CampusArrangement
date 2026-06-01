@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from app.application.user_service import UserService
 from app.domain.exceptions import ValidationError
-from app.ui.ui_utils import make_page_header, set_banner
+from app.ui.ui_utils import set_banner
 
 
 class LoginDialog(QDialog):
@@ -14,39 +22,100 @@ class LoginDialog(QDialog):
         self._user_service = user_service
         self.user = None
 
-        self.setWindowTitle("登录")
-        self.setMinimumWidth(360)
+        self.setWindowTitle("Campus Scheduler")
+        self.setFixedSize(420, 480)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        # 主卡片
+        card = QFrame()
+        card.setObjectName("loginCard")
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(40, 40, 40, 36)
+        card_layout.setSpacing(0)
+
+        # Logo 区域
+        logo_label = QLabel("🎓")
+        logo_label.setAlignment(Qt.AlignCenter)
+        logo_label.setStyleSheet("font-size: 36px; margin-bottom: 8px;")
+        card_layout.addWidget(logo_label)
+
+        title = QLabel("Campus Scheduler")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 20px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 4px;")
+        card_layout.addWidget(title)
+
+        subtitle = QLabel("校园报名与排班系统")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("font-size: 13px; color: #9a9a9a; margin-bottom: 32px;")
+        card_layout.addWidget(subtitle)
+
+        # 用户名
+        user_label = QLabel("用户名")
+        user_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #6b6b6b; margin-bottom: 6px;")
+        card_layout.addWidget(user_label)
+
         self._username = QLineEdit()
         self._username.setPlaceholderText("输入用户名")
+        self._username.setFixedHeight(42)
+        card_layout.addWidget(self._username)
+
+        card_layout.addSpacing(16)
+
+        # 密码
+        pwd_label = QLabel("密码")
+        pwd_label.setStyleSheet("font-size: 12px; font-weight: 600; color: #6b6b6b; margin-bottom: 6px;")
+        card_layout.addWidget(pwd_label)
+
         self._password = QLineEdit()
         self._password.setPlaceholderText("输入密码")
         self._password.setEchoMode(QLineEdit.Password)
+        self._password.setFixedHeight(42)
+        self._password.returnPressed.connect(self._handle_login)
+        card_layout.addWidget(self._password)
+
+        card_layout.addSpacing(8)
+
+        # 消息
         self._message = QLabel("")
-        set_banner(self._message, "info", "")
+        self._message.setObjectName("bannerInfo")
+        self._message.setWordWrap(True)
+        card_layout.addWidget(self._message)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.addRow("用户名", self._username)
-        form.addRow("密码", self._password)
+        card_layout.addSpacing(20)
 
-        buttons = QHBoxLayout()
-        login_btn = QPushButton("登录")
+        # 登录按钮
+        login_btn = QPushButton("登 录")
+        login_btn.setObjectName("primaryButton")
+        login_btn.setFixedHeight(44)
+        login_btn.setCursor(Qt.PointingHandCursor)
         login_btn.clicked.connect(self._handle_login)
-        buttons.addStretch(1)
-        buttons.addWidget(login_btn)
+        card_layout.addWidget(login_btn)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(24, 24, 24, 20)
-        layout.setSpacing(12)
-        layout.addWidget(make_page_header("欢迎回来", "登录以继续"))
-        layout.addLayout(form)
-        layout.addWidget(self._message)
-        layout.addLayout(buttons)
-        self.setLayout(layout)
+        card_layout.addStretch(1)
+
+        # 底部提示
+        hint = QLabel("默认管理员：admin / admin")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet("font-size: 11px; color: #b0b0b0; margin-top: 16px;")
+        card_layout.addWidget(hint)
+
+        card.setLayout(card_layout)
+
+        # 外层布局
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(card, 0, Qt.AlignCenter)
+        self.setLayout(outer)
+
+        # 回车登录
+        self._username.returnPressed.connect(lambda: self._password.setFocus())
 
     def _handle_login(self) -> None:
         try:
-            user = self._user_service.authenticate(self._username.text().strip(), self._password.text())
+            user = self._user_service.authenticate(
+                self._username.text().strip(),
+                self._password.text(),
+            )
         except ValidationError as exc:
             set_banner(self._message, "error", str(exc))
             return
