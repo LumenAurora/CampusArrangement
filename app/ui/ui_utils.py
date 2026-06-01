@@ -73,12 +73,12 @@ def make_status_item(text: str) -> QTableWidgetItem:
     if text == "报名中":
         fg = QColor("#bdeccf" if dark else "#1f6b3d")
         bg = QColor("#223428" if dark else "#e7f6ed")
-    elif text == "已结束":
+    elif text in ("已结束", "已归档"):
         fg = QColor("#f2b6b6" if dark else "#8f1d1d")
         bg = QColor("#3a1f22" if dark else "#fdeaea")
-    elif text == "未开始":
-        fg = QColor("#e6e9f0" if dark else "#2b2f36")
-        bg = QColor("#2b3244" if dark else "#eef2f8")
+    elif text == "草稿":
+        fg = QColor("#e6c97a" if dark else "#7a6b1f")
+        bg = QColor("#3a3522" if dark else "#faf5e0")
     else:
         fg = QColor("#e6e9f0" if dark else "#2b2f36")
         bg = QColor("#2b3244" if dark else "#eef2f8")

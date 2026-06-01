@@ -43,6 +43,9 @@ class RemoteActivityRepository:
     def count_all(self) -> int:
         return int(self._metrics.get_overview().get("activities", 0))
 
+    def update_status(self, activity_id: str, status) -> None:
+        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"status": status.value if hasattr(status, 'value') else status})
+
 
 class RemoteTimeSlotRepository:
     def __init__(self, api_client: ApiClient, metrics_cache: MetricsCache) -> None:

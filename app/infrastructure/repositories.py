@@ -111,6 +111,17 @@ class ActivityRepository:
         finally:
             conn.close()
 
+    def update_status(self, activity_id: str, status: ActivityStatus) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE activities SET status = ? WHERE id = ?",
+                (status.value, activity_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class TimeSlotRepository:
     def get(self, slot_id: str) -> dict | None:
