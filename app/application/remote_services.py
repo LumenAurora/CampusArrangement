@@ -107,6 +107,15 @@ class RemoteActivityService:
         self._api._request("DELETE", f"/activities/{activity_id}")
         return True
 
+    def publish_activity(self, user: User, activity_id: str) -> None:
+        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "publish"})
+
+    def close_activity(self, user: User, activity_id: str) -> None:
+        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "close"})
+
+    def archive_activity(self, user: User, activity_id: str) -> None:
+        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "archive"})
+
 
 class RemoteRegistrationService:
     def __init__(self, api_client: ApiClient) -> None:

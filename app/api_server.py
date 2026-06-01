@@ -216,6 +216,29 @@ def delete_activity(activity_id: str, current_user: User = Depends(_get_current_
     return {"ok": True}
 
 
+class StatusUpdateRequest(BaseModel):
+    action: str = Field(..., pattern="^(publish|close|archive)$")
+
+
+@app.patch("/activities/{activity_id}/status")
+def update_activity_status(
+    activity_id: str,
+    payload: StatusUpdateRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    try:
+        if payload.action == "publish":
+            activity_service.publish_activity(user=current_user, activity_id=activity_id)
+        elif payload.action == "close":
+            activity_service.close_activity(user=current_user, activity_id=activity_id)
+        elif payload.action == "archive":
+            activity_service.archive_activity(user=current_user, activity_id=activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"ok": True}
+
+
 @app.get("/activities/{activity_id}/slots")
 def list_slots(activity_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
     return slot_repo.list_by_activity(activity_id)
