@@ -37,6 +37,11 @@ class RegistrationStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class CheckInStatus(str, Enum):
+    CHECKED_IN = "checked_in"
+    ABSENT = "absent"
+
+
 @dataclass(frozen=True)
 class User:
     id: str
@@ -59,6 +64,7 @@ class Activity:
     details: str
     signup_mode: SignupMode
     allocation_mode: AllocationMode
+    location: str
 
     @staticmethod
     def create(
@@ -69,6 +75,7 @@ class Activity:
         details: str,
         signup_mode: SignupMode = SignupMode.REALTIME,
         allocation_mode: AllocationMode = AllocationMode.GREEDY,
+        location: str = "",
     ) -> "Activity":
         return Activity(
             id=str(uuid4()),
@@ -80,6 +87,7 @@ class Activity:
             details=details,
             signup_mode=signup_mode,
             allocation_mode=allocation_mode,
+            location=location,
         )
 
 
@@ -143,4 +151,25 @@ class ScheduleResult:
             user_id=user_id,
             slot_id=slot_id,
             created_at=datetime.now(timezone.utc),
+        )
+
+
+@dataclass(frozen=True)
+class CheckIn:
+    id: str
+    activity_id: str
+    user_id: str
+    slot_id: str
+    status: CheckInStatus
+    checked_at: datetime
+
+    @staticmethod
+    def create(activity_id: str, user_id: str, slot_id: str, status: CheckInStatus = CheckInStatus.CHECKED_IN) -> "CheckIn":
+        return CheckIn(
+            id=str(uuid4()),
+            activity_id=activity_id,
+            user_id=user_id,
+            slot_id=slot_id,
+            status=status,
+            checked_at=datetime.now(timezone.utc),
         )

@@ -120,7 +120,7 @@ class NavigationWindow(QMainWindow):
         self._anim2.start()
 
         # 更新按钮箭头
-        self._toggle_btn.setText("☰" if self._nav_expanded else "☰")
+        self._toggle_btn.setText("☰" if self._nav_expanded else "≫")
 
     def attach_menus(self, app: QApplication) -> None:
         menu_bar = self.menuBar()

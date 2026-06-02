@@ -11,11 +11,13 @@ class UserService:
         self._user_repo = user_repo
 
     def register(self, username: str, password: str, role: Role) -> User:
-        if not username or not password:
-            raise ValidationError("用户名和密码不能为空")
-        if self._user_repo.get_by_username(username):
+        if not username or not username.strip():
+            raise ValidationError("用户名不能为空")
+        if not password or len(password) < 4:
+            raise ValidationError("密码长度不能少于4位")
+        if self._user_repo.get_by_username(username.strip()):
             raise ValidationError("用户名已存在")
-        user = User.create(username=username, role=role)
+        user = User.create(username=username.strip(), role=role)
         self._user_repo.create(user, hash_password(password))
         return user
 

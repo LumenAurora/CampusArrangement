@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGroupBox, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 
 from app.application.activity_service import ActivityService
 from app.domain.models import User
@@ -22,6 +22,15 @@ class MyResultsPanel(QWidget):
         group = QGroupBox("排班结果列表")
         group_layout = QVBoxLayout()
         group_layout.setContentsMargins(12, 12, 12, 12)
+
+        btn_layout = QHBoxLayout()
+        refresh_btn = QPushButton("刷新")
+        refresh_btn.setObjectName("secondaryButton")
+        refresh_btn.clicked.connect(self.refresh)
+        btn_layout.addStretch(1)
+        btn_layout.addWidget(refresh_btn)
+        group_layout.addLayout(btn_layout)
+
         group_layout.addWidget(self._table)
         group.setLayout(group_layout)
 

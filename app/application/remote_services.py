@@ -6,6 +6,8 @@ from app.domain.models import (
     Activity,
     ActivityStatus,
     AllocationMode,
+    CheckIn,
+    CheckInStatus,
     Registration,
     RegistrationStatus,
     Role,
@@ -28,7 +30,7 @@ class RemoteUserService:
         return self._api.login(username, password)
 
     def delete_user(self, current_user: User, user_id: str) -> bool:
-        self._api._request("DELETE", f"/users/{user_id}")
+        self._api.post(f"/users/{user_id}/delete", json={})
         return True
 
 
@@ -45,6 +47,7 @@ class RemoteActivityService:
         details: str,
         signup_mode: SignupMode = SignupMode.REALTIME,
         allocation_mode: AllocationMode = AllocationMode.GREEDY,
+        location: str = "",
     ) -> Activity:
         payload = self._api.post(
             "/activities",
@@ -55,6 +58,7 @@ class RemoteActivityService:
                 "details": details,
                 "signup_mode": signup_mode.value,
                 "allocation_mode": allocation_mode.value,
+                "location": location,
             },
         )
         return Activity(
@@ -67,6 +71,7 @@ class RemoteActivityService:
             details=payload["details"],
             signup_mode=SignupMode(payload["signup_mode"]),
             allocation_mode=AllocationMode(payload["allocation_mode"]),
+            location=payload.get("location", ""),
         )
 
     def add_slot(
@@ -97,6 +102,9 @@ class RemoteActivityService:
     def list_activities(self) -> list[dict]:
         return self._api.get("/activities")
 
+    def list_open_activities(self) -> list[dict]:
+        return self._api.get("/activities", params={"status": "open"})
+
     def list_slots(self, activity_id: str) -> list[dict]:
         return self._api.get(f"/activities/{activity_id}/slots")
 
@@ -104,17 +112,17 @@ class RemoteActivityService:
         return self._api.get(f"/activities/{activity_id}")
 
     def delete_activity(self, user: User, activity_id: str) -> bool:
-        self._api._request("DELETE", f"/activities/{activity_id}")
+        self._api.post(f"/activities/{activity_id}/delete", json={})
         return True
 
     def publish_activity(self, user: User, activity_id: str) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "publish"})
+        self._api.post(f"/activities/{activity_id}/status", json={"action": "publish"})
 
     def close_activity(self, user: User, activity_id: str) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "close"})
+        self._api.post(f"/activities/{activity_id}/status", json={"action": "close"})
 
     def archive_activity(self, user: User, activity_id: str) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "archive"})
+        self._api.post(f"/activities/{activity_id}/status", json={"action": "archive"})
 
 
 class RemoteRegistrationService:
@@ -136,6 +144,12 @@ class RemoteRegistrationService:
             created_at=datetime.fromisoformat(payload["created_at"]),
         )
 
+    def cancel(self, user_id: str, registration_id: str) -> None:
+        self._api.post(f"/registrations/{registration_id}/cancel", json={})
+
+    def list_user_registrations(self, user_id: str) -> list[dict]:
+        return self._api.get("/registrations", params={"user_id": user_id})
+
 
 class RemoteSchedulingService:
     def __init__(self, api_client: ApiClient) -> None:
@@ -144,3 +158,31 @@ class RemoteSchedulingService:
     def run(self, activity_id: str) -> int:
         payload = self._api.post("/scheduling/run", json={"activity_id": activity_id})
         return int(payload.get("count", 0))
+
+
+class RemoteCheckInService:
+    def __init__(self, api_client: ApiClient) -> None:
+        self._api = api_client
+
+    def check_in(self, user: User, activity_id: str, user_id: str, slot_id: str) -> CheckIn:
+        payload = self._api.post(
+            "/checkins",
+            json={"activity_id": activity_id, "user_id": user_id, "slot_id": slot_id},
+        )
+        return CheckIn(
+            id=payload["id"],
+            activity_id=payload["activity_id"],
+            user_id=payload["user_id"],
+            slot_id=payload["slot_id"],
+            status=CheckInStatus(payload["status"]),
+            checked_at=datetime.fromisoformat(payload["checked_at"]),
+        )
+
+    def mark_absent(self, user: User, checkin_id: str) -> None:
+        self._api.post(f"/checkins/{checkin_id}/absent", json={})
+
+    def list_by_activity(self, activity_id: str) -> list[dict]:
+        return self._api.get("/checkins", params={"activity_id": activity_id})
+
+    def list_by_user(self, user_id: str) -> list[dict]:
+        return self._api.get("/checkins", params={"user_id": user_id})

@@ -21,9 +21,12 @@ class ActivityService:
         details: str,
         signup_mode: SignupMode = SignupMode.REALTIME,
         allocation_mode: AllocationMode = AllocationMode.GREEDY,
+        location: str = "",
     ) -> Activity:
         if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise PermissionDenied("仅组织者或管理员可创建活动")
+        if not name.strip():
+            raise ValidationError("活动名称不能为空")
         if signup_end <= signup_start:
             raise ValidationError("报名截止时间必须晚于开始时间")
         activity = Activity.create(
@@ -34,6 +37,7 @@ class ActivityService:
             details=details,
             signup_mode=signup_mode,
             allocation_mode=allocation_mode,
+            location=location,
         )
         self._activity_repo.create(activity)
         return activity
@@ -53,12 +57,21 @@ class ActivityService:
             raise PermissionDenied("无权为该活动添加时段")
         if user.role != Role.SUPER_ADMIN and activity["owner_id"] != user.id:
             raise PermissionDenied("无权为该活动添加时段")
+        if activity["status"] != ActivityStatus.DRAFT.value:
+            raise ValidationError("只有草稿状态的活动可以添加时段")
+        if end_time <= start_time:
+            raise ValidationError("时段结束时间必须晚于开始时间")
+        if capacity < 1:
+            raise ValidationError("时段容量必须大于0")
         slot = TimeSlot.create(activity_id=activity_id, start_time=start_time, end_time=end_time, capacity=capacity)
         self._slot_repo.create(slot)
         return slot
 
     def list_activities(self) -> list[dict]:
         return self._activity_repo.list_all()
+
+    def list_open_activities(self) -> list[dict]:
+        return self._activity_repo.list_by_status(ActivityStatus.OPEN)
 
     def list_slots(self, activity_id: str) -> list[dict]:
         return self._slot_repo.list_by_activity(activity_id)
@@ -74,6 +87,8 @@ class ActivityService:
             raise PermissionDenied("仅组织者或管理员可删除活动")
         if user.role != Role.SUPER_ADMIN and activity["owner_id"] != user.id:
             raise PermissionDenied("无权删除该活动")
+        if activity["status"] == ActivityStatus.OPEN.value:
+            raise ValidationError("报名中的活动无法删除，请先结束报名")
         return self._activity_repo.delete(activity_id)
 
     def _check_owner_or_admin(self, user: User, activity: dict) -> None:

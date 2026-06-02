@@ -5,11 +5,13 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from app.application.activity_service import ActivityService
+from app.application.checkin_service import CheckInService
 from app.application.registration_service import RegistrationService
 from app.application.scheduling_service import SchedulingService
 from app.application.user_service import UserService
 from app.application.remote_services import (
     RemoteActivityService,
+    RemoteCheckInService,
     RemoteRegistrationService,
     RemoteSchedulingService,
     RemoteUserService,
@@ -19,6 +21,7 @@ from app.infrastructure.api_client import ApiClient
 from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
+    CheckInRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -27,6 +30,7 @@ from app.infrastructure.repositories import (
 from app.infrastructure.remote_repositories import (
     MetricsCache,
     RemoteActivityRepository,
+    RemoteCheckInRepository,
     RemoteRegistrationRepository,
     RemoteScheduleRepository,
     RemoteTimeSlotRepository,
@@ -68,18 +72,22 @@ def main() -> int:
         slot_repo = RemoteTimeSlotRepository(api_client, metrics_cache)
         reg_repo = RemoteRegistrationRepository(api_client, metrics_cache)
         schedule_repo = RemoteScheduleRepository(api_client, metrics_cache)
+        checkin_repo = RemoteCheckInRepository(api_client)
         activity_service = RemoteActivityService(api_client)
         registration_service = RemoteRegistrationService(api_client)
         scheduling_service = RemoteSchedulingService(api_client)
+        checkin_service = RemoteCheckInService(api_client)
     else:
         activity_repo = ActivityRepository()
         slot_repo = TimeSlotRepository()
         reg_repo = RegistrationRepository()
         schedule_repo = ScheduleRepository()
+        checkin_repo = CheckInRepository()
 
         activity_service = ActivityService(activity_repo, slot_repo)
         registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
         scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
+        checkin_service = CheckInService(checkin_repo, schedule_repo)
 
     if login.user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
         window = AdminWindow(
@@ -92,6 +100,8 @@ def main() -> int:
             reg_repo=reg_repo,
             user_service=user_service,
             user_repo=user_repo,
+            checkin_service=checkin_service,
+            checkin_repo=checkin_repo,
         )
     else:
         window = ClientWindow(
@@ -102,6 +112,7 @@ def main() -> int:
             activity_repo=activity_repo,
             slot_repo=slot_repo,
             reg_repo=reg_repo,
+            checkin_service=checkin_service,
         )
     window.resize(980, 640)
     window.show()

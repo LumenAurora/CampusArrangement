@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from app.domain.models import User
+from app.domain.models import ActivityStatus, User
 from app.infrastructure.repositories import (
     ActivityRepository,
     RegistrationRepository,
@@ -34,7 +33,6 @@ class DashboardPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # 标题
         header = QLabel("概览")
         header.setObjectName("pageTitle")
         layout.addWidget(header)
@@ -70,10 +68,10 @@ class DashboardPanel(QWidget):
             ]
         else:
             cards = [
-                ("可报名活动", self._activity_repo.count_all()),
+                ("可报名活动", self._activity_repo.count_by_status(ActivityStatus.OPEN)),
                 ("我的报名", self._reg_repo.count_by_user(self._user.id)),
                 ("我的排班", self._schedule_repo.count_by_user(self._user.id)),
-                ("已发布时段", self._slot_repo.count_all()),
+                ("已发布时段", self._slot_repo.count_by_activity_status(ActivityStatus.OPEN.value)),
             ]
 
         for index, (label, value) in enumerate(cards):
@@ -84,8 +82,6 @@ class DashboardPanel(QWidget):
 
 
 class _StatCard(QFrame):
-    """Claude 风格统计卡片 — 带图标和大数字。"""
-
     def __init__(self, icon: str, label: str, value: int) -> None:
         super().__init__()
         self.setObjectName("statCard")
@@ -95,7 +91,6 @@ class _StatCard(QFrame):
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(6)
 
-        # 图标 + 标签
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
         icon_label = QLabel(icon)
@@ -107,7 +102,6 @@ class _StatCard(QFrame):
         top_row.addStretch(1)
         layout.addLayout(top_row)
 
-        # 大数字
         value_label = QLabel(str(value))
         value_label.setObjectName("statValue")
         layout.addWidget(value_label)

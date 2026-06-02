@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable
 
-from app.domain.models import Activity, ActivityStatus, Registration, RegistrationStatus, ScheduleResult, TimeSlot
+from app.domain.exceptions import ConflictError
+from app.domain.models import (
+    Activity,
+    ActivityStatus,
+    CheckIn,
+    CheckInStatus,
+    Registration,
+    RegistrationStatus,
+    ScheduleResult,
+    TimeSlot,
+)
 from app.infrastructure.db import get_connection, transaction
 
 
@@ -58,8 +69,8 @@ class ActivityRepository:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -70,6 +81,7 @@ class ActivityRepository:
                     activity.details,
                     activity.signup_mode.value,
                     activity.allocation_mode.value,
+                    activity.location,
                 ),
             )
             conn.commit()
@@ -94,10 +106,32 @@ class ActivityRepository:
         finally:
             conn.close()
 
+    def list_by_status(self, status: ActivityStatus) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM activities WHERE status = ? ORDER BY signup_start DESC",
+                (status.value,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
     def count_all(self) -> int:
         conn = get_connection()
         try:
             row = conn.execute("SELECT COUNT(*) AS total FROM activities").fetchone()
+            return int(row["total"]) if row else 0
+        finally:
+            conn.close()
+
+    def count_by_status(self, status: ActivityStatus) -> int:
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM activities WHERE status = ?",
+                (status.value,),
+            ).fetchone()
             return int(row["total"]) if row else 0
         finally:
             conn.close()
@@ -154,7 +188,7 @@ class TimeSlotRepository:
     def list_by_activity(self, activity_id: str) -> list[dict]:
         conn = get_connection()
         try:
-            rows = conn.execute("SELECT * FROM slots WHERE activity_id = ?", (activity_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM slots WHERE activity_id = ? ORDER BY start_time ASC", (activity_id,)).fetchall()
             return [dict(row) for row in rows]
         finally:
             conn.close()
@@ -183,6 +217,32 @@ class TimeSlotRepository:
                 "UPDATE slots SET used_count = MAX(used_count - 1, 0) WHERE id = ?",
                 (slot_id,),
             )
+
+    def reset_used_counts_for_activity(self, activity_id: str) -> None:
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE slots SET used_count = 0 WHERE activity_id = ?",
+                (activity_id,),
+            )
+
+    def increment_used_count(self, slot_id: str, count: int = 1) -> None:
+        with transaction() as conn:
+            conn.execute(
+                "UPDATE slots SET used_count = used_count + ? WHERE id = ?",
+                (count, slot_id),
+            )
+
+    def count_by_activity_status(self, status_value: str) -> int:
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM slots "
+                "WHERE activity_id IN (SELECT id FROM activities WHERE status = ?)",
+                (status_value,),
+            ).fetchone()
+            return int(row["total"]) if row else 0
+        finally:
+            conn.close()
 
     @staticmethod
     def to_models(rows: Iterable[dict]) -> list[TimeSlot]:
@@ -219,6 +279,17 @@ class RegistrationRepository:
                 ),
             )
             conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            raise ConflictError("您已报名该活动，请勿重复报名")
+        finally:
+            conn.close()
+
+    def get(self, registration_id: str) -> dict | None:
+        conn = get_connection()
+        try:
+            row = conn.execute("SELECT * FROM registrations WHERE id = ?", (registration_id,)).fetchone()
+            return dict(row) if row else None
         finally:
             conn.close()
 
@@ -237,8 +308,19 @@ class RegistrationRepository:
         conn = get_connection()
         try:
             rows = conn.execute(
-                "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ?",
-                (user_id, activity_id),
+                "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ? AND status != ?",
+                (user_id, activity_id, RegistrationStatus.CANCELLED.value),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_user(self, user_id: str) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM registrations WHERE user_id = ? AND status != ? ORDER BY created_at DESC",
+                (user_id, RegistrationStatus.CANCELLED.value),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
@@ -258,7 +340,7 @@ class RegistrationRepository:
     def count_all(self) -> int:
         conn = get_connection()
         try:
-            row = conn.execute("SELECT COUNT(*) AS total FROM registrations").fetchone()
+            row = conn.execute("SELECT COUNT(*) AS total FROM registrations WHERE status != ?", (RegistrationStatus.CANCELLED.value,)).fetchone()
             return int(row["total"]) if row else 0
         finally:
             conn.close()
@@ -266,7 +348,7 @@ class RegistrationRepository:
     def count_by_user(self, user_id: str) -> int:
         conn = get_connection()
         try:
-            row = conn.execute("SELECT COUNT(*) AS total FROM registrations WHERE user_id = ?", (user_id,)).fetchone()
+            row = conn.execute("SELECT COUNT(*) AS total FROM registrations WHERE user_id = ? AND status != ?", (user_id, RegistrationStatus.CANCELLED.value)).fetchone()
             return int(row["total"]) if row else 0
         finally:
             conn.close()
@@ -338,5 +420,92 @@ class ScheduleRepository:
         try:
             row = conn.execute("SELECT COUNT(*) AS total FROM schedule_results WHERE user_id = ?", (user_id,)).fetchone()
             return int(row["total"]) if row else 0
+        finally:
+            conn.close()
+
+
+class CheckInRepository:
+    def get(self, checkin_id: str) -> dict | None:
+        conn = get_connection()
+        try:
+            row = conn.execute("SELECT * FROM checkins WHERE id = ?", (checkin_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def create(self, checkin: CheckIn) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO checkins (id, activity_id, user_id, slot_id, status, checked_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    checkin.id,
+                    checkin.activity_id,
+                    checkin.user_id,
+                    checkin.slot_id,
+                    checkin.status.value,
+                    checkin.checked_at.isoformat(),
+                ),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def get_by_user_slot(self, user_id: str, slot_id: str) -> dict | None:
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM checkins WHERE user_id = ? AND slot_id = ?",
+                (user_id, slot_id),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_by_activity(self, activity_id: str) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM checkins WHERE activity_id = ? ORDER BY checked_at DESC",
+                (activity_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_user(self, user_id: str) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM checkins WHERE user_id = ? ORDER BY checked_at DESC",
+                (user_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def count_by_activity(self, activity_id: str) -> int:
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM checkins WHERE activity_id = ? AND status = ?",
+                (activity_id, CheckInStatus.CHECKED_IN.value),
+            ).fetchone()
+            return int(row["total"]) if row else 0
+        finally:
+            conn.close()
+
+    def update_status(self, checkin_id: str, status: CheckInStatus) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE checkins SET status = ?, checked_at = ? WHERE id = ?",
+                (status.value, datetime.now(timezone.utc).isoformat(), checkin_id),
+            )
+            conn.commit()
         finally:
             conn.close()
