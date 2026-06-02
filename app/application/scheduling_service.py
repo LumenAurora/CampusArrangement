@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.domain.exceptions import ValidationError
 from app.domain.models import AllocationMode, RegistrationStatus
 from app.domain.services import schedule_registrations
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, ScheduleRepository, TimeSlotRepository
@@ -20,7 +21,9 @@ class SchedulingService:
 
     def run(self, activity_id: str) -> int:
         activity = self._activity_repo.get(activity_id)
-        allocation_mode = AllocationMode(activity["allocation_mode"]) if activity else AllocationMode.GREEDY
+        if not activity:
+            raise ValidationError("活动不存在")
+        allocation_mode = AllocationMode(activity["allocation_mode"])
         registrations = self._reg_repo.list_pending(activity_id)
         slots = self._slot_repo.list_by_activity(activity_id)
         assignments = schedule_registrations(

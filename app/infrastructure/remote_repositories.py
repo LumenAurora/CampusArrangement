@@ -44,7 +44,18 @@ class RemoteActivityRepository:
         return int(self._metrics.get_overview().get("activities", 0))
 
     def update_status(self, activity_id: str, status) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"status": status.value if hasattr(status, 'value') else status})
+        # 注意：API端点使用 "action" 字段，不是 "status"
+        # 这里需要将状态转换为对应的action
+        status_to_action = {
+            "open": "publish",
+            "closed": "close",
+            "archived": "archive",
+        }
+        status_value = status.value if hasattr(status, 'value') else status
+        action = status_to_action.get(status_value)
+        if not action:
+            raise ValueError(f"无法将状态 {status_value} 转换为操作")
+        self._api.patch(f"/activities/{activity_id}/status", json={"action": action})
 
 
 class RemoteTimeSlotRepository:
