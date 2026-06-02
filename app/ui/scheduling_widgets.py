@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -17,9 +18,10 @@ from PySide6.QtWidgets import (
 
 from app.application.activity_service import ActivityService
 from app.application.scheduling_service import SchedulingService
+from app.domain.exceptions import ValidationError
 from app.infrastructure.exporter import export_to_excel
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty, format_status
 
 
 class SchedulingPanel(QWidget):
@@ -94,7 +96,8 @@ class SchedulingPanel(QWidget):
         activities = self._activity_service.list_activities()
         self._activity_selector.clear()
         for activity in activities:
-            self._activity_selector.addItem(activity["name"], activity["id"])
+            status_text = format_status(activity.get("status", "draft"))
+            self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
         self._load_results()
 
     def _load_results(self) -> None:
@@ -125,10 +128,22 @@ class SchedulingPanel(QWidget):
         if not activity_id:
             set_banner(self._message, "error", "请选择活动")
             return
+        reply = QMessageBox.question(
+            self,
+            "确认排班",
+            "确定要执行排班吗？\n此操作将根据报名记录生成排班结果。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
         set_banner(self._message, "info", "")
-        count = self._scheduling_service.run(activity_id)
-        set_banner(self._message, "success", f"排班完成，共生成 {count} 条结果")
-        self._load_results()
+        try:
+            count = self._scheduling_service.run(activity_id)
+            set_banner(self._message, "success", f"排班完成，共生成 {count} 条结果")
+            self._load_results()
+        except ValidationError as exc:
+            set_banner(self._message, "error", str(exc))
 
     def _export(self) -> None:
         activity_id = self._activity_selector.currentData()

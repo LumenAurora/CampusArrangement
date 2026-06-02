@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from app.application.activity_service import ActivityService
 from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, SignupMode, User
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header, make_status_item, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, make_status_item, set_banner, set_table_empty, SearchBox, format_status
 
 
 class ActivityPanel(QWidget):
@@ -32,8 +32,8 @@ class ActivityPanel(QWidget):
         self._service = activity_service
         self._user = user
 
-        self._activity_table = QTableWidget(0, 7)
-        self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "状态"])
+        self._activity_table = QTableWidget(0, 8)
+        self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "地点", "状态"])
         configure_table(self._activity_table)
 
         self._slot_table = QTableWidget(0, 6)
@@ -43,15 +43,24 @@ class ActivityPanel(QWidget):
         self._activity_selector = QComboBox()
         self._activity_selector.setMinimumWidth(240)
 
+        self._search_box = SearchBox()
+        self._search_box.textChanged.connect(self._filter_activities)
+        self._all_activities: list[dict] = []
+
         self._init_activity_form()
         self._init_slot_form()
 
         self._activity_list_group = QGroupBox("活动列表")
         activity_list_layout = QVBoxLayout()
         activity_list_layout.setContentsMargins(12, 12, 12, 12)
+
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("搜索"))
+        search_layout.addWidget(self._search_box, 1)
+        activity_list_layout.addLayout(search_layout)
+
         activity_list_layout.addWidget(self._activity_table)
 
-        # 状态操作按钮
         status_btn_layout = QHBoxLayout()
         status_btn_layout.setSpacing(8)
         self._publish_btn = QPushButton("发布")
@@ -126,6 +135,8 @@ class ActivityPanel(QWidget):
         self._signup_end.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._details = QLineEdit()
         self._details.setPlaceholderText("简要说明活动内容与要求")
+        self._location = QLineEdit()
+        self._location.setPlaceholderText("例如：图书馆一楼大厅")
         self._signup_mode = QComboBox()
         self._signup_mode.addItem("实时显示名额", SignupMode.REALTIME)
         self._signup_mode.addItem("非实时显示名额", SignupMode.BLIND)
@@ -147,6 +158,7 @@ class ActivityPanel(QWidget):
         form.addRow("报名开始", self._signup_start)
         form.addRow("报名截止", self._signup_end)
         form.addRow("详情", self._details)
+        form.addRow("地点", self._location)
         form.addRow("名额显示", self._signup_mode)
         form.addRow("分配策略", self._allocation_mode)
         form.addRow(create_btn)
@@ -185,9 +197,18 @@ class ActivityPanel(QWidget):
         self._slot_group.setLayout(form)
 
     def refresh(self) -> None:
-        activities = self._service.list_activities()
+        self._all_activities = self._service.list_activities()
+        self._filter_activities(self._search_box.text())
+
+    def _filter_activities(self, query: str) -> None:
+        query = query.strip().lower()
+        if query:
+            activities = [a for a in self._all_activities if query in a["name"].lower() or query in a.get("details", "").lower()]
+        else:
+            activities = self._all_activities
+
         if not activities:
-            set_table_empty(self._activity_table, 7, "暂无活动，请先创建活动")
+            set_table_empty(self._activity_table, 8, "暂无活动，请先创建活动")
             self._activity_selector.clear()
             self._load_slots()
             return
@@ -207,12 +228,9 @@ class ActivityPanel(QWidget):
             }.get(allocation_mode, "志愿优先")
             self._activity_table.setItem(row_index, 4, QTableWidgetItem(signup_mode_text))
             self._activity_table.setItem(row_index, 5, QTableWidgetItem(allocation_text))
-            status_text = self._format_status(
-                activity.get("status", "draft"),
-                activity["signup_start"],
-                activity["signup_end"],
-            )
-            self._activity_table.setItem(row_index, 6, make_status_item(status_text))
+            self._activity_table.setItem(row_index, 6, QTableWidgetItem(activity.get("location", "")))
+            status_text = format_status(activity.get("status", "draft"))
+            self._activity_table.setItem(row_index, 7, make_status_item(status_text))
             self._activity_selector.addItem(activity["name"], activity["id"])
 
         self._activity_table.setColumnHidden(0, True)
@@ -258,6 +276,7 @@ class ActivityPanel(QWidget):
                 details=self._details.text().strip(),
                 signup_mode=SignupMode(self._signup_mode.currentData()),
                 allocation_mode=AllocationMode(self._allocation_mode.currentData()),
+                location=self._location.text().strip(),
             )
             self.refresh()
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
@@ -265,18 +284,15 @@ class ActivityPanel(QWidget):
             set_banner(self._activity_message, "error", str(exc))
 
     def _delete_activity(self) -> None:
-        # 获取当前选中的活动
         selected_rows = self._activity_table.selectedItems()
         if not selected_rows:
             QMessageBox.warning(self, "提示", "请先选择要删除的活动")
             return
 
-        # 获取选中行的活动 ID（第 0 列）
         row = selected_rows[0].row()
         activity_id = self._activity_table.item(row, 0).text()
         activity_name = self._activity_table.item(row, 1).text()
 
-        # 确认删除
         reply = QMessageBox.question(
             self,
             "确认删除",
@@ -333,7 +349,7 @@ class ActivityPanel(QWidget):
             self._delete_btn.setEnabled(False)
             return
         row = selected_rows[0].row()
-        status_item = self._activity_table.item(row, 6)
+        status_item = self._activity_table.item(row, 7)
         status_text = status_item.text() if status_item else ""
         self._delete_btn.setEnabled(True)
         self._publish_btn.setEnabled(status_text == "草稿")
@@ -357,13 +373,3 @@ class ActivityPanel(QWidget):
             set_banner(self._slot_message, "success", "时段已添加")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._slot_message, "error", str(exc))
-
-    @staticmethod
-    def _format_status(status: str, start: str, end: str) -> str:
-        status_map = {
-            "draft": "草稿",
-            "open": "报名中",
-            "closed": "已结束",
-            "archived": "已归档",
-        }
-        return status_map.get(status, "未知")

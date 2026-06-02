@@ -15,6 +15,7 @@ def get_connection() -> sqlite3.Connection:
     ensure_data_dir()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -55,7 +56,8 @@ def init_db() -> None:
                 signup_end TEXT NOT NULL,
                 details TEXT NOT NULL,
                 signup_mode TEXT NOT NULL DEFAULT 'realtime',
-                allocation_mode TEXT NOT NULL DEFAULT 'greedy'
+                allocation_mode TEXT NOT NULL DEFAULT 'greedy',
+                location TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS slots (
@@ -64,7 +66,8 @@ def init_db() -> None:
                 start_time TEXT NOT NULL,
                 end_time TEXT NOT NULL,
                 capacity INTEGER NOT NULL,
-                used_count INTEGER NOT NULL DEFAULT 0
+                used_count INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS registrations (
@@ -74,20 +77,44 @@ def init_db() -> None:
                 slot_id TEXT NOT NULL,
                 priority INTEGER NOT NULL,
                 status TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE,
+                FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE
             );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_activity_active
+                ON registrations(user_id, activity_id) WHERE status != 'cancelled';
 
             CREATE TABLE IF NOT EXISTS schedule_results (
                 id TEXT PRIMARY KEY,
                 activity_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 slot_id TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS checkins (
+                id TEXT PRIMARY KEY,
+                activity_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                slot_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                checked_at TEXT NOT NULL,
+                FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE,
+                UNIQUE (user_id, slot_id)
             );
             """
         )
         _ensure_column(conn, "activities", "signup_mode", "signup_mode TEXT NOT NULL DEFAULT 'realtime'")
         _ensure_column(conn, "activities", "allocation_mode", "allocation_mode TEXT NOT NULL DEFAULT 'greedy'")
+        _ensure_column(conn, "activities", "location", "location TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     finally:
         conn.close()
 

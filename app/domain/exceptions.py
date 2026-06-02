@@ -1,14 +1,18 @@
 class DomainError(Exception):
-    """Base domain exception."""
+    pass
 
 
 class PermissionDenied(DomainError):
-    """Raised when user lacks permission."""
+    pass
 
 
 class CapacityExceeded(DomainError):
-    """Raised when slot capacity is exceeded."""
+    pass
 
 
 class ValidationError(DomainError):
-    """Raised when inputs are invalid."""
+    pass
+
+
+class ConflictError(DomainError):
+    pass

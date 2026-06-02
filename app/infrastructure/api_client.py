@@ -4,7 +4,7 @@ from typing import Any
 
 import requests
 
-from app.domain.exceptions import PermissionDenied, ValidationError
+from app.domain.exceptions import ConflictError, PermissionDenied, ValidationError
 from app.domain.models import Role, User
 
 
@@ -70,6 +70,8 @@ class ApiClient:
             detail = detail or "服务端返回错误"
             if response.status_code == 403:
                 raise PermissionDenied(detail)
+            if response.status_code == 409:
+                raise ConflictError(detail)
             raise ValidationError(detail)
         if not response.content:
             return None
