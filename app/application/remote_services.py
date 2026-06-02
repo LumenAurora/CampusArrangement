@@ -28,7 +28,7 @@ class RemoteUserService:
         return self._api.login(username, password)
 
     def delete_user(self, current_user: User, user_id: str) -> bool:
-        self._api._request("DELETE", f"/users/{user_id}")
+        self._api.delete(f"/users/{user_id}")
         return True
 
 
@@ -104,17 +104,17 @@ class RemoteActivityService:
         return self._api.get(f"/activities/{activity_id}")
 
     def delete_activity(self, user: User, activity_id: str) -> bool:
-        self._api._request("DELETE", f"/activities/{activity_id}")
+        self._api.delete(f"/activities/{activity_id}")
         return True
 
     def publish_activity(self, user: User, activity_id: str) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "publish"})
+        self._api.patch(f"/activities/{activity_id}/status", json={"action": "publish"})
 
     def close_activity(self, user: User, activity_id: str) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "close"})
+        self._api.patch(f"/activities/{activity_id}/status", json={"action": "close"})
 
     def archive_activity(self, user: User, activity_id: str) -> None:
-        self._api._request("PATCH", f"/activities/{activity_id}/status", json={"action": "archive"})
+        self._api.patch(f"/activities/{activity_id}/status", json={"action": "archive"})
 
 
 class RemoteRegistrationService:

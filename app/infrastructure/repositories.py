@@ -105,6 +105,10 @@ class ActivityRepository:
     def delete(self, activity_id: str) -> bool:
         conn = get_connection()
         try:
+            # 级联删除：先删除排班结果、报名记录、时段，最后删除活动
+            conn.execute("DELETE FROM schedule_results WHERE activity_id = ?", (activity_id,))
+            conn.execute("DELETE FROM registrations WHERE activity_id = ?", (activity_id,))
+            conn.execute("DELETE FROM slots WHERE activity_id = ?", (activity_id,))
             cursor = conn.execute("DELETE FROM activities WHERE id = ?", (activity_id,))
             conn.commit()
             return cursor.rowcount > 0

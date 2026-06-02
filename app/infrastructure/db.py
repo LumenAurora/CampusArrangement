@@ -93,6 +93,10 @@ def init_db() -> None:
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    # 使用白名单验证表名，防止SQL注入
+    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results"}
+    if table not in allowed_tables:
+        raise ValueError(f"不允许的表名: {table}")
     columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")

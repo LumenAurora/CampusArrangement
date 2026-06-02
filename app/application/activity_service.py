@@ -53,6 +53,10 @@ class ActivityService:
             raise PermissionDenied("无权为该活动添加时段")
         if user.role != Role.SUPER_ADMIN and activity["owner_id"] != user.id:
             raise PermissionDenied("无权为该活动添加时段")
+        if end_time <= start_time:
+            raise ValidationError("时段结束时间必须晚于开始时间")
+        if capacity < 1:
+            raise ValidationError("时段容量必须大于0")
         slot = TimeSlot.create(activity_id=activity_id, start_time=start_time, end_time=end_time, capacity=capacity)
         self._slot_repo.create(slot)
         return slot

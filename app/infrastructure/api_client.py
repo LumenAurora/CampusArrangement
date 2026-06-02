@@ -36,6 +36,12 @@ class ApiClient:
     def post(self, path: str, json: dict | None = None) -> Any:
         return self._request("POST", path, json=json)
 
+    def patch(self, path: str, json: dict | None = None) -> Any:
+        return self._request("PATCH", path, json=json)
+
+    def delete(self, path: str) -> Any:
+        return self._request("DELETE", path)
+
     def _request(
         self,
         method: str,
