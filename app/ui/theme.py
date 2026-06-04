@@ -228,7 +228,7 @@ QListWidget#navList::item:selected {{
 /* ===== 分组框 ===== */
 QGroupBox {{
     background: {p.bg_card};
-    border: none;
+    border: 1px solid {p.border_light};
     border-radius: 16px;
     margin-top: 14px;
     padding-top: 16px;
@@ -243,28 +243,81 @@ QGroupBox::title {{
 }}
 
 /* ===== 输入框 ===== */
-QLineEdit, QComboBox, QDateTimeEdit, QSpinBox {{
+QLineEdit, QDateTimeEdit, QSpinBox {{
     background: {p.bg_input};
     color: {p.text_primary};
-    border: none;
+    border: 1.5px solid transparent;
     border-radius: 10px;
     padding: 8px 12px;
 }}
-QLineEdit:focus, QComboBox:focus, QDateTimeEdit:focus, QSpinBox:focus {{
+QLineEdit:focus, QDateTimeEdit:focus, QSpinBox:focus {{
+    background: {p.bg_input_focus};
+    border-color: {p.accent_soft};
+}}
+
+/* ===== 下拉选择框（候选框） ===== */
+QComboBox {{
+    background: {p.bg_input};
+    color: {p.text_primary};
+    border: 1.5px solid transparent;
+    border-radius: 10px;
+    padding: 8px 12px;
+    padding-right: 32px;
+    min-height: 20px;
+}}
+QComboBox:focus {{
+    background: {p.bg_input_focus};
+    border-color: {p.accent_soft};
+}}
+QComboBox:hover {{
     background: {p.bg_input_focus};
 }}
 QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
     border: none;
     width: 28px;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+}}
+QComboBox::down-arrow {{
+    image: none;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid {p.text_tertiary};
+    margin-right: 6px;
+}}
+QComboBox:on {{
+    border-color: {p.accent};
+    background: {p.bg_input_focus};
+}}
+QComboBox::down-arrow:on {{
+    border-top-color: {p.accent};
 }}
 QComboBox QAbstractItemView {{
     background: {p.bg_card};
     color: {p.text_primary};
-    border: none;
+    border: 1px solid {p.border};
     border-radius: 12px;
-    padding: 4px;
+    padding: 6px;
+    outline: none;
     selection-background-color: {p.accent_soft};
     selection-color: {p.accent};
+}}
+QComboBox QAbstractItemView::item {{
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-height: 24px;
+}}
+QComboBox QAbstractItemView::item:hover {{
+    background: {p.nav_hover_bg};
+    color: {p.text_primary};
+}}
+QComboBox QAbstractItemView::item:selected {{
+    background: {p.accent_soft};
+    color: {p.accent};
 }}
 
 /* ===== 按钮 ===== */
@@ -282,6 +335,8 @@ QPushButton:hover {{
 }}
 QPushButton:pressed {{
     background: {p.accent_pressed};
+    padding-top: 9px;
+    padding-bottom: 7px;
 }}
 QPushButton:disabled {{
     background: {p.btn_disabled_bg};
@@ -338,6 +393,9 @@ QTableView::item:selected {{
     background: {p.table_selected_bg};
     color: {p.accent};
 }}
+QTableView::item:hover {{
+    background: {p.nav_hover_bg};
+}}
 QHeaderView::section {{
     background: {p.table_header_bg};
     padding: 8px 10px;
@@ -346,6 +404,7 @@ QHeaderView::section {{
     font-size: 11px;
     letter-spacing: 0.5px;
     color: {p.text_tertiary};
+    border-bottom: 1px solid {p.border_light};
 }}
 
 /* ===== 页面标题 ===== */
@@ -363,7 +422,7 @@ QLabel#pageSubtitle {{
 /* ===== 统计卡片 ===== */
 QFrame#statCard {{
     background: {p.bg_card};
-    border: none;
+    border: 1px solid {p.border_light};
     border-radius: 16px;
 }}
 QLabel#statValue {{
@@ -424,11 +483,30 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 6px;
+    margin: 0;
+}}
+QScrollBar::handle:horizontal {{
+    background: {p.border};
+    border-radius: 3px;
+    min-width: 32px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {p.text_tertiary};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0;
+}}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: transparent;
+}}
 
 /* ===== 登录卡片 ===== */
 QFrame#loginCard {{
     background: {p.bg_card};
-    border: none;
+    border: 1px solid {p.border_light};
     border-radius: 24px;
 }}
 
@@ -436,7 +514,7 @@ QFrame#loginCard {{
 QToolTip {{
     background: {p.bg_card};
     color: {p.text_primary};
-    border: none;
+    border: 1px solid {p.border};
     border-radius: 8px;
     padding: 6px 10px;
 }}
