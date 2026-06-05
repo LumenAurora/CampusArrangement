@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
 from app.domain.models import ActivityStatus, Registration, RegistrationStatus, SignupMode
+from app.infrastructure.db import transaction
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, TimeSlotRepository
 
 
@@ -27,27 +28,36 @@ class RegistrationService:
         slot = self._slot_repo.get(slot_id)
         if not slot or slot["activity_id"] != activity_id:
             raise ValidationError("所选时段不属于该活动")
+
+        # 如果用户有NOT_ASSIGNED记录，先将其置为CANCELLED以允许重新报名
         existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
-        if existing:
+        not_assigned_ids = [r["id"] for r in existing if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
+        active_existing = [r for r in existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+        if active_existing:
             raise ValidationError("您已报名该活动，请勿重复报名")
-        locked = False
+
+        registration = Registration.create(
+            user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority,
+        )
         if activity.get("signup_mode") == SignupMode.REALTIME.value:
-            locked = self._slot_repo.lock_slot(slot_id)
-            if not locked:
-                raise CapacityExceeded("名额已满")
-        try:
-            registration = Registration.create(
-                user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority,
-            )
-            self._reg_repo.create(registration)
-        except ConflictError:
-            if locked:
-                self._slot_repo.release_slot(slot_id)
-            raise
-        except Exception:
-            if locked:
-                self._slot_repo.release_slot(slot_id)
-            raise
+            with transaction() as conn:
+                # 先取消NOT_ASSIGNED记录
+                for rid in not_assigned_ids:
+                    self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
+                locked = self._slot_repo.lock_slot(slot_id, conn=conn)
+                if not locked:
+                    raise CapacityExceeded("名额已满")
+                try:
+                    self._reg_repo.create(registration, conn=conn)
+                except Exception:
+                    self._slot_repo.release_slot(slot_id, conn=conn)
+                    raise
+        else:
+            # BLIND模式也使用事务保证原子性
+            with transaction() as conn:
+                for rid in not_assigned_ids:
+                    self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
+                self._reg_repo.create(registration, conn=conn)
         return registration
 
     def cancel(self, user_id: str, registration_id: str) -> None:
@@ -63,9 +73,17 @@ class RegistrationService:
         activity = self._activity_repo.get(reg["activity_id"])
         if activity and activity["status"] == ActivityStatus.ARCHIVED.value:
             raise ValidationError("已归档的活动无法取消报名")
-        if activity and activity.get("signup_mode") == SignupMode.REALTIME.value:
-            self._slot_repo.release_slot(reg["slot_id"])
-        self._reg_repo.update_status(registration_id, RegistrationStatus.CANCELLED)
+        # Only release the slot if the registration is PENDING in realtime mode.
+        # NOT_ASSIGNED registrations should NOT release the slot because
+        # SchedulingService.run already recalculated used_count based on
+        # actual assignments, and NOT_ASSIGNED users are not counted.
+        if (activity and activity.get("signup_mode") == SignupMode.REALTIME.value
+                and reg["status"] == RegistrationStatus.PENDING.value):
+            with transaction() as conn:
+                self._slot_repo.release_slot(reg["slot_id"], conn=conn)
+                self._reg_repo.update_status(registration_id, RegistrationStatus.CANCELLED, conn=conn)
+        else:
+            self._reg_repo.update_status(registration_id, RegistrationStatus.CANCELLED)
 
     def list_user_registrations(self, user_id: str) -> list[dict]:
         return self._reg_repo.list_by_user(user_id)

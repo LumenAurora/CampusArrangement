@@ -59,10 +59,12 @@ def format_status(status_str: str) -> str:
         "closed": "已结束",
         "archived": "已归档",
         "draft": "草稿",
+        "pending_review": "待审核",
         "pending": "待处理",
         "confirmed": "已确认",
         "assigned": "已分配",
         "cancelled": "已取消",
+        "not_assigned": "未中签",
         "checked_in": "已签到",
         "absent": "缺勤",
     }
@@ -103,6 +105,7 @@ def make_status_item(text: str) -> QTableWidgetItem:
         "已结束": (p.error_fg, p.error_bg),
         "已归档": (p.text_tertiary, p.bg_sidebar),
         "草稿": (p.warning_fg, p.warning_bg),
+        "待审核": (p.accent, p.accent_soft),
     }
     fg, bg = color_map.get(text, (p.text_secondary, p.bg_base))
     item.setForeground(QBrush(QColor(fg)))
@@ -122,14 +125,8 @@ class CountdownLabel(QLabel):
         self.set_times(start_iso, end_iso)
 
     def set_times(self, start_iso: str, end_iso: str) -> None:
-        self._start = datetime.fromisoformat(start_iso) if start_iso else None
-        self._end = datetime.fromisoformat(end_iso) if end_iso else None
-        if self._start:
-            if self._start.tzinfo is None:
-                self._start = self._start.replace(tzinfo=timezone.utc)
-        if self._end:
-            if self._end.tzinfo is None:
-                self._end = self._end.replace(tzinfo=timezone.utc)
+        self._start = self._parse_local(start_iso) if start_iso else None
+        self._end = self._parse_local(end_iso) if end_iso else None
         if self._start and self._end:
             if not self._timer.isActive():
                 self._timer.start(1000)
@@ -137,6 +134,14 @@ class CountdownLabel(QLabel):
         else:
             self._timer.stop()
             self.setText("")
+
+    @staticmethod
+    def _parse_local(value: str) -> datetime:
+        """Parse an ISO datetime string and treat naive datetimes as local time."""
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            return dt.astimezone(timezone.utc)
+        return dt.astimezone(timezone.utc)
 
     def _tick(self) -> None:
         if not self._start or not self._end:

@@ -69,8 +69,8 @@ class ActivityRepository:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, checkin_code, checkin_mode, checkin_start, checkin_end) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -82,6 +82,10 @@ class ActivityRepository:
                     activity.signup_mode.value,
                     activity.allocation_mode.value,
                     activity.location,
+                    activity.checkin_code,
+                    activity.checkin_mode.value,
+                    activity.checkin_start.isoformat() if activity.checkin_start else None,
+                    activity.checkin_end.isoformat() if activity.checkin_end else None,
                 ),
             )
             conn.commit()
@@ -156,6 +160,17 @@ class ActivityRepository:
         finally:
             conn.close()
 
+    def update_checkin_code(self, activity_id: str, checkin_code: str) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE activities SET checkin_code = ? WHERE id = ?",
+                (checkin_code, activity_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class TimeSlotRepository:
     def get(self, slot_id: str) -> dict | None:
@@ -185,13 +200,16 @@ class TimeSlotRepository:
         finally:
             conn.close()
 
-    def list_by_activity(self, activity_id: str) -> list[dict]:
-        conn = get_connection()
+    def list_by_activity(self, activity_id: str, conn: sqlite3.Connection | None = None) -> list[dict]:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             rows = conn.execute("SELECT * FROM slots WHERE activity_id = ? ORDER BY start_time ASC", (activity_id,)).fetchall()
             return [dict(row) for row in rows]
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def count_all(self) -> int:
         conn = get_connection()
@@ -201,36 +219,67 @@ class TimeSlotRepository:
         finally:
             conn.close()
 
-    def lock_slot(self, slot_id: str) -> bool:
-        with transaction() as conn:
+    def lock_slot(self, slot_id: str, conn: sqlite3.Connection | None = None) -> bool:
+        own = conn is None
+        if own:
+            conn = get_connection()
+            conn.execute("BEGIN IMMEDIATE")
+        try:
             row = conn.execute("SELECT capacity, used_count FROM slots WHERE id = ?", (slot_id,)).fetchone()
             if not row:
                 return False
             if row["used_count"] >= row["capacity"]:
                 return False
             conn.execute("UPDATE slots SET used_count = used_count + 1 WHERE id = ?", (slot_id,))
+            if own:
+                conn.commit()
             return True
+        except Exception:
+            if own:
+                conn.rollback()
+            raise
+        finally:
+            if own:
+                conn.close()
 
-    def release_slot(self, slot_id: str) -> None:
-        with transaction() as conn:
+    def release_slot(self, slot_id: str, conn: sqlite3.Connection | None = None) -> None:
+        if conn is not None:
             conn.execute(
                 "UPDATE slots SET used_count = MAX(used_count - 1, 0) WHERE id = ?",
                 (slot_id,),
             )
+        else:
+            with transaction() as c:
+                c.execute(
+                    "UPDATE slots SET used_count = MAX(used_count - 1, 0) WHERE id = ?",
+                    (slot_id,),
+                )
 
-    def reset_used_counts_for_activity(self, activity_id: str) -> None:
-        with transaction() as conn:
+    def reset_used_counts_for_activity(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
+        if conn is not None:
             conn.execute(
                 "UPDATE slots SET used_count = 0 WHERE activity_id = ?",
                 (activity_id,),
             )
+        else:
+            with transaction() as c:
+                c.execute(
+                    "UPDATE slots SET used_count = 0 WHERE activity_id = ?",
+                    (activity_id,),
+                )
 
-    def increment_used_count(self, slot_id: str, count: int = 1) -> None:
-        with transaction() as conn:
+    def increment_used_count(self, slot_id: str, count: int = 1, conn: sqlite3.Connection | None = None) -> None:
+        if conn is not None:
             conn.execute(
                 "UPDATE slots SET used_count = used_count + ? WHERE id = ?",
                 (count, slot_id),
             )
+        else:
+            with transaction() as c:
+                c.execute(
+                    "UPDATE slots SET used_count = used_count + ? WHERE id = ?",
+                    (count, slot_id),
+                )
 
     def count_by_activity_status(self, status_value: str) -> int:
         conn = get_connection()
@@ -262,8 +311,10 @@ class TimeSlotRepository:
 
 
 class RegistrationRepository:
-    def create(self, registration: Registration) -> None:
-        conn = get_connection()
+    def create(self, registration: Registration, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             conn.execute(
                 "INSERT INTO registrations (id, user_id, activity_id, slot_id, priority, status, created_at) "
@@ -278,12 +329,15 @@ class RegistrationRepository:
                     registration.created_at.isoformat(),
                 ),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         except sqlite3.IntegrityError:
-            conn.rollback()
+            if own:
+                conn.rollback()
             raise ConflictError("您已报名该活动，请勿重复报名")
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def get(self, registration_id: str) -> dict | None:
         conn = get_connection()
@@ -293,12 +347,39 @@ class RegistrationRepository:
         finally:
             conn.close()
 
-    def list_pending(self, activity_id: str) -> list[dict]:
-        conn = get_connection()
+    def list_pending(self, activity_id: str, conn: sqlite3.Connection | None = None) -> list[dict]:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             rows = conn.execute(
                 "SELECT * FROM registrations WHERE activity_id = ? AND status = ? ORDER BY created_at ASC",
                 (activity_id, RegistrationStatus.PENDING.value),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            if own:
+                conn.close()
+
+    def reset_not_assigned_to_pending(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
+        if conn is not None:
+            conn.execute(
+                "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
+                (RegistrationStatus.PENDING.value, activity_id, RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value),
+            )
+        else:
+            with transaction() as c:
+                c.execute(
+                    "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
+                    (RegistrationStatus.PENDING.value, activity_id, RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value),
+                )
+
+    def list_by_activity(self, activity_id: str) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM registrations WHERE activity_id = ? ORDER BY created_at ASC",
+                (activity_id,),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
@@ -326,16 +407,20 @@ class RegistrationRepository:
         finally:
             conn.close()
 
-    def update_status(self, registration_id: str, status: RegistrationStatus) -> None:
-        conn = get_connection()
+    def update_status(self, registration_id: str, status: RegistrationStatus, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             conn.execute(
                 "UPDATE registrations SET status = ? WHERE id = ?",
                 (status.value, registration_id),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def count_all(self) -> int:
         conn = get_connection()
@@ -372,24 +457,32 @@ class RegistrationRepository:
 
 
 class ScheduleRepository:
-    def create(self, result: ScheduleResult) -> None:
-        conn = get_connection()
+    def create(self, result: ScheduleResult, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             conn.execute(
                 "INSERT INTO schedule_results (id, activity_id, user_id, slot_id, created_at) VALUES (?, ?, ?, ?, ?)",
                 (result.id, result.activity_id, result.user_id, result.slot_id, result.created_at.isoformat()),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
-    def clear_for_activity(self, activity_id: str) -> None:
-        conn = get_connection()
+    def clear_for_activity(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             conn.execute("DELETE FROM schedule_results WHERE activity_id = ?", (activity_id,))
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
         conn = get_connection()
@@ -437,8 +530,8 @@ class CheckInRepository:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO checkins (id, activity_id, user_id, slot_id, status, checked_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO checkins (id, activity_id, user_id, slot_id, status, checked_at, latitude, longitude, photo_path) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     checkin.id,
                     checkin.activity_id,
@@ -446,6 +539,9 @@ class CheckInRepository:
                     checkin.slot_id,
                     checkin.status.value,
                     checkin.checked_at.isoformat(),
+                    checkin.latitude,
+                    checkin.longitude,
+                    checkin.photo_path,
                 ),
             )
             conn.commit()
@@ -499,13 +595,19 @@ class CheckInRepository:
         finally:
             conn.close()
 
-    def update_status(self, checkin_id: str, status: CheckInStatus) -> None:
+    def update_status(self, checkin_id: str, status: CheckInStatus, keep_checked_at: bool = False) -> None:
         conn = get_connection()
         try:
-            conn.execute(
-                "UPDATE checkins SET status = ?, checked_at = ? WHERE id = ?",
-                (status.value, datetime.now(timezone.utc).isoformat(), checkin_id),
-            )
+            if keep_checked_at:
+                conn.execute(
+                    "UPDATE checkins SET status = ? WHERE id = ?",
+                    (status.value, checkin_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE checkins SET status = ?, checked_at = ? WHERE id = ?",
+                    (status.value, datetime.now(timezone.utc).isoformat(), checkin_id),
+                )
             conn.commit()
         finally:
             conn.close()

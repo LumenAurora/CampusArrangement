@@ -34,11 +34,14 @@ def schedule_registrations(
     else:
         sorted_regs = sorted(regs, key=lambda r: (r.priority, r.created_at))
 
+    # 第一轮：按用户选择的slot分配
+    unassigned: list[Registration] = []
     for reg in sorted_regs:
         if reg.user_id in assigned_users:
             continue
         capacity = slot_map.get(reg.slot_id)
         if not capacity or capacity.remaining <= 0:
+            unassigned.append(reg)
             continue
         assignments.append(
             ScheduleResult.create(
@@ -49,5 +52,31 @@ def schedule_registrations(
         )
         assigned_users.add(reg.user_id)
         slot_map[reg.slot_id] = SlotCapacity(slot_id=capacity.slot_id, remaining=capacity.remaining - 1)
+
+    # 第二轮：调剂——将未分配用户分配到同活动中仍有余量的slot
+    if unassigned:
+        available_slots = [s for s in slot_map.values() if s.remaining > 0]
+        available_slots.sort(key=lambda s: s.remaining, reverse=True)
+        slot_idx = 0
+        for reg in unassigned:
+            if reg.user_id in assigned_users:
+                continue
+            while slot_idx < len(available_slots):
+                slot = available_slots[slot_idx]
+                if slot.remaining <= 0:
+                    slot_idx += 1
+                    continue
+                assignments.append(
+                    ScheduleResult.create(
+                        activity_id=reg.activity_id,
+                        user_id=reg.user_id,
+                        slot_id=slot.slot_id,
+                    )
+                )
+                assigned_users.add(reg.user_id)
+                available_slots[slot_idx] = SlotCapacity(slot_id=slot.slot_id, remaining=slot.remaining - 1)
+                break
+            else:
+                break
 
     return assignments

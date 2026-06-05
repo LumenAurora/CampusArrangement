@@ -36,7 +36,7 @@ class AdminWindow(NavigationWindow):
 
         pages = [
             ("dashboard", "概览", DashboardPanel(user, activity_repo, slot_repo, reg_repo, schedule_repo), load_icon("dashboard")),
-            ("activities", "活动管理", ActivityPanel(activity_service, user), load_icon("activities")),
+            ("activities", "活动管理", ActivityPanel(activity_service, user, scheduling_service, activity_repo), load_icon("activities")),
             ("scheduling", "排班管理", SchedulingPanel(activity_service, scheduling_service, schedule_repo, user_repo), load_icon("scheduling")),
             ("checkin", "签到管理", CheckInPanel(checkin_service, activity_service, schedule_repo, user_repo, user), load_icon("checkin")),
             ("users", "用户管理", UserAdminPanel(user_service, user_repo, user), load_icon("users")),

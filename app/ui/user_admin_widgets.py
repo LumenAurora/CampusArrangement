@@ -30,8 +30,8 @@ class UserAdminPanel(QWidget):
         self._user_repo = user_repo
         self._current_user = current_user
 
-        self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["用户名", "角色", "创建时间"])
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["ID", "用户名", "角色", "创建时间"])
         configure_table(self._table)
 
         self._init_create_form()
@@ -105,7 +105,7 @@ class UserAdminPanel(QWidget):
     def refresh(self) -> None:
         users = self._user_repo.list_all()
         if not users:
-            set_table_empty(self._table, 3, "暂无用户")
+            set_table_empty(self._table, 4, "暂无用户")
             return
         role_map = {
             Role.SUPER_ADMIN.value: "超级管理员",
@@ -114,12 +114,14 @@ class UserAdminPanel(QWidget):
         }
         self._table.setRowCount(len(users))
         for row_index, user in enumerate(users):
-            self._table.setItem(row_index, 0, QTableWidgetItem(user["username"]))
+            self._table.setItem(row_index, 0, QTableWidgetItem(str(user.get("id", ""))))
+            self._table.setItem(row_index, 1, QTableWidgetItem(user["username"]))
             role_text = role_map.get(user["role"], user["role"])
             role_item = QTableWidgetItem(role_text)
             role_item.setTextAlignment(Qt.AlignCenter)
-            self._table.setItem(row_index, 1, role_item)
-            self._table.setItem(row_index, 2, QTableWidgetItem(format_datetime(user["created_at"])))
+            self._table.setItem(row_index, 2, role_item)
+            self._table.setItem(row_index, 3, QTableWidgetItem(format_datetime(user["created_at"])))
+        self._table.setColumnHidden(0, True)
 
     def _create_user(self) -> None:
         if self._current_user.role != Role.SUPER_ADMIN:
@@ -142,23 +144,21 @@ class UserAdminPanel(QWidget):
             set_banner(self._message, "error", "无权限删除用户")
             return
 
-        # 获取当前选中的用户
-        selected_rows = self._table.selectedItems()
+        # 获取当前选中的行
+        selected_rows = self._table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.warning(self, "提示", "请先选择要删除的用户")
             return
 
-        # 获取选中行的用户名
         row = selected_rows[0].row()
-        username = self._table.item(row, 0).text()
-
-        # 从数据库获取用户 ID
-        user_data = self._user_repo.get_by_username(username)
-        if not user_data:
-            QMessageBox.warning(self, "错误", "用户不存在")
+        user_id_item = self._table.item(row, 0)
+        username_item = self._table.item(row, 1)
+        if not user_id_item or not username_item:
+            QMessageBox.warning(self, "提示", "数据异常")
             return
 
-        user_id = user_data["id"]
+        user_id = user_id_item.text()
+        username = username_item.text()
 
         # 确认删除
         reply = QMessageBox.question(

@@ -7,11 +7,14 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateTimeEdit,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -21,16 +24,22 @@ from PySide6.QtWidgets import (
 )
 
 from app.application.activity_service import ActivityService
+from app.application.remote_services import RemoteSchedulingService
+from app.application.scheduling_service import SchedulingService
 from app.domain.exceptions import PermissionDenied, ValidationError
-from app.domain.models import AllocationMode, SignupMode, User
+from app.domain.models import AllocationMode, CheckInMode, Role, SignupMode, User
+from app.infrastructure.notifications import notify
+from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
 from app.ui.ui_utils import configure_table, format_datetime, make_page_header, make_status_item, set_banner, set_table_empty, SearchBox, format_status
 
 
 class ActivityPanel(QWidget):
-    def __init__(self, activity_service: ActivityService, user: User) -> None:
+    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None) -> None:
         super().__init__()
         self._service = activity_service
         self._user = user
+        self._scheduling_service = scheduling_service
+        self._activity_repo = activity_repo
 
         self._activity_table = QTableWidget(0, 8)
         self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "地点", "状态"])
@@ -63,9 +72,15 @@ class ActivityPanel(QWidget):
 
         status_btn_layout = QHBoxLayout()
         status_btn_layout.setSpacing(8)
+        self._submit_review_btn = QPushButton("提交审核")
+        self._submit_review_btn.setObjectName("secondaryButton")
+        self._submit_review_btn.clicked.connect(lambda: self._change_status("submit_review"))
         self._publish_btn = QPushButton("发布")
         self._publish_btn.setObjectName("primaryButton")
         self._publish_btn.clicked.connect(lambda: self._change_status("publish"))
+        self._reject_btn = QPushButton("退回修改")
+        self._reject_btn.setObjectName("dangerButton")
+        self._reject_btn.clicked.connect(lambda: self._change_status("reject"))
         self._close_btn = QPushButton("结束报名")
         self._close_btn.setObjectName("secondaryButton")
         self._close_btn.clicked.connect(lambda: self._change_status("close"))
@@ -75,7 +90,9 @@ class ActivityPanel(QWidget):
         self._delete_btn = QPushButton("删除")
         self._delete_btn.setObjectName("dangerButton")
         self._delete_btn.clicked.connect(self._delete_activity)
+        status_btn_layout.addWidget(self._submit_review_btn)
         status_btn_layout.addWidget(self._publish_btn)
+        status_btn_layout.addWidget(self._reject_btn)
         status_btn_layout.addWidget(self._close_btn)
         status_btn_layout.addWidget(self._archive_btn)
         status_btn_layout.addStretch(1)
@@ -90,6 +107,7 @@ class ActivityPanel(QWidget):
         slot_list_layout.addWidget(self._slot_table)
         self._slot_list_group.setLayout(slot_list_layout)
 
+        # Left column in a scroll area so the form never overflows
         left_col = QVBoxLayout()
         left_col.setSpacing(12)
         left_col.addWidget(self._activity_group)
@@ -97,18 +115,26 @@ class ActivityPanel(QWidget):
         left_col.addStretch(1)
         left_widget = QWidget()
         left_widget.setLayout(left_col)
+        left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_widget)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(300)
 
         right_col = QVBoxLayout()
         right_col.setSpacing(12)
-        right_col.addWidget(self._activity_list_group)
-        right_col.addWidget(self._slot_list_group)
+        right_col.addWidget(self._activity_list_group, 1)
+        right_col.addWidget(self._slot_list_group, 1)
         right_widget = QWidget()
         right_widget.setLayout(right_col)
 
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(16)
-        body_layout.addWidget(left_widget, 1)
+        body_layout.addWidget(left_scroll, 1)
         body_layout.addWidget(right_widget, 2)
 
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
@@ -117,7 +143,7 @@ class ActivityPanel(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(header)
-        layout.addLayout(body_layout)
+        layout.addLayout(body_layout, 1)
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_slots)
@@ -136,7 +162,7 @@ class ActivityPanel(QWidget):
         self._details = QLineEdit()
         self._details.setPlaceholderText("简要说明活动内容与要求")
         self._location = QLineEdit()
-        self._location.setPlaceholderText("例如：图书馆一楼大厅")
+        self._location.setPlaceholderText("例如：图书馆一楼大厅（位置签到需填坐标，如 39.9042,116.4074）")
         self._signup_mode = QComboBox()
         self._signup_mode.addItem("实时显示名额", SignupMode.REALTIME)
         self._signup_mode.addItem("非实时显示名额", SignupMode.BLIND)
@@ -144,6 +170,20 @@ class ActivityPanel(QWidget):
         self._allocation_mode.addItem("志愿优先(贪心)", AllocationMode.GREEDY)
         self._allocation_mode.addItem("先到先得", AllocationMode.FIRST_COME)
         self._allocation_mode.addItem("抽签随机", AllocationMode.LOTTERY)
+        self._checkin_mode = QComboBox()
+        self._checkin_mode.addItem("手动签到", CheckInMode.MANUAL)
+        self._checkin_mode.addItem("二维码签到", CheckInMode.QRCODE)
+        self._checkin_mode.addItem("自助签到码", CheckInMode.SELF_CODE)
+        self._checkin_mode.addItem("位置签到", CheckInMode.LOCATION)
+        self._checkin_mode.addItem("拍照签到", CheckInMode.PHOTO)
+        self._checkin_start = QDateTimeEdit(QDateTime.currentDateTime())
+        self._checkin_start.setCalendarPopup(True)
+        self._checkin_start.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._checkin_start.setSpecialValueText("不限制")
+        self._checkin_end = QDateTimeEdit(QDateTime.currentDateTime().addDays(1))
+        self._checkin_end.setCalendarPopup(True)
+        self._checkin_end.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._checkin_end.setSpecialValueText("不限制")
         self._activity_message = QLabel("")
         set_banner(self._activity_message, "info", "")
         create_btn = QPushButton("创建活动")
@@ -161,6 +201,9 @@ class ActivityPanel(QWidget):
         form.addRow("地点", self._location)
         form.addRow("名额显示", self._signup_mode)
         form.addRow("分配策略", self._allocation_mode)
+        form.addRow("签到模式", self._checkin_mode)
+        form.addRow("签到开始", self._checkin_start)
+        form.addRow("签到截止", self._checkin_end)
         form.addRow(create_btn)
         form.addRow(self._activity_message)
 
@@ -209,14 +252,18 @@ class ActivityPanel(QWidget):
 
         if not activities:
             set_table_empty(self._activity_table, 8, "暂无活动，请先创建活动")
+            self._activity_selector.blockSignals(True)
             self._activity_selector.clear()
+            self._activity_selector.blockSignals(False)
             self._load_slots()
             return
+        self._activity_table.clearSpans()
         self._activity_table.setRowCount(len(activities))
+        self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
         for row_index, activity in enumerate(activities):
-            self._activity_table.setItem(row_index, 0, QTableWidgetItem(activity["id"]))
-            self._activity_table.setItem(row_index, 1, QTableWidgetItem(activity["name"]))
+            self._activity_table.setItem(row_index, 0, QTableWidgetItem(str(activity["id"])))
+            self._activity_table.setItem(row_index, 1, QTableWidgetItem(str(activity["name"])))
             self._activity_table.setItem(row_index, 2, QTableWidgetItem(format_datetime(activity["signup_start"])))
             self._activity_table.setItem(row_index, 3, QTableWidgetItem(format_datetime(activity["signup_end"])))
             signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
@@ -232,6 +279,7 @@ class ActivityPanel(QWidget):
             status_text = format_status(activity.get("status", "draft"))
             self._activity_table.setItem(row_index, 7, make_status_item(status_text))
             self._activity_selector.addItem(activity["name"], activity["id"])
+        self._activity_selector.blockSignals(False)
 
         self._activity_table.setColumnHidden(0, True)
         self._update_status_buttons()
@@ -240,15 +288,17 @@ class ActivityPanel(QWidget):
     def _load_slots(self) -> None:
         activity_id = self._activity_selector.currentData()
         if not activity_id:
+            self._slot_table.clearSpans()
             self._slot_table.setRowCount(0)
             return
         slots = self._service.list_slots(activity_id)
         if not slots:
             set_table_empty(self._slot_table, 6, "暂无时段，请添加时段")
             return
+        self._slot_table.clearSpans()
         self._slot_table.setRowCount(len(slots))
         for row_index, slot in enumerate(slots):
-            self._slot_table.setItem(row_index, 0, QTableWidgetItem(slot["id"]))
+            self._slot_table.setItem(row_index, 0, QTableWidgetItem(str(slot["id"])))
             self._slot_table.setItem(row_index, 1, QTableWidgetItem(format_datetime(slot["start_time"])))
             self._slot_table.setItem(row_index, 2, QTableWidgetItem(format_datetime(slot["end_time"])))
             capacity = int(slot["capacity"])
@@ -277,6 +327,9 @@ class ActivityPanel(QWidget):
                 signup_mode=SignupMode(self._signup_mode.currentData()),
                 allocation_mode=AllocationMode(self._allocation_mode.currentData()),
                 location=self._location.text().strip(),
+                checkin_mode=self._checkin_mode.currentData(),
+                checkin_start=self._checkin_start.dateTime().toPython(),
+                checkin_end=self._checkin_end.dateTime().toPython(),
             )
             self.refresh()
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
@@ -284,14 +337,10 @@ class ActivityPanel(QWidget):
             set_banner(self._activity_message, "error", str(exc))
 
     def _delete_activity(self) -> None:
-        selected_rows = self._activity_table.selectedItems()
-        if not selected_rows:
+        activity_id, activity_name = self._get_selected_activity()
+        if not activity_id:
             QMessageBox.warning(self, "提示", "请先选择要删除的活动")
             return
-
-        row = selected_rows[0].row()
-        activity_id = self._activity_table.item(row, 0).text()
-        activity_name = self._activity_table.item(row, 1).text()
 
         reply = QMessageBox.question(
             self,
@@ -309,15 +358,61 @@ class ActivityPanel(QWidget):
             except (PermissionDenied, ValidationError) as exc:
                 set_banner(self._activity_message, "error", str(exc))
 
+    def _get_selected_activity(self) -> tuple[str | None, str | None]:
+        """Get the selected activity's ID and name from the table."""
+        rows = self._activity_table.selectionModel().selectedRows()
+        if not rows:
+            return None, None
+        row = rows[0].row()
+        id_item = self._activity_table.item(row, 0)
+        name_item = self._activity_table.item(row, 1)
+        if not id_item or not name_item:
+            return None, None
+        return id_item.text(), name_item.text()
+
+    def _get_selected_activity_status(self) -> str:
+        """Get the raw status value of the selected activity."""
+        rows = self._activity_table.selectionModel().selectedRows()
+        if not rows:
+            return ""
+        row = rows[0].row()
+        # Find the activity by ID to get the raw status
+        id_item = self._activity_table.item(row, 0)
+        if not id_item:
+            return ""
+        activity_id = id_item.text()
+        for activity in self._all_activities:
+            if activity["id"] == activity_id:
+                return activity.get("status", "")
+        return ""
+
+    def _is_selected_activity_owner(self) -> bool:
+        """Check if the current user is the owner of the selected activity."""
+        rows = self._activity_table.selectionModel().selectedRows()
+        if not rows:
+            return False
+        row = rows[0].row()
+        id_item = self._activity_table.item(row, 0)
+        if not id_item:
+            return False
+        activity_id = id_item.text()
+        for activity in self._all_activities:
+            if activity["id"] == activity_id:
+                return activity.get("owner_id") == self._user.id
+        return False
+
     def _change_status(self, action: str) -> None:
-        selected_rows = self._activity_table.selectedItems()
-        if not selected_rows:
+        activity_id, activity_name = self._get_selected_activity()
+        if not activity_id:
             QMessageBox.warning(self, "提示", "请先选择要操作的活动")
             return
-        row = selected_rows[0].row()
-        activity_id = self._activity_table.item(row, 0).text()
-        activity_name = self._activity_table.item(row, 1).text()
-        action_map = {"publish": "发布", "close": "结束报名", "archive": "归档"}
+        action_map = {
+            "submit_review": "提交审核",
+            "publish": "发布",
+            "reject": "退回修改",
+            "close": "结束报名",
+            "archive": "归档",
+        }
         action_text = action_map.get(action, action)
         reply = QMessageBox.question(
             self,
@@ -329,32 +424,62 @@ class ActivityPanel(QWidget):
         if reply != QMessageBox.Yes:
             return
         try:
-            if action == "publish":
+            if action == "submit_review":
+                self._service.submit_for_review(user=self._user, activity_id=activity_id)
+            elif action == "publish":
                 self._service.publish_activity(user=self._user, activity_id=activity_id)
+            elif action == "reject":
+                self._service.reject_activity(user=self._user, activity_id=activity_id)
             elif action == "close":
                 self._service.close_activity(user=self._user, activity_id=activity_id)
+                # Auto-schedule after closing only in local mode;
+                # in remote mode the API server already handles auto-scheduling
+                if self._scheduling_service and not isinstance(self._scheduling_service, RemoteSchedulingService):
+                    try:
+                        self._scheduling_service.run(activity_id)
+                    except Exception:
+                        # Rollback activity status if scheduling fails
+                        self._service.reopen_activity(user=self._user, activity_id=activity_id)
+                        raise
             elif action == "archive":
                 self._service.archive_activity(user=self._user, activity_id=activity_id)
             self.refresh()
             set_banner(self._activity_message, "success", f"活动「{activity_name}」已{action_text}")
         except (PermissionDenied, ValidationError) as exc:
-            set_banner(self._activity_message, "error", str(exc))
+            QMessageBox.warning(self, "操作失败", str(exc))
 
     def _update_status_buttons(self) -> None:
-        selected_rows = self._activity_table.selectedItems()
-        if not selected_rows:
-            self._publish_btn.setEnabled(False)
-            self._close_btn.setEnabled(False)
-            self._archive_btn.setEnabled(False)
-            self._delete_btn.setEnabled(False)
+        status = self._get_selected_activity_status()
+        has_selection = bool(status)
+        is_owner = self._is_selected_activity_owner()
+        is_super_admin = self._user.role == Role.SUPER_ADMIN
+
+        # Default: all disabled
+        self._submit_review_btn.setEnabled(False)
+        self._publish_btn.setEnabled(False)
+        self._reject_btn.setEnabled(False)
+        self._close_btn.setEnabled(False)
+        self._archive_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
+
+        if not has_selection:
             return
-        row = selected_rows[0].row()
-        status_item = self._activity_table.item(row, 7)
-        status_text = status_item.text() if status_item else ""
+
         self._delete_btn.setEnabled(True)
-        self._publish_btn.setEnabled(status_text == "草稿")
-        self._close_btn.setEnabled(status_text == "报名中")
-        self._archive_btn.setEnabled(status_text == "已结束")
+
+        if status == "draft":
+            # 组织者只能"提交审核"，超级管理员可直接"发布"
+            self._submit_review_btn.setEnabled(True)
+            self._publish_btn.setEnabled(is_super_admin)
+        elif status == "pending_review":
+            # 超级管理员始终可发布（即使自己是创建者）；非创建者（审核人）可发布和退回
+            self._publish_btn.setEnabled(is_super_admin or not is_owner)
+            self._reject_btn.setEnabled(not is_owner)
+        elif status == "open":
+            self._close_btn.setEnabled(True)
+        elif status == "closed":
+            self._archive_btn.setEnabled(True)
+        # archived: only delete is enabled
 
     def _add_slot(self) -> None:
         try:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import threading
 import time
@@ -16,7 +17,7 @@ from app.application.registration_service import RegistrationService
 from app.application.scheduling_service import SchedulingService
 from app.application.user_service import UserService
 from app.domain.exceptions import CapacityExceeded, ConflictError, PermissionDenied, ValidationError
-from app.domain.models import AllocationMode, CheckInStatus, Role, SignupMode, User
+from app.domain.models import ActivityStatus, AllocationMode, CheckInMode, CheckInStatus, RegistrationStatus, Role, SignupMode, User
 from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
@@ -26,6 +27,8 @@ from app.infrastructure.repositories import (
     TimeSlotRepository,
     UserRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Campus Scheduler API", version="1.0")
 
@@ -49,7 +52,7 @@ user_service = UserService(user_repo)
 activity_service = ActivityService(activity_repo, slot_repo)
 registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
 scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
-checkin_service = CheckInService(checkin_repo, schedule_repo)
+checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
 
 _tokens: dict[str, tuple[str, float]] = {}
 _tokens_lock = threading.Lock()
@@ -86,6 +89,9 @@ class ActivityCreateRequest(BaseModel):
     signup_mode: SignupMode = SignupMode.REALTIME
     allocation_mode: AllocationMode = AllocationMode.GREEDY
     location: str = ""
+    checkin_mode: CheckInMode = CheckInMode.MANUAL
+    checkin_start: datetime | None = None
+    checkin_end: datetime | None = None
 
 
 class SlotCreateRequest(BaseModel):
@@ -117,7 +123,32 @@ class CheckInRequest(BaseModel):
 
 
 class StatusUpdateRequest(BaseModel):
-    action: str = Field(..., pattern="^(publish|close|archive)$")
+    action: str = Field(..., pattern="^(publish|close|archive|submit_review|reject|reopen)$")
+
+
+class SelfCheckInRequest(BaseModel):
+    activity_id: str
+    slot_id: str
+    checkin_code: str
+
+
+class LocationCheckInRequest(BaseModel):
+    activity_id: str
+    slot_id: str
+    latitude: float
+    longitude: float
+
+
+class PhotoCheckInRequest(BaseModel):
+    activity_id: str
+    slot_id: str
+    photo_path: str
+
+
+class UnmarkAbsentRequest(BaseModel):
+    activity_id: str
+    user_id: str
+    slot_id: str
 
 
 def _to_user(record: dict) -> User:
@@ -184,9 +215,24 @@ def login(payload: LoginRequest) -> dict:
 
 
 @app.get("/users")
-def list_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
+def list_users(
+    username: Optional[str] = None,
+    current_user: User = Depends(_get_current_user),
+) -> list[dict]:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    if username:
+        user = user_repo.get_by_username(username)
+        return [user] if user else []
     return user_repo.list_all()
+
+
+@app.get("/users/{user_id}")
+def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    user = user_repo.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return user
 
 
 @app.post("/users")
@@ -241,6 +287,9 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
             signup_mode=payload.signup_mode,
             allocation_mode=payload.allocation_mode,
             location=payload.location,
+            checkin_mode=payload.checkin_mode.value,
+            checkin_start=payload.checkin_start,
+            checkin_end=payload.checkin_end,
         )
     except Exception as exc:
         _handle_domain_error(exc)
@@ -256,6 +305,10 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         "signup_mode": activity.signup_mode.value,
         "allocation_mode": activity.allocation_mode.value,
         "location": activity.location,
+        "checkin_code": activity.checkin_code,
+        "checkin_mode": activity.checkin_mode.value,
+        "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
+        "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
     }
 
 
@@ -280,8 +333,24 @@ def update_activity_status(
             activity_service.publish_activity(user=current_user, activity_id=activity_id)
         elif payload.action == "close":
             activity_service.close_activity(user=current_user, activity_id=activity_id)
+            # Auto-schedule after closing; rollback to OPEN on failure
+            try:
+                scheduling_service.run(activity_id)
+            except Exception as e:
+                logger.warning(f"Auto-scheduling failed for activity {activity_id}: {e}")
+                try:
+                    activity_service.reopen_activity(user=current_user, activity_id=activity_id)
+                except Exception:
+                    pass
+                raise ValidationError(f"排班失败，活动已重新开放：{e}") from e
+        elif payload.action == "reopen":
+            activity_service.reopen_activity(user=current_user, activity_id=activity_id)
         elif payload.action == "archive":
             activity_service.archive_activity(user=current_user, activity_id=activity_id)
+        elif payload.action == "submit_review":
+            activity_service.submit_for_review(user=current_user, activity_id=activity_id)
+        elif payload.action == "reject":
+            activity_service.reject_activity(user=current_user, activity_id=activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
         raise
@@ -291,6 +360,14 @@ def update_activity_status(
 @app.get("/activities/{activity_id}/slots")
 def list_slots(activity_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
     return slot_repo.list_by_activity(activity_id)
+
+
+@app.get("/slots/{slot_id}")
+def get_slot(slot_id: str, _: User = Depends(_get_current_user)) -> dict:
+    slot = slot_repo.get(slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="时段不存在")
+    return slot
 
 
 @app.post("/activities/{activity_id}/slots")
@@ -324,17 +401,28 @@ def add_slot(
 def list_registrations(
     user_id: Optional[str] = None,
     activity_id: Optional[str] = None,
+    status: Optional[str] = None,
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise HTTPException(status_code=403, detail="权限不足")
-        return reg_repo.list_pending(activity_id)
+        if status == "pending":
+            return reg_repo.list_pending(activity_id)
+        return reg_repo.list_by_activity(activity_id)
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
         return reg_repo.list_by_user(user_id)
     return []
+
+
+@app.get("/registrations/{registration_id}")
+def get_registration(registration_id: str, _: User = Depends(_get_current_user)) -> dict:
+    reg = reg_repo.get(registration_id)
+    if not reg:
+        raise HTTPException(status_code=404, detail="报名记录不存在")
+    return reg
 
 
 @app.post("/registrations")
@@ -417,6 +505,14 @@ def list_checkins(
     return []
 
 
+@app.get("/checkins/{checkin_id}")
+def get_checkin(checkin_id: str, _: User = Depends(_get_current_user)) -> dict:
+    ci = checkin_repo.get(checkin_id)
+    if not ci:
+        raise HTTPException(status_code=404, detail="签到记录不存在")
+    return ci
+
+
 @app.post("/checkins")
 def create_checkin(
     payload: CheckInRequest,
@@ -440,21 +536,174 @@ def create_checkin(
         "slot_id": checkin.slot_id,
         "status": checkin.status.value,
         "checked_at": checkin.checked_at.isoformat(),
+        "latitude": checkin.latitude,
+        "longitude": checkin.longitude,
+        "photo_path": checkin.photo_path,
     }
 
 
-@app.post("/checkins/{checkin_id}/absent")
+class MarkAbsentRequest(BaseModel):
+    activity_id: str
+    user_id: str
+    slot_id: str
+
+
+@app.post("/checkins/absent")
 def mark_absent(
-    checkin_id: str,
+    payload: MarkAbsentRequest,
     current_user: User = Depends(_get_current_user),
 ) -> dict:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     try:
-        checkin_service.mark_absent(user=current_user, checkin_id=checkin_id)
+        checkin_service.mark_absent(
+            user=current_user,
+            activity_id=payload.activity_id,
+            user_id=payload.user_id,
+            slot_id=payload.slot_id,
+        )
     except Exception as exc:
         _handle_domain_error(exc)
         raise
     return {"ok": True}
+
+
+@app.post("/checkins/unmark_absent")
+def unmark_absent(
+    payload: UnmarkAbsentRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        checkin_service.unmark_absent(
+            user=current_user,
+            activity_id=payload.activity_id,
+            user_id=payload.user_id,
+            slot_id=payload.slot_id,
+        )
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"ok": True}
+
+
+@app.post("/activities/{activity_id}/generate_checkin_code")
+def generate_checkin_code(
+    activity_id: str,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        code = checkin_service.generate_checkin_code(user=current_user, activity_id=activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"checkin_code": code}
+
+
+@app.post("/checkins/self")
+def self_check_in(
+    payload: SelfCheckInRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    try:
+        checkin = checkin_service.self_check_in(
+            user_id=current_user.id,
+            activity_id=payload.activity_id,
+            slot_id=payload.slot_id,
+            checkin_code=payload.checkin_code,
+        )
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {
+        "id": checkin.id,
+        "activity_id": checkin.activity_id,
+        "user_id": checkin.user_id,
+        "slot_id": checkin.slot_id,
+        "status": checkin.status.value,
+        "checked_at": checkin.checked_at.isoformat(),
+        "latitude": checkin.latitude,
+        "longitude": checkin.longitude,
+        "photo_path": checkin.photo_path,
+    }
+
+
+@app.post("/checkins/location")
+def location_check_in(
+    payload: LocationCheckInRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    try:
+        checkin = checkin_service.location_check_in(
+            user_id=current_user.id,
+            activity_id=payload.activity_id,
+            slot_id=payload.slot_id,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+        )
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {
+        "id": checkin.id,
+        "activity_id": checkin.activity_id,
+        "user_id": checkin.user_id,
+        "slot_id": checkin.slot_id,
+        "status": checkin.status.value,
+        "checked_at": checkin.checked_at.isoformat(),
+        "latitude": checkin.latitude,
+        "longitude": checkin.longitude,
+        "photo_path": checkin.photo_path,
+    }
+
+
+@app.post("/checkins/photo")
+def photo_check_in(
+    payload: PhotoCheckInRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    try:
+        checkin = checkin_service.photo_check_in(
+            user_id=current_user.id,
+            activity_id=payload.activity_id,
+            slot_id=payload.slot_id,
+            photo_path=payload.photo_path,
+        )
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {
+        "id": checkin.id,
+        "activity_id": checkin.activity_id,
+        "user_id": checkin.user_id,
+        "slot_id": checkin.slot_id,
+        "status": checkin.status.value,
+        "checked_at": checkin.checked_at.isoformat(),
+        "latitude": checkin.latitude,
+        "longitude": checkin.longitude,
+        "photo_path": checkin.photo_path,
+    }
+
+
+@app.get("/activities/{activity_id}/checkin_stats")
+def checkin_stats(
+    activity_id: str,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    # 允许管理员查看所有活动统计，普通用户查看自己参与的活动
+    activity = activity_repo.get(activity_id)
+    if not activity:
+        raise HTTPException(status_code=404, detail="活动不存在")
+    if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        # 普通用户只能查看自己参与的活动的统计
+        user_schedules = schedule_repo.list_by_user(current_user.id)
+        if not any(s["activity_id"] == activity_id for s in user_schedules):
+            raise HTTPException(status_code=403, detail="权限不足")
+    try:
+        return checkin_service.get_checkin_stats(activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
 
 
 @app.get("/metrics/overview")
@@ -465,6 +714,11 @@ def metrics_overview(_: User = Depends(_get_current_user)) -> dict:
         "registrations": reg_repo.count_all(),
         "schedules": schedule_repo.count_all(),
     }
+
+
+@app.get("/metrics/slots-count")
+def metrics_slots_count(status: str, _: User = Depends(_get_current_user)) -> dict:
+    return {"count": slot_repo.count_by_activity_status(status)}
 
 
 @app.get("/metrics/users/{user_id}")
