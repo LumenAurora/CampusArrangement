@@ -87,7 +87,7 @@ def main() -> int:
         activity_service = ActivityService(activity_repo, slot_repo)
         registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
         scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
-        checkin_service = CheckInService(checkin_repo, schedule_repo)
+        checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
 
     if login.user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
         window = AdminWindow(

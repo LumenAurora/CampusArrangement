@@ -50,8 +50,9 @@ class NavigationWindow(QMainWindow):
         self._nav.setFocusPolicy(Qt.NoFocus)
 
         self._stack = QStackedWidget()
-        self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
+        self._nav.currentRowChanged.connect(self._on_page_changed)
         self._page_keys: list[str] = []
+        self._pages: list[QWidget] = []
 
         # 存储页面标题用于折叠时显示
         self._page_titles: list[str] = []
@@ -77,6 +78,7 @@ class NavigationWindow(QMainWindow):
     def set_pages(self, pages: list[tuple[str, str, QWidget, object | None]]) -> None:
         self._nav.clear()
         self._page_titles = []
+        self._pages = []
         while self._stack.count() > 0:
             widget = self._stack.widget(0)
             self._stack.removeWidget(widget)
@@ -91,6 +93,7 @@ class NavigationWindow(QMainWindow):
             self._stack.addWidget(widget)
             self._page_keys.append(key)
             self._page_titles.append(title)
+            self._pages.append(widget)
 
         self._apply_default_page()
 
@@ -178,6 +181,14 @@ class NavigationWindow(QMainWindow):
             self._nav.setCurrentRow(self._page_keys.index(default_key))
         else:
             self._nav.setCurrentRow(0)
+
+    def _on_page_changed(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        # Refresh the page data when switching tabs
+        if 0 <= index < len(self._pages):
+            page = self._pages[index]
+            if hasattr(page, "refresh") and callable(page.refresh):
+                page.refresh()
 
     def _open_settings(self, app: QApplication) -> None:
         pages = list(zip(self._page_keys, self._page_titles))

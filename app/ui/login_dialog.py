@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.application.user_service import UserService
-from app.domain.exceptions import ValidationError
+from app.domain.exceptions import DomainError, ValidationError
 from app.ui.ui_utils import set_banner
 
 
@@ -116,7 +116,7 @@ class LoginDialog(QDialog):
                 self._username.text().strip(),
                 self._password.text(),
             )
-        except ValidationError as exc:
+        except DomainError as exc:
             set_banner(self._message, "error", str(exc))
             return
         self.user = user

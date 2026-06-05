@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -42,54 +41,57 @@ class SchedulingPanel(QWidget):
         self._activity_selector.setMinimumWidth(220)
         self._message = QLabel("")
         set_banner(self._message, "info", "")
-        run_btn = QPushButton("执行排班")
+
+        # Manual re-run button (for edge cases)
+        run_btn = QPushButton("重新排班")
+        run_btn.setObjectName("secondaryButton")
         run_btn.clicked.connect(self._run)
         export_btn = QPushButton("导出排班结果")
+        export_btn.setObjectName("primaryButton")
         export_btn.clicked.connect(self._export)
+        refresh_btn = QPushButton("刷新")
+        refresh_btn.setObjectName("secondaryButton")
+        refresh_btn.clicked.connect(self._load_results)
 
-        form = QFormLayout()
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(10)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.addRow("活动", self._activity_selector)
-        form.addRow(run_btn)
-        export_btn.setObjectName("secondaryButton")
-        form.addRow(export_btn)
-        form.addRow(self._message)
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+        btn_layout.addWidget(refresh_btn)
+        btn_layout.addWidget(run_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(export_btn)
+
+        selector_layout = QHBoxLayout()
+        selector_layout.setSpacing(12)
+        selector_layout.addWidget(QLabel("活动"))
+        selector_layout.addWidget(self._activity_selector, 1)
+        selector_layout.addStretch()
+
+        info_label = QLabel("排班在报名结束后自动执行。如需重新排班，请点击「重新排班」按钮。")
+        info_label.setObjectName("pageSubtitle")
+        info_label.setWordWrap(True)
 
         self._result_table = QTableWidget(0, 3)
         self._result_table.setHorizontalHeaderLabels(["用户", "时段", "生成时间"])
         configure_table(self._result_table)
 
-        form_group = QGroupBox("排班操作")
+        form_group = QGroupBox("排班结果")
         form_layout = QVBoxLayout()
         form_layout.setContentsMargins(12, 12, 12, 12)
-        form_layout.addLayout(form)
+        form_layout.addLayout(selector_layout)
+        form_layout.addWidget(info_label)
+        form_layout.addWidget(self._result_table)
+        form_layout.addLayout(btn_layout)
+        form_layout.addWidget(self._message)
         form_group.setLayout(form_layout)
-
-        table_group = QGroupBox("排班结果")
-        table_layout = QVBoxLayout()
-        table_layout.setContentsMargins(12, 12, 12, 12)
-        table_layout.addWidget(self._result_table)
-        table_group.setLayout(table_layout)
-
-        run_btn.setObjectName("primaryButton")
-
-        header = make_page_header("排班管理", "执行排班并导出结果")
-
-        body_layout = QHBoxLayout()
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(16)
-        body_layout.addWidget(form_group, 1)
-        body_layout.addWidget(table_group, 2)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
-        layout.addWidget(header)
-        layout.addLayout(body_layout)
+        layout.addWidget(make_page_header("排班结果", "查看自动排班结果并导出"))
+        layout.addWidget(form_group, 1)
         self.setLayout(layout)
 
+        self._activity_selector.currentIndexChanged.connect(self._load_results)
         self.refresh()
 
     def refresh(self) -> None:
@@ -107,7 +109,7 @@ class SchedulingPanel(QWidget):
             return
         results = self._schedule_repo.list_by_activity(activity_id)
         if not results:
-            set_table_empty(self._result_table, 3, "暂无排班结果")
+            set_table_empty(self._result_table, 3, "暂无排班结果（报名结束后自动生成）")
             return
         users = {user["id"]: user["username"] for user in self._user_repo.list_all()}
         slots = self._activity_service.list_slots(activity_id)
@@ -127,15 +129,6 @@ class SchedulingPanel(QWidget):
         activity_id = self._activity_selector.currentData()
         if not activity_id:
             set_banner(self._message, "error", "请选择活动")
-            return
-        reply = QMessageBox.question(
-            self,
-            "确认排班",
-            "确定要执行排班吗？\n此操作将根据报名记录生成排班结果。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
             return
         set_banner(self._message, "info", "")
         try:

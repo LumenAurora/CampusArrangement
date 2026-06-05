@@ -7,6 +7,7 @@ from app.domain.models import (
     ActivityStatus,
     AllocationMode,
     CheckIn,
+    CheckInMode,
     CheckInStatus,
     Registration,
     RegistrationStatus,
@@ -48,19 +49,25 @@ class RemoteActivityService:
         signup_mode: SignupMode = SignupMode.REALTIME,
         allocation_mode: AllocationMode = AllocationMode.GREEDY,
         location: str = "",
+        checkin_mode: str = "manual",
+        checkin_start: datetime | None = None,
+        checkin_end: datetime | None = None,
     ) -> Activity:
-        payload = self._api.post(
-            "/activities",
-            json={
-                "name": name,
-                "signup_start": signup_start.isoformat(),
-                "signup_end": signup_end.isoformat(),
-                "details": details,
-                "signup_mode": signup_mode.value,
-                "allocation_mode": allocation_mode.value,
-                "location": location,
-            },
-        )
+        json_data = {
+            "name": name,
+            "signup_start": signup_start.isoformat(),
+            "signup_end": signup_end.isoformat(),
+            "details": details,
+            "signup_mode": signup_mode.value,
+            "allocation_mode": allocation_mode.value,
+            "location": location,
+            "checkin_mode": checkin_mode,
+        }
+        if checkin_start:
+            json_data["checkin_start"] = checkin_start.isoformat()
+        if checkin_end:
+            json_data["checkin_end"] = checkin_end.isoformat()
+        payload = self._api.post("/activities", json=json_data)
         return Activity(
             id=payload["id"],
             name=payload["name"],
@@ -72,6 +79,10 @@ class RemoteActivityService:
             signup_mode=SignupMode(payload["signup_mode"]),
             allocation_mode=AllocationMode(payload["allocation_mode"]),
             location=payload.get("location", ""),
+            checkin_code=payload.get("checkin_code", ""),
+            checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
+            checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
+            checkin_end=datetime.fromisoformat(payload["checkin_end"]) if payload.get("checkin_end") else None,
         )
 
     def add_slot(
@@ -121,8 +132,17 @@ class RemoteActivityService:
     def close_activity(self, user: User, activity_id: str) -> None:
         self._api.post(f"/activities/{activity_id}/status", json={"action": "close"})
 
+    def reopen_activity(self, user: User, activity_id: str) -> None:
+        self._api.post(f"/activities/{activity_id}/status", json={"action": "reopen"})
+
     def archive_activity(self, user: User, activity_id: str) -> None:
         self._api.post(f"/activities/{activity_id}/status", json={"action": "archive"})
+
+    def submit_for_review(self, user: User, activity_id: str) -> None:
+        self._api.post(f"/activities/{activity_id}/status", json={"action": "submit_review"})
+
+    def reject_activity(self, user: User, activity_id: str) -> None:
+        self._api.post(f"/activities/{activity_id}/status", json={"action": "reject"})
 
 
 class RemoteRegistrationService:
@@ -176,13 +196,90 @@ class RemoteCheckInService:
             slot_id=payload["slot_id"],
             status=CheckInStatus(payload["status"]),
             checked_at=datetime.fromisoformat(payload["checked_at"]),
+            latitude=payload.get("latitude"),
+            longitude=payload.get("longitude"),
+            photo_path=payload.get("photo_path", ""),
         )
 
-    def mark_absent(self, user: User, checkin_id: str) -> None:
-        self._api.post(f"/checkins/{checkin_id}/absent", json={})
+    def mark_absent(self, user: User, activity_id: str, user_id: str, slot_id: str) -> None:
+        self._api.post("/checkins/absent", json={"activity_id": activity_id, "user_id": user_id, "slot_id": slot_id})
+
+    def unmark_absent(self, user: User, activity_id: str, user_id: str, slot_id: str) -> None:
+        self._api.post("/checkins/unmark_absent", json={"activity_id": activity_id, "user_id": user_id, "slot_id": slot_id})
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
         return self._api.get("/checkins", params={"activity_id": activity_id})
 
     def list_by_user(self, user_id: str) -> list[dict]:
         return self._api.get("/checkins", params={"user_id": user_id})
+
+    def self_check_in(self, user_id: str, activity_id: str, slot_id: str, checkin_code: str) -> CheckIn:
+        payload = self._api.post(
+            "/checkins/self",
+            json={"activity_id": activity_id, "slot_id": slot_id, "checkin_code": checkin_code},
+        )
+        return CheckIn(
+            id=payload["id"],
+            activity_id=payload["activity_id"],
+            user_id=payload["user_id"],
+            slot_id=payload["slot_id"],
+            status=CheckInStatus(payload["status"]),
+            checked_at=datetime.fromisoformat(payload["checked_at"]),
+            latitude=payload.get("latitude"),
+            longitude=payload.get("longitude"),
+            photo_path=payload.get("photo_path", ""),
+        )
+
+    def location_check_in(
+        self,
+        user_id: str,
+        activity_id: str,
+        slot_id: str,
+        latitude: float,
+        longitude: float,
+    ) -> CheckIn:
+        payload = self._api.post(
+            "/checkins/location",
+            json={"activity_id": activity_id, "slot_id": slot_id, "latitude": latitude, "longitude": longitude},
+        )
+        return CheckIn(
+            id=payload["id"],
+            activity_id=payload["activity_id"],
+            user_id=payload["user_id"],
+            slot_id=payload["slot_id"],
+            status=CheckInStatus(payload["status"]),
+            checked_at=datetime.fromisoformat(payload["checked_at"]),
+            latitude=payload.get("latitude"),
+            longitude=payload.get("longitude"),
+            photo_path=payload.get("photo_path", ""),
+        )
+
+    def photo_check_in(
+        self,
+        user_id: str,
+        activity_id: str,
+        slot_id: str,
+        photo_path: str,
+    ) -> CheckIn:
+        payload = self._api.post(
+            "/checkins/photo",
+            json={"activity_id": activity_id, "slot_id": slot_id, "photo_path": photo_path},
+        )
+        return CheckIn(
+            id=payload["id"],
+            activity_id=payload["activity_id"],
+            user_id=payload["user_id"],
+            slot_id=payload["slot_id"],
+            status=CheckInStatus(payload["status"]),
+            checked_at=datetime.fromisoformat(payload["checked_at"]),
+            latitude=payload.get("latitude"),
+            longitude=payload.get("longitude"),
+            photo_path=payload.get("photo_path", ""),
+        )
+
+    def get_checkin_stats(self, activity_id: str) -> dict:
+        return self._api.get(f"/activities/{activity_id}/checkin_stats")
+
+    def generate_checkin_code(self, user: User, activity_id: str) -> str:
+        payload = self._api.post(f"/activities/{activity_id}/generate_checkin_code", json={})
+        return payload.get("checkin_code", "")

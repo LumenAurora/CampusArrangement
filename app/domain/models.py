@@ -14,6 +14,7 @@ class Role(str, Enum):
 
 class ActivityStatus(str, Enum):
     DRAFT = "draft"
+    PENDING_REVIEW = "pending_review"
     OPEN = "open"
     CLOSED = "closed"
     ARCHIVED = "archived"
@@ -30,11 +31,20 @@ class AllocationMode(str, Enum):
     LOTTERY = "lottery"
 
 
+class CheckInMode(str, Enum):
+    MANUAL = "manual"
+    QRCODE = "qrcode"
+    SELF_CODE = "self_code"
+    LOCATION = "location"
+    PHOTO = "photo"
+
+
 class RegistrationStatus(str, Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     ASSIGNED = "assigned"
     CANCELLED = "cancelled"
+    NOT_ASSIGNED = "not_assigned"
 
 
 class CheckInStatus(str, Enum):
@@ -65,6 +75,10 @@ class Activity:
     signup_mode: SignupMode
     allocation_mode: AllocationMode
     location: str
+    checkin_code: str = ""
+    checkin_mode: CheckInMode = CheckInMode.MANUAL
+    checkin_start: datetime | None = None
+    checkin_end: datetime | None = None
 
     @staticmethod
     def create(
@@ -76,6 +90,10 @@ class Activity:
         signup_mode: SignupMode = SignupMode.REALTIME,
         allocation_mode: AllocationMode = AllocationMode.GREEDY,
         location: str = "",
+        checkin_code: str = "",
+        checkin_mode: CheckInMode = CheckInMode.MANUAL,
+        checkin_start: datetime | None = None,
+        checkin_end: datetime | None = None,
     ) -> "Activity":
         return Activity(
             id=str(uuid4()),
@@ -88,6 +106,10 @@ class Activity:
             signup_mode=signup_mode,
             allocation_mode=allocation_mode,
             location=location,
+            checkin_code=checkin_code,
+            checkin_mode=checkin_mode,
+            checkin_start=checkin_start,
+            checkin_end=checkin_end,
         )
 
 
@@ -162,9 +184,20 @@ class CheckIn:
     slot_id: str
     status: CheckInStatus
     checked_at: datetime
+    latitude: float | None = None
+    longitude: float | None = None
+    photo_path: str = ""
 
     @staticmethod
-    def create(activity_id: str, user_id: str, slot_id: str, status: CheckInStatus = CheckInStatus.CHECKED_IN) -> "CheckIn":
+    def create(
+        activity_id: str,
+        user_id: str,
+        slot_id: str,
+        status: CheckInStatus = CheckInStatus.CHECKED_IN,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        photo_path: str = "",
+    ) -> "CheckIn":
         return CheckIn(
             id=str(uuid4()),
             activity_id=activity_id,
@@ -172,4 +205,7 @@ class CheckIn:
             slot_id=slot_id,
             status=status,
             checked_at=datetime.now(timezone.utc),
+            latitude=latitude,
+            longitude=longitude,
+            photo_path=photo_path,
         )

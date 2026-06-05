@@ -45,7 +45,7 @@ class ScenarioTests(unittest.TestCase):
             self.schedule_repo,
             self.activity_repo,
         )
-        self.checkin_service = CheckInService(self.checkin_repo, self.schedule_repo)
+        self.checkin_service = CheckInService(self.checkin_repo, self.schedule_repo, self.activity_repo)
 
     def test_full_flow_blind_lottery(self) -> None:
         admin = self.user_service.register("admin1", "pass", Role.SUPER_ADMIN)

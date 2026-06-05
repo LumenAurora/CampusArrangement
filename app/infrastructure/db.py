@@ -84,7 +84,7 @@ def init_db() -> None:
             );
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_activity_active
-                ON registrations(user_id, activity_id) WHERE status != 'cancelled';
+                ON registrations(user_id, activity_id) WHERE status NOT IN ('cancelled', 'not_assigned');
 
             CREATE TABLE IF NOT EXISTS schedule_results (
                 id TEXT PRIMARY KEY,
@@ -114,6 +114,13 @@ def init_db() -> None:
         _ensure_column(conn, "activities", "signup_mode", "signup_mode TEXT NOT NULL DEFAULT 'realtime'")
         _ensure_column(conn, "activities", "allocation_mode", "allocation_mode TEXT NOT NULL DEFAULT 'greedy'")
         _ensure_column(conn, "activities", "location", "location TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "activities", "checkin_code", "checkin_code TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "activities", "checkin_mode", "checkin_mode TEXT NOT NULL DEFAULT 'manual'")
+        _ensure_column(conn, "activities", "checkin_start", "checkin_start TEXT")
+        _ensure_column(conn, "activities", "checkin_end", "checkin_end TEXT")
+        _ensure_column(conn, "checkins", "latitude", "latitude REAL")
+        _ensure_column(conn, "checkins", "longitude", "longitude REAL")
+        _ensure_column(conn, "checkins", "photo_path", "photo_path TEXT NOT NULL DEFAULT ''")
         conn.commit()
     finally:
         conn.close()
