@@ -104,8 +104,8 @@ class ActivityRepository:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -122,6 +122,7 @@ class ActivityRepository:
                     activity.checkin_mode.value,
                     activity.checkin_start.isoformat() if activity.checkin_start else None,
                     activity.checkin_end.isoformat() if activity.checkin_end else None,
+                    activity.group_id,
                 ),
             )
             conn.commit()
@@ -701,3 +702,149 @@ class CheckInRepository:
             conn.commit()
         finally:
             conn.close()
+
+
+class GroupRepository:
+    """小组数据访问"""
+
+    def create(self, group) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO groups (id, name, description, owner_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (group.id, group.name, group.description, group.owner_id, group.created_at.isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get(self, group_id: str) -> dict | None:
+        conn = get_connection()
+        try:
+            row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_all(self) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute("SELECT * FROM groups ORDER BY created_at DESC").fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_owner(self, owner_id: str) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM groups WHERE owner_id = ? ORDER BY created_at DESC", (owner_id,)
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_user(self, user_id: str) -> list[dict]:
+        """获取用户所属的小组（已审批通过的）"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT g.* FROM groups g
+                   INNER JOIN group_members gm ON g.id = gm.group_id
+                   WHERE gm.user_id = ? AND gm.status = 'approved'""",
+                (user_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def delete(self, group_id: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    # ── 成员管理 ────────────────────────────────────────────
+
+    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending") -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, ?, ?)",
+                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_member_status(self, group_id: str, user_id: str, status: str) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE group_members SET status = ? WHERE group_id = ? AND user_id = ?",
+                (status, group_id, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def remove_member(self, group_id: str, user_id: str) -> bool:
+        conn = get_connection()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def list_members(self, group_id: str) -> list[dict]:
+        """获取小组成员（含用户信息）"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT gm.*, u.username FROM group_members gm
+                   INNER JOIN users u ON gm.user_id = u.id
+                   WHERE gm.group_id = ?
+                   ORDER BY gm.status, gm.joined_at""",
+                (group_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_member(self, group_id: str, user_id: str) -> dict | None:
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_pending_applications(self, owner_id: str) -> list[dict]:
+        """管理员查看自己小组中待审批的申请"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT gm.*, g.name as group_name, u.username
+                   FROM group_members gm
+                   INNER JOIN groups g ON gm.group_id = g.id
+                   INNER JOIN users u ON gm.user_id = u.id
+                   WHERE g.owner_id = ? AND gm.status = 'pending'
+                   ORDER BY gm.joined_at""",
+                (owner_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def is_member(self, group_id: str, user_id: str) -> bool:
+        """检查用户是否为已审批的小组成员"""
+        row = self.get_member(group_id, user_id)
+        return row is not None and row.get("status") == "approved"

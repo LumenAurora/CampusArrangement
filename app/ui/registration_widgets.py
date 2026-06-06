@@ -27,7 +27,7 @@ from app.application.registration_service import RegistrationService
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
 from app.domain.models import ActivityStatus, ActivityType, RegistrationStatus, SignupMode, User
 from app.infrastructure.notifications import notify
-from app.infrastructure.repositories import RegistrationRepository
+from app.infrastructure.repositories import GroupRepository, RegistrationRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
     CountdownLabel,
@@ -298,12 +298,14 @@ class RegistrationPanel(QWidget):
         registration_service: RegistrationService,
         user: User,
         reg_repo: RegistrationRepository,
+        group_repo: GroupRepository | None = None,
     ) -> None:
         super().__init__()
         self._activity_service = activity_service
         self._registration_service = registration_service
         self._user = user
         self._reg_repo = reg_repo
+        self._group_repo = group_repo
 
         self._activity_selector = StyledComboBox()
         self._activity_selector.setMinimumWidth(220)
@@ -422,10 +424,16 @@ class RegistrationPanel(QWidget):
 
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
+        # 过滤：只显示用户有权限报名的活动（公开 + 所在小组）
+        if self._group_repo:
+            activities = [
+                a for a in activities
+                if not a.get("group_id") or self._group_repo.is_member(a.get("group_id", ""), self._user.id)
+            ]
         self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
         if not activities:
-            set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动")
+            set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动或加入小组")
             self._activity_selector.blockSignals(False)
             self._load_my_registrations()
             return

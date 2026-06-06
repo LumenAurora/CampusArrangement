@@ -27,6 +27,7 @@ class ActivityService:
         checkin_mode: str = "manual",
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
+        group_id: str | None = None,
     ) -> Activity:
         if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise PermissionDenied("仅组织者或管理员可创建活动")
@@ -65,6 +66,7 @@ class ActivityService:
             checkin_mode=checkin_mode_enum,
             checkin_start=checkin_start,
             checkin_end=checkin_end,
+            group_id=group_id,
         )
         self._activity_repo.create(activity)
         return activity
