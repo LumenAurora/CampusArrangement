@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
 from app.domain.models import ActivityStatus, Registration, RegistrationStatus, SignupMode
 from app.infrastructure.db import transaction
@@ -25,6 +27,22 @@ class RegistrationService:
             raise ValidationError("活动不存在")
         if activity["status"] != ActivityStatus.OPEN.value:
             raise ValidationError("该活动当前不在报名中")
+        # 校验报名时间窗口
+        now = datetime.now(timezone.utc)
+        signup_start = activity.get("signup_start")
+        signup_end = activity.get("signup_end")
+        if signup_start:
+            start = datetime.fromisoformat(str(signup_start)) if isinstance(signup_start, str) else signup_start
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if now < start:
+                raise ValidationError("报名尚未开始")
+        if signup_end:
+            end = datetime.fromisoformat(str(signup_end)) if isinstance(signup_end, str) else signup_end
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            if now > end:
+                raise ValidationError("报名已截止")
         slot = self._slot_repo.get(slot_id)
         if not slot or slot["activity_id"] != activity_id:
             raise ValidationError("所选时段不属于该活动")

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
@@ -37,6 +38,7 @@ from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
+    ItemDetailDialog,
     ModeSelector,
     SearchBox,
     StyledComboBox,
@@ -244,11 +246,38 @@ class ActivityPanel(QWidget):
         slot_list_layout.addWidget(self._slot_tree)
         self._slot_list_group.setLayout(slot_list_layout)
 
-        # Left column in a scroll area so the form never overflows
+        # Left column: tab-based layout to reduce visual clutter
+        p = get_palette()
+        tab_widget = QTabWidget()
+        tab_widget.addTab(self._activity_group, "创建活动")
+        tab_widget.addTab(self._slot_group, "添加选项")
+        tab_widget.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: none;
+                background: transparent;
+            }}
+            QTabBar::tab {{
+                background: {p.btn_secondary_bg};
+                color: {p.btn_secondary_fg};
+                border: none;
+                border-radius: 8px;
+                padding: 8px 20px;
+                margin: 2px;
+                font-weight: 600;
+                font-size: 12px;
+            }}
+            QTabBar::tab:selected {{
+                background: {p.accent};
+                color: {p.text_on_accent};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {p.btn_secondary_hover};
+            }}
+        """)
+
         left_col = QVBoxLayout()
         left_col.setSpacing(12)
-        left_col.addWidget(self._activity_group)
-        left_col.addWidget(self._slot_group)
+        left_col.addWidget(tab_widget)
         left_col.addStretch(1)
         left_widget = QWidget()
         left_widget.setLayout(left_col)
@@ -289,6 +318,7 @@ class ActivityPanel(QWidget):
 
         self._activity_selector.currentIndexChanged.connect(self._load_slots)
         self._activity_table.itemSelectionChanged.connect(self._update_status_buttons)
+        self._activity_table.cellDoubleClicked.connect(self._on_activity_double_clicked)
         self.refresh()
 
     def _init_activity_form(self) -> None:
@@ -543,6 +573,34 @@ class ActivityPanel(QWidget):
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
         self._filter_activities(self._search_box.text())
+
+    def _on_activity_double_clicked(self, row: int, _col: int) -> None:
+        id_item = self._activity_table.item(row, 0)
+        if not id_item:
+            return
+        activity_id = id_item.text()
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if not activity:
+            return
+        signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
+        allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value)
+        allocation_text = {
+            AllocationMode.GREEDY.value: "志愿优先",
+            AllocationMode.FIRST_COME.value: "先到先得",
+            AllocationMode.LOTTERY.value: "抽签",
+        }.get(allocation_mode, "志愿优先")
+        data = {
+            "ID": str(activity.get("id", "")),
+            "名称": activity.get("name", ""),
+            "报名开始": format_datetime(activity["signup_start"]) if activity.get("signup_start") else "—",
+            "报名截止": format_datetime(activity["signup_end"]) if activity.get("signup_end") else "—",
+            "名额显示": signup_mode_text,
+            "分配策略": allocation_text,
+            "地点": activity.get("location") or "—",
+            "状态": format_activity_status(activity),
+            "详情": activity.get("details") or "—",
+        }
+        ItemDetailDialog("活动详情", data, self).exec()
 
     def _filter_activities(self, query: str) -> None:
         query = query.strip().lower()

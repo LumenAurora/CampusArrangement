@@ -302,7 +302,7 @@ QComboBox QAbstractItemView {{
     background: {p.bg_card};
     color: {p.text_primary};
     border: 1px solid {p.border};
-    border-radius: 12px;
+    border-radius: 0px;
     padding: 6px;
     outline: none;
     selection-background-color: {p.accent_soft};
@@ -327,7 +327,7 @@ QComboBox QAbstractItemView::viewport {{
 QComboBox QListView {{
     background: {p.bg_card};
     border: 1px solid {p.border};
-    border-radius: 12px;
+    border-radius: 0px;
     padding: 6px;
     outline: none;
 }}

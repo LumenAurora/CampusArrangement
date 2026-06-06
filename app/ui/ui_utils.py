@@ -7,9 +7,13 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QFormLayout,
+    QFrame,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -176,6 +180,11 @@ def make_status_item(text: str) -> QTableWidgetItem:
     p = get_palette()
     color_map = {
         "报名中": (p.success_fg, p.success_bg),
+        "报名未开始": (p.accent, p.accent_soft),
+        "报名已截止": (p.error_fg, p.error_bg),
+        "签到未开始": (p.accent, p.accent_soft),
+        "签到中": (p.success_fg, p.success_bg),
+        "签到已结束": (p.error_fg, p.error_bg),
         "已结束": (p.error_fg, p.error_bg),
         "已归档": (p.text_tertiary, p.bg_sidebar),
         "草稿": (p.warning_fg, p.warning_bg),
@@ -269,6 +278,13 @@ class StyledComboBox(QComboBox):
                 container.setAttribute(Qt.WA_TranslucentBackground)
                 container.setAutoFillBackground(False)
                 container.setStyleSheet("background: transparent;")
+                # Windows 上 WA_TranslucentBackground 需要 FramelessWindowHint 才能生效
+                if container.isWindow():
+                    container.setWindowFlags(
+                        container.windowFlags() | Qt.FramelessWindowHint
+                    )
+                    container.setAttribute(Qt.WA_TranslucentBackground)
+                    container.show()
                 container = container.parent()
 
 
@@ -289,3 +305,47 @@ class SearchBox(QLineEdit):
         self.setPlaceholderText("搜索...")
         self.setClearButtonEnabled(True)
         self.setObjectName("searchBox")
+
+
+class ItemDetailDialog(QDialog):
+    """Generic dialog to show detailed key-value information from a table row."""
+    def __init__(self, title: str, data: dict[str, str], parent=None) -> None:
+        super().__init__(parent)
+        p = get_palette()
+        self.setWindowTitle(title)
+        self.setMinimumWidth(400)
+        self.setStyleSheet(f"background: {p.bg_card};")
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        layout.addWidget(title_label)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color: {p.border_light};")
+        layout.addWidget(sep)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(8)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        for key, value in data.items():
+            key_label = QLabel(f"{key}:")
+            key_label.setStyleSheet(f"color: {p.text_secondary}; font-weight: 600;")
+            val_label = QLabel(str(value) if value else "—")
+            val_label.setWordWrap(True)
+            val_label.setStyleSheet(f"color: {p.text_primary};")
+            form.addRow(key_label, val_label)
+        layout.addLayout(form)
+
+        layout.addStretch()
+        close_btn = QPushButton("关闭")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+        self.setLayout(layout)
