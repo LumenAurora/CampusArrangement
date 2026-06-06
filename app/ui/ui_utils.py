@@ -45,6 +45,17 @@ def make_page_header(title: str, subtitle: str | None = None) -> QWidget:
     return container
 
 
+def format_slot_name(slot: dict) -> str:
+    """统一的 slot 名称显示：优先名称 → 时间范围 → ID → 占位符"""
+    if slot.get("name"):
+        return slot["name"]
+    if slot.get("start_time"):
+        return f"{format_datetime(slot['start_time'])} ~ {format_datetime(slot['end_time'])}"
+    if slot.get("id"):
+        return str(slot["id"])
+    return "-"
+
+
 def format_datetime(value: str) -> str:
     try:
         dt = datetime.fromisoformat(value)
@@ -56,7 +67,7 @@ def format_datetime(value: str) -> str:
 def format_status(status_str: str) -> str:
     mapping = {
         "open": "报名中",
-        "closed": "已结束",
+        "closed": "报名已结束",
         "archived": "已归档",
         "draft": "草稿",
         "pending_review": "待审核",

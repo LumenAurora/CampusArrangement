@@ -27,7 +27,6 @@ from app.ui.style import get_palette
 from app.ui.ui_utils import (
     configure_table,
     format_datetime,
-    format_slot_name,
     format_status,
     make_page_header,
     set_banner,
@@ -328,7 +327,12 @@ class SchedulingPanel(QWidget):
         slot_map = {}
         slot_type_map = {}
         for slot in slots:
-            slot_map[slot["id"]] = format_slot_name(slot)
+            if slot.get("name"):
+                slot_map[slot["id"]] = slot["name"]
+            elif slot.get("start_time"):
+                slot_map[slot["id"]] = f"{format_datetime(slot['start_time'])} - {format_datetime(slot['end_time'])}"
+            else:
+                slot_map[slot["id"]] = slot["id"]
             slot_type_raw = slot.get("slot_type", "time_slot")
             slot_type_map[slot["id"]] = {
                 "time_slot": "时段",

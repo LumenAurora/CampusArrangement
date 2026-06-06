@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QCalendarWidget,
     QComboBox,
     QDateEdit,
-    QDateTimeEdit,
     QDialog,
     QFormLayout,
     QFrame,
@@ -109,7 +108,7 @@ class ActivityCalendar(QCalendarWidget):
                     fg = _color(p.text_on_accent)
                 else:
                     bg = _color(p.success_fg)
-                    fg = _color(p.text_on_accent)
+                    fg = _color("#ffffff")
 
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(bg)
@@ -320,7 +319,7 @@ class WeekView(QWidget):
                     fg = _color(p.text_on_accent)
                 else:
                     bg = _color(p.success_fg)
-                    fg = _color(p.text_on_accent)
+                    fg = _color("#ffffff")
 
                 bar = QRectF(x + 3, ey + 2, day_w - 6, eh - 4)
                 painter.setPen(Qt.NoPen)
@@ -499,7 +498,7 @@ class DayView(QWidget):
                 fg = _color(p.text_on_accent)
             else:
                 bg = _color(p.success_fg)
-                fg = _color(p.text_on_accent)
+                fg = _color("#ffffff")
 
             bar = QRectF(self._time_col_width + 4, ey + 2, w - self._time_col_width - 8, eh - 4)
             painter.setPen(Qt.NoPen)
@@ -737,89 +736,85 @@ class CalendarPanel(QWidget):
     # ─── 数据刷新 ────────────────────────────────────────────
 
     def refresh(self) -> None:
-        try:
-            activities = self._activity_repo.list_all()
-            schedules = self._schedule_repo.list_by_user(self._user.id)
+        activities = self._activity_repo.list_all()
+        schedules = self._schedule_repo.list_by_user(self._user.id)
 
-            # 构建活动 ID -> 活动信息映射
-            activity_map: dict[str, dict] = {}
-            for a in activities:
-                activity_map[a["id"]] = a
+        # 构建活动 ID -> 活动信息映射
+        activity_map: dict[str, dict] = {}
+        for a in activities:
+            activity_map[a["id"]] = a
 
-            # 预加载所有需要的 slot
-            needed_activity_ids = {s["activity_id"] for s in schedules}
-            slot_cache: dict[str, list[dict]] = {}
-            for aid in needed_activity_ids:
-                slot_cache[aid] = self._slot_repo.list_by_activity(aid)
+        # 预加载所有需要的 slot
+        needed_activity_ids = {s["activity_id"] for s in schedules}
+        slot_cache: dict[str, list[dict]] = {}
+        for aid in needed_activity_ids:
+            slot_cache[aid] = self._slot_repo.list_by_activity(aid)
 
-            events_by_date: dict[QDate, list[dict]] = {}
-            all_events: list[dict] = []
+        events_by_date: dict[QDate, list[dict]] = {}
+        all_events: list[dict] = []
 
-            # 活动报名事件
-            for activity in activities:
-                start_time_str = activity.get("signup_start")
-                if start_time_str:
-                    try:
-                        dt = self._parse_dt(start_time_str)
-                        if dt:
-                            qdate = QDate(dt.year, dt.month, dt.day)
-                            event = {
-                                "title": activity.get("name", "未知活动"),
-                                "time": start_time_str[:16],
-                                "time_range": dt.strftime("%H:%M") + " 开始报名",
-                                "location": activity.get("location", ""),
-                                "type": "activity",
-                                "start_hour": dt.hour,
-                                "end_hour": min(dt.hour + 1, 24),
-                            }
-                            events_by_date.setdefault(qdate, []).append(event)
-                            all_events.append(event)
-                    except Exception:
-                        pass
+        # 活动报名事件
+        for activity in activities:
+            start_time_str = activity.get("signup_start")
+            if start_time_str:
+                try:
+                    dt = self._parse_dt(start_time_str)
+                    if dt:
+                        qdate = QDate(dt.year, dt.month, dt.day)
+                        event = {
+                            "title": activity.get("name", "未知活动"),
+                            "time": start_time_str[:16],
+                            "time_range": dt.strftime("%H:%M") + " 开始报名",
+                            "location": activity.get("location", ""),
+                            "type": "activity",
+                            "start_hour": dt.hour,
+                            "end_hour": min(dt.hour + 1, 24),
+                        }
+                        events_by_date.setdefault(qdate, []).append(event)
+                        all_events.append(event)
+                except Exception:
+                    pass
 
-            # 排班事件
-            for schedule in schedules:
-                slot_id = schedule.get("slot_id")
-                activity_id = schedule.get("activity_id")
-                activity = activity_map.get(activity_id)
-                activity_name = activity.get("name", "未知活动") if activity else "未知活动"
-                activity_location = activity.get("location", "") if activity else ""
+        # 排班事件
+        for schedule in schedules:
+            slot_id = schedule.get("slot_id")
+            activity_id = schedule.get("activity_id")
+            activity = activity_map.get(activity_id)
+            activity_name = activity.get("name", "未知活动") if activity else "未知活动"
+            activity_location = activity.get("location", "") if activity else ""
 
-                slots = slot_cache.get(activity_id, [])
-                for slot in slots:
-                    if slot.get("id") == slot_id:
-                        start_time_str = slot.get("start_time")
-                        end_time_str = slot.get("end_time")
-                        if start_time_str:
-                            try:
-                                dt = self._parse_dt(start_time_str)
-                                end_dt = self._parse_dt(end_time_str) if end_time_str else None
-                                if dt:
-                                    qdate = QDate(dt.year, dt.month, dt.day)
-                                    end_hour = end_dt.hour if end_dt else min(dt.hour + 1, 24)
-                                    time_range = dt.strftime("%H:%M")
-                                    if end_dt:
-                                        time_range += f" - {end_dt.strftime('%H:%M')}"
-                                    event = {
-                                        "title": activity_name,
-                                        "time": start_time_str[:16],
-                                        "time_range": time_range,
-                                        "location": activity_location,
-                                        "type": "schedule",
-                                        "start_hour": dt.hour,
-                                        "end_hour": end_hour,
-                                    }
-                                    events_by_date.setdefault(qdate, []).append(event)
-                                    all_events.append(event)
-                            except Exception:
-                                pass
-                        break  # 找到匹配的 slot 即可
+            slots = slot_cache.get(activity_id, [])
+            for slot in slots:
+                if slot.get("id") == slot_id:
+                    start_time_str = slot.get("start_time")
+                    end_time_str = slot.get("end_time")
+                    if start_time_str:
+                        try:
+                            dt = self._parse_dt(start_time_str)
+                            end_dt = self._parse_dt(end_time_str) if end_time_str else None
+                            if dt:
+                                qdate = QDate(dt.year, dt.month, dt.day)
+                                end_hour = end_dt.hour if end_dt else min(dt.hour + 1, 24)
+                                time_range = dt.strftime("%H:%M")
+                                if end_dt:
+                                    time_range += f" - {end_dt.strftime('%H:%M')}"
+                                event = {
+                                    "title": activity_name,
+                                    "time": start_time_str[:16],
+                                    "time_range": time_range,
+                                    "location": activity_location,
+                                    "type": "schedule",
+                                    "start_hour": dt.hour,
+                                    "end_hour": end_hour,
+                                }
+                                events_by_date.setdefault(qdate, []).append(event)
+                                all_events.append(event)
+                        except Exception:
+                            pass
+                    break  # 找到匹配的 slot 即可
 
-            self._events_by_date = events_by_date
-            self._all_events = all_events
-        except Exception:
-            self._events_by_date = {}
-            self._all_events = []
+        self._events_by_date = events_by_date
+        self._all_events = all_events
 
         self._apply_events_to_views()
         self._update_my_events()

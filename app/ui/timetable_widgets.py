@@ -17,11 +17,11 @@ class TimetablePanel(QWidget):
         self._activity_service = activity_service
         self._user = user
 
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["活动名称", "开始时间", "结束时间", "地点", "签到状态"])
+        self._table = QTableWidget(0, 7)
+        self._table.setHorizontalHeaderLabels(["活动名称", "选项类型", "选项名称", "开始时间", "结束时间", "地点", "签到状态"])
         configure_table(self._table)
 
-        group = QGroupBox("我的课表")
+        group = QGroupBox("我的课表/日程")
         group_layout = QVBoxLayout()
         group_layout.setContentsMargins(12, 12, 12, 12)
 
@@ -49,7 +49,7 @@ class TimetablePanel(QWidget):
         activities = {activity["id"]: activity for activity in self._activity_service.list_activities()}
         rows = self._schedule_repo.list_by_user(self._user.id)
         if not rows:
-            set_table_empty(self._table, 5, "暂无排班结果")
+            set_table_empty(self._table, 7, "暂无排班/日程结果")
             return
         slot_map: dict[str, dict] = {}
         activity_ids = {row["activity_id"] for row in rows}
@@ -68,14 +68,36 @@ class TimetablePanel(QWidget):
             self._table.setItem(row_index, 0, QTableWidgetItem(activity_name))
             slot = slot_map.get(row["slot_id"])
             if slot:
-                self._table.setItem(row_index, 1, QTableWidgetItem(format_datetime(slot["start_time"])))
-                self._table.setItem(row_index, 2, QTableWidgetItem(format_datetime(slot["end_time"])))
+                # 显示选项类型
+                slot_type = slot.get("slot_type", "time_slot")
+                type_text = {
+                    "time_slot": "时段",
+                    "topic": "选题",
+                    "course": "课程",
+                    "custom_option": "自定义"
+                }.get(slot_type, "其他")
+                self._table.setItem(row_index, 1, QTableWidgetItem(type_text))
+                
+                # 显示选项名称
+                slot_name = slot.get("name", "")
+                self._table.setItem(row_index, 2, QTableWidgetItem(slot_name))
+                
+                # 显示时间
+                start_time = format_datetime(slot["start_time"]) if slot.get("start_time") else "-"
+                self._table.setItem(row_index, 3, QTableWidgetItem(start_time))
+                end_time = format_datetime(slot["end_time"]) if slot.get("end_time") else "-"
+                self._table.setItem(row_index, 4, QTableWidgetItem(end_time))
+                
+                # 显示地点
                 location = activity.get("location", "") if activity else ""
-                self._table.setItem(row_index, 3, QTableWidgetItem(location))
+                self._table.setItem(row_index, 5, QTableWidgetItem(location))
             else:
                 self._table.setItem(row_index, 1, QTableWidgetItem(""))
                 self._table.setItem(row_index, 2, QTableWidgetItem(""))
                 self._table.setItem(row_index, 3, QTableWidgetItem(""))
+                self._table.setItem(row_index, 4, QTableWidgetItem(""))
+                self._table.setItem(row_index, 5, QTableWidgetItem(""))
+                
             status_raw = checkin_map.get(row["slot_id"], "")
             if status_raw == "checked_in":
                 status_text = "已签到"
@@ -83,4 +105,4 @@ class TimetablePanel(QWidget):
                 status_text = "缺勤"
             else:
                 status_text = "未签到"
-            self._table.setItem(row_index, 4, QTableWidgetItem(status_text))
+            self._table.setItem(row_index, 6, QTableWidgetItem(status_text))

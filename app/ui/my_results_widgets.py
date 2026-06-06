@@ -15,7 +15,7 @@ from app.application.activity_service import ActivityService
 from app.domain.models import User
 from app.infrastructure.repositories import ScheduleRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_table_empty
 
 
 class ResultDetailDialog(QDialog):
@@ -139,9 +139,6 @@ class MyResultsPanel(QWidget):
         configure_table(self._table)
         self._table.cellDoubleClicked.connect(self._on_row_double_clicked)
 
-        self._message = QLabel("")
-        set_banner(self._message, "info", "")
-
         group = QGroupBox("排班/分配结果列表")
         group_layout = QVBoxLayout()
         group_layout.setContentsMargins(12, 12, 12, 12)
@@ -155,7 +152,6 @@ class MyResultsPanel(QWidget):
         group_layout.addLayout(btn_layout)
 
         group_layout.addWidget(self._table)
-        group_layout.addWidget(self._message)
         group.setLayout(group_layout)
 
         layout = QVBoxLayout()
@@ -173,60 +169,65 @@ class MyResultsPanel(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
-        try:
-            activities = self._activity_service.list_activities()
-            self._activity_map = {activity["id"]: activity for activity in activities}
-            rows = self._schedule_repo.list_by_user(self._user.id)
-            self._rows_data = rows
+        activities = self._activity_service.list_activities()
+        self._activity_map = {activity["id"]: activity for activity in activities}
+        rows = self._schedule_repo.list_by_user(self._user.id)
+        self._rows_data = rows
 
-            if not rows:
-                set_table_empty(self._table, 5, "暂无排班/分配结果")
-                return
+        if not rows:
+            set_table_empty(self._table, 5, "暂无排班/分配结果")
+            return
 
-            activity_ids = {row["activity_id"] for row in rows}
-            self._slot_map: dict[str, dict] = {}
-            for activity_id in activity_ids:
-                for slot in self._activity_service.list_slots(activity_id):
-                    self._slot_map[slot["id"]] = slot
+        activity_ids = {row["activity_id"] for row in rows}
+        self._slot_map: dict[str, dict] = {}
+        for activity_id in activity_ids:
+            for slot in self._activity_service.list_slots(activity_id):
+                self._slot_map[slot["id"]] = slot
 
-            self._table.clearSpans()
-            self._table.setRowCount(len(rows))
-            for row_index, row in enumerate(rows):
-                activity = self._activity_map.get(row["activity_id"])
-                activity_name = activity.get("name", "未知活动") if activity else "未知活动"
-                activity_location = activity.get("location", "") if activity else ""
+        self._table.clearSpans()
+        self._table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            activity = self._activity_map.get(row["activity_id"])
+            activity_name = activity.get("name", "未知活动") if activity else "未知活动"
+            activity_location = activity.get("location", "") if activity else ""
 
-                self._table.setItem(row_index, 0, QTableWidgetItem(activity_name))
+            self._table.setItem(row_index, 0, QTableWidgetItem(activity_name))
 
-                # 时间信息
-                slot = self._slot_map.get(row["slot_id"])
-                time_text = format_slot_name(slot) if slot else "—"
-                self._table.setItem(row_index, 1, QTableWidgetItem(time_text or "—"))
+            # 时间信息
+            slot = self._slot_map.get(row["slot_id"])
+            time_text = ""
+            if slot:
+                start = slot.get("start_time", "")
+                end = slot.get("end_time", "")
+                if start:
+                    time_text = format_datetime(start)
+                    if end:
+                        time_text += f" - {format_datetime(end)}"
+                elif slot.get("name"):
+                    time_text = slot["name"]
+            self._table.setItem(row_index, 1, QTableWidgetItem(time_text or "—"))
 
-                # 地点
-                self._table.setItem(row_index, 2, QTableWidgetItem(activity_location or "—"))
+            # 地点
+            self._table.setItem(row_index, 2, QTableWidgetItem(activity_location or "—"))
 
-                # 分配结果
-                if slot:
-                    slot_type = slot.get("slot_type", "time_slot")
-                    type_text = {
-                        "time_slot": "时段",
-                        "topic": "选题",
-                        "course": "课程",
-                        "custom_option": "自定义",
-                    }.get(slot_type, "其他")
-                    if slot.get("name"):
-                        result_text = f"[{type_text}] {slot['name']}"
-                    else:
-                        result_text = f"[{type_text}] {format_datetime(slot.get('start_time', ''))}"
-                    self._table.setItem(row_index, 3, QTableWidgetItem(result_text))
+            # 分配结果
+            if slot:
+                slot_type = slot.get("slot_type", "time_slot")
+                type_text = {
+                    "time_slot": "时段",
+                    "topic": "选题",
+                    "course": "课程",
+                    "custom_option": "自定义",
+                }.get(slot_type, "其他")
+                if slot.get("name"):
+                    result_text = f"[{type_text}] {slot['name']}"
                 else:
-                    self._table.setItem(row_index, 3, QTableWidgetItem("—"))
+                    result_text = f"[{type_text}] {format_datetime(slot.get('start_time', ''))}"
+                self._table.setItem(row_index, 3, QTableWidgetItem(result_text))
+            else:
+                self._table.setItem(row_index, 3, QTableWidgetItem("—"))
 
-            self._table.setColumnHidden(4, True)
-        except Exception as exc:
-            set_table_empty(self._table, 5, "加载失败")
-            set_banner(self._message, "error", f"加载结果失败：{exc}")
+        self._table.setColumnHidden(4, True)
 
     def _on_row_double_clicked(self, row: int, _col: int) -> None:
         if row < 0 or row >= len(self._rows_data):

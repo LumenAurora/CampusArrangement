@@ -25,7 +25,7 @@ from app.domain.exceptions import ConflictError, ValidationError
 from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
 
 # 支持自助签到的签到模式
 _SELF_CHECKIN_MODES = {CheckInMode.SELF_CODE, CheckInMode.QRCODE, CheckInMode.LOCATION, CheckInMode.PHOTO}
@@ -416,7 +416,15 @@ class SelfCheckInPanel(QWidget):
         self._slot_table.setRowCount(len(activity_results))
         for row_index, result in enumerate(activity_results):
             slot = slot_map.get(result["slot_id"])
-            slot_label = format_slot_name(slot) if slot else result["slot_id"]
+            if slot:
+                if slot.get("name"):
+                    slot_label = slot["name"]
+                elif slot.get("start_time"):
+                    slot_label = f"{format_datetime(slot['start_time'])} - {format_datetime(slot['end_time'])}"
+                else:
+                    slot_label = result["slot_id"]
+            else:
+                slot_label = result["slot_id"]
             self._slot_table.setItem(row_index, 0, QTableWidgetItem(slot_label))
 
             # 地点列
