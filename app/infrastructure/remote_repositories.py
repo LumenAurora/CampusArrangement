@@ -154,7 +154,7 @@ class RemoteRegistrationRepository:
         regs = self._api.get("/registrations", params={"activity_id": activity_id, "status": "pending"})
         return regs
 
-    def reset_not_assigned_to_pending(self, activity_id: str) -> None:
+    def reset_for_rescheduling(self, activity_id: str) -> None:
         # Handled server-side during scheduling
         pass
 

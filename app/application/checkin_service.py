@@ -36,8 +36,19 @@ class CheckInService:
         return dt.astimezone(timezone.utc)
 
     def _validate_checkin_allowed(self, activity: dict) -> None:
-        """校验活动状态和签到时间窗口"""
-        if activity["status"] not in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value):
+        """校验活动状态和签到时间窗口。
+
+        允许签到的状态：
+        - CLOSED / ARCHIVED：报名已结束，始终允许签到（受签到窗口约束）。
+        - OPEN：仅当活动配置了签到时间窗口时允许签到（支持"边报名边签到"场景）。
+        """
+        status = activity["status"]
+        allowed_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value}
+        if status == ActivityStatus.OPEN.value:
+            # OPEN 状态需要配置了签到窗口才允许签到
+            if not activity.get("checkin_start") and not activity.get("checkin_end"):
+                raise ValidationError("活动报名中且未设置签到时间窗口，请先关闭报名或设置签到窗口")
+        elif status not in allowed_statuses:
             raise ValidationError("该活动当前不在可签到状态")
         now = datetime.now(timezone.utc)
         checkin_start = activity.get("checkin_start")

@@ -221,9 +221,8 @@ class TimeSlotRepository:
     def create(self, slot: TimeSlot) -> None:
         conn = get_connection()
         try:
-            # 兼容：对于非时段类型，start_time和end_time允许为空（使用空字符串）
-            start_time_str = slot.start_time.isoformat() if slot.start_time else ""
-            end_time_str = slot.end_time.isoformat() if slot.end_time else ""
+            start_time_str = slot.start_time.isoformat() if slot.start_time else None
+            end_time_str = slot.end_time.isoformat() if slot.end_time else None
             conn.execute(
                 "INSERT INTO slots (id, activity_id, slot_type, name, start_time, end_time, capacity, used_count, metadata, parent_slot_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -450,17 +449,20 @@ class RegistrationRepository:
             if own:
                 conn.close()
 
-    def reset_not_assigned_to_pending(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
+    def reset_for_rescheduling(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
+        """将 ASSIGNED / NOT_ASSIGNED 状态的报名重置为 PENDING，以便重新排班。
+        不触碰 CONFIRMED 等已确认状态。"""
+        reset_statuses = (RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value)
         if conn is not None:
             conn.execute(
                 "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
-                (RegistrationStatus.PENDING.value, activity_id, RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value),
+                (RegistrationStatus.PENDING.value, activity_id, *reset_statuses),
             )
         else:
             with transaction() as c:
                 c.execute(
                     "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
-                    (RegistrationStatus.PENDING.value, activity_id, RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value),
+                    (RegistrationStatus.PENDING.value, activity_id, *reset_statuses),
                 )
 
     def list_by_activity(self, activity_id: str) -> list[dict]:

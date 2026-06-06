@@ -30,8 +30,8 @@ class SchedulingService:
         # Perform all scheduling operations within a single transaction to prevent
         # TOCTOU race conditions (e.g., concurrent scheduling runs).
         with transaction() as conn:
-            # Reset NOT_ASSIGNED registrations back to PENDING so they can be re-scheduled
-            self._reg_repo.reset_not_assigned_to_pending(activity_id, conn=conn)
+            # Reset NOT_ASSIGNED/ASSIGNED registrations back to PENDING so they can be re-scheduled
+            self._reg_repo.reset_for_rescheduling(activity_id, conn=conn)
             registrations = self._reg_repo.list_pending(activity_id, conn=conn)
             slots = self._slot_repo.list_by_activity(activity_id, conn=conn)
             if not registrations:
