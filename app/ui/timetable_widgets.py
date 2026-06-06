@@ -61,6 +61,7 @@ class TimetablePanel(QWidget):
         for ci in checkins:
             checkin_map[ci["slot_id"]] = ci["status"]
         sorted_rows = sorted(rows, key=lambda r: (r["activity_id"], slot_map.get(r["slot_id"], {}).get("start_time", "")))
+        self._table.clearSpans()
         self._table.setRowCount(len(sorted_rows))
         for row_index, row in enumerate(sorted_rows):
             activity = activities.get(row["activity_id"])

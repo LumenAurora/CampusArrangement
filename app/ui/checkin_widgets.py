@@ -3,7 +3,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -24,7 +23,7 @@ from app.domain.exceptions import ConflictError, PermissionDenied, ValidationErr
 from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty, StyledComboBox
 
 # 签到页面的活动状态映射（区别于报名页面的"报名已结束"）
 _CHECKIN_STATUS_MAP = {
@@ -60,7 +59,7 @@ class CheckInPanel(QWidget):
         self._user_repo = user_repo
         self._user = user
 
-        self._activity_selector = QComboBox()
+        self._activity_selector = StyledComboBox()
         self._activity_selector.setMinimumWidth(220)
         self._message = QLabel("")
         set_banner(self._message, "info", "")

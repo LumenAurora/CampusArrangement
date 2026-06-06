@@ -3,7 +3,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -28,7 +27,7 @@ from app.infrastructure.repositories import (
     UserRepository,
 )
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty, StyledComboBox
 
 
 # ─── 辅助函数：创建带颜色的角色/状态表格项 ──────────────────────────
@@ -154,7 +153,8 @@ class UserAdminPanel(QWidget):
         body_layout.setSpacing(16)
         left_widget = QWidget()
         left_widget.setLayout(left_layout)
-        left_widget.setFixedWidth(320)
+        left_widget.setMinimumWidth(280)
+        left_widget.setMaximumWidth(420)
         body_layout.addWidget(left_widget)
         body_layout.addWidget(list_group, 2)
 
@@ -176,7 +176,7 @@ class UserAdminPanel(QWidget):
         self._password = QLineEdit()
         self._password.setPlaceholderText("初始密码")
         self._password.setEchoMode(QLineEdit.Password)
-        self._role = QComboBox()
+        self._role = StyledComboBox()
 
         # 根据角色显示可选角色
         if self._current_user.role == Role.SUPER_ADMIN:
@@ -283,6 +283,7 @@ class UserAdminPanel(QWidget):
         if not pending_users:
             set_table_empty(self._pending_table, 4, "暂无待审批用户")
             return
+        self._pending_table.clearSpans()
         self._pending_table.setRowCount(len(pending_users))
         for row_index, user in enumerate(pending_users):
             self._pending_table.setItem(row_index, 0, QTableWidgetItem(str(user.get("id", ""))))
@@ -303,6 +304,7 @@ class UserAdminPanel(QWidget):
         if not users:
             set_table_empty(self._table, 5, "暂无用户")
         else:
+            self._table.clearSpans()
             self._table.setRowCount(len(users))
             for row_index, user in enumerate(users):
                 self._table.setItem(row_index, 0, QTableWidgetItem(str(user.get("id", ""))))

@@ -6,6 +6,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -102,6 +103,7 @@ def set_banner(label: QLabel, kind: str, text: str) -> None:
 
 
 def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数据") -> None:
+    table.clearSpans()
     table.setRowCount(1)
     table.setColumnCount(columns)
     table.setSpan(0, 0, 1, columns)
@@ -188,6 +190,37 @@ class CountdownLabel(QLabel):
             parts.append(f"{minutes}分")
         parts.append(f"{seconds}秒")
         self.setText("".join(parts))
+
+
+class StyledComboBox(QComboBox):
+    """QComboBox 子类，修复弹出菜单圆角后出现黑色背景的问题。
+
+    通过重写 showPopup() 对弹出视图设置透明背景属性。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        # 修复弹出视图的黑角问题：设置透明背景
+        popup = self.findChild(QAbstractItemView)
+        if popup is not None:
+            popup.setAttribute(Qt.WA_TranslucentBackground)
+            popup_window = popup.window()
+            if popup_window is not None:
+                popup_window.setAttribute(Qt.WA_TranslucentBackground)
+
+
+class ModeSelector(StyledComboBox):
+    """模式选择器 — pill-style 外观，用于视图切换、模式选择等场景。
+
+    自动设置 objectName="modeSelector" 以匹配主题样式。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("modeSelector")
 
 
 class SearchBox(QLineEdit):

@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QDate, QDateTime, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -30,7 +29,7 @@ from app.domain.models import ActivityStatus, ActivityType, RegistrationStatus, 
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import RegistrationRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty, CountdownLabel, format_status
+from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty, CountdownLabel, format_status, StyledComboBox, ModeSelector
 
 
 def _p():
@@ -261,9 +260,9 @@ class RegistrationPanel(QWidget):
         self._user = user
         self._reg_repo = reg_repo
 
-        self._activity_selector = QComboBox()
+        self._activity_selector = StyledComboBox()
         self._activity_selector.setMinimumWidth(220)
-        self._slot_selector = QComboBox()
+        self._slot_selector = StyledComboBox()
         self._slot_selector.setMinimumWidth(220)
         self._message = QLabel("")
         set_banner(self._message, "info", "")
@@ -280,7 +279,7 @@ class RegistrationPanel(QWidget):
         configure_table(self._slot_table)
 
         # 视图切换
-        self._view_toggle = QComboBox()
+        self._view_toggle = ModeSelector()
         self._view_toggle.addItems(["格子视图", "表格视图"])
         self._view_toggle.currentIndexChanged.connect(self._on_view_toggle)
 
@@ -418,6 +417,7 @@ class RegistrationPanel(QWidget):
         self._slot_grid.set_slots(top_slots, signup_mode)
 
         # 更新表格视图
+        self._slot_table.clearSpans()
         self._slot_table.setRowCount(len(top_slots))
         for row_index, slot in enumerate(top_slots):
             self._slot_table.setItem(row_index, 0, QTableWidgetItem(str(slot["id"])))

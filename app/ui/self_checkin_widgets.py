@@ -3,7 +3,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -25,7 +24,7 @@ from app.domain.exceptions import ConflictError, ValidationError
 from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty, StyledComboBox
 
 # 支持自助签到的签到模式
 _SELF_CHECKIN_MODES = {CheckInMode.SELF_CODE, CheckInMode.QRCODE, CheckInMode.LOCATION, CheckInMode.PHOTO}
@@ -100,7 +99,7 @@ class SelfCheckInPanel(QWidget):
         self._photo_path: str = ""
 
         # ---- 活动选择器 ----
-        self._activity_selector = QComboBox()
+        self._activity_selector = StyledComboBox()
         self._activity_selector.setMinimumWidth(220)
 
         refresh_btn = QPushButton("刷新")

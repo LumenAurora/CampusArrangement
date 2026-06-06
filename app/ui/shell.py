@@ -55,7 +55,9 @@ class NavigationWindow(QMainWindow):
         self._nav = QListWidget()
         self._nav.setObjectName("navList")
         self._nav.setIconSize(QSize(18, 18))
-        self._nav.setFixedWidth(NAV_EXPANDED_WIDTH)
+        self._nav.setMinimumWidth(NAV_COLLAPSED_WIDTH)
+        self._nav.setMaximumWidth(NAV_EXPANDED_WIDTH)
+        self._nav.resize(NAV_EXPANDED_WIDTH, self._nav.height())
         self._nav.setSpacing(2)
         self._nav.setFocusPolicy(Qt.NoFocus)
 

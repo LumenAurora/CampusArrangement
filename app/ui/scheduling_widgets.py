@@ -3,7 +3,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -25,6 +24,7 @@ from app.infrastructure.exporter import export_to_excel
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
+    StyledComboBox,
     configure_table,
     format_datetime,
     format_slot_name,
@@ -134,7 +134,7 @@ class _ActivityInfoCard(QFrame):
             self._signup_time_label.setText("-")
 
 
-class _StatusComboBox(QComboBox):
+class _StatusComboBox(StyledComboBox):
     """A combo box that renders color-coded status indicators for each activity item."""
 
     def __init__(self, parent: QWidget | None = None) -> None:

@@ -6,7 +6,6 @@ from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget,
-    QComboBox,
     QDateEdit,
     QDateTimeEdit,
     QDialog,
@@ -31,6 +30,7 @@ from PySide6.QtWidgets import (
 from app.domain.models import User
 from app.infrastructure.repositories import ScheduleRepository, ActivityRepository, TimeSlotRepository
 from app.ui.style import get_palette
+from app.ui.ui_utils import StyledComboBox, ModeSelector
 
 
 # ─── 调色板辅助 ──────────────────────────────────────────────
@@ -610,7 +610,7 @@ class CalendarPanel(QWidget):
         header = QHBoxLayout()
         header.setSpacing(8)
 
-        self._view_mode = QComboBox()
+        self._view_mode = ModeSelector()
         self._view_mode.addItems(["月视图", "周视图", "日视图"])
         self._view_mode.setFixedWidth(100)
         self._view_mode.currentIndexChanged.connect(self._on_view_changed)
@@ -681,7 +681,8 @@ class CalendarPanel(QWidget):
         main_layout.addWidget(self._view_stack, 3)
         right_widget = QWidget()
         right_widget.setLayout(right_panel)
-        right_widget.setFixedWidth(280)
+        right_widget.setMinimumWidth(240)
+        right_widget.setMaximumWidth(380)
         main_layout.addWidget(right_widget, 0)
 
         layout.addLayout(header)
