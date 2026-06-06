@@ -98,12 +98,13 @@ class _CapacityBar(QWidget):
 
 
 class ActivityPanel(QWidget):
-    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None) -> None:
+    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None, group_repo=None) -> None:
         super().__init__()
         self._service = activity_service
         self._user = user
         self._scheduling_service = scheduling_service
         self._activity_repo = activity_repo
+        self._group_repo = group_repo
 
         self._activity_table = QTableWidget(0, 9)
         self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "地点", "状态", "操作"])
@@ -379,6 +380,10 @@ class ActivityPanel(QWidget):
         form.addRow("签到模式", self._checkin_mode)
         form.addRow("签到开始", self._checkin_start)
         form.addRow("签到截止", self._checkin_end)
+        # 小组限制
+        self._group_selector = StyledComboBox()
+        self._group_selector.addItem("公开（全体用户）", None)
+        form.addRow("报名范围", self._group_selector)
         form.addRow(create_btn)
         form.addRow(self._activity_message)
 
@@ -573,6 +578,21 @@ class ActivityPanel(QWidget):
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
         self._filter_activities(self._search_box.text())
+        # 更新小组选择器
+        if self._group_repo:
+            current = self._group_selector.currentData()
+            self._group_selector.blockSignals(True)
+            self._group_selector.clear()
+            self._group_selector.addItem("公开（全体用户）", None)
+            for g in self._group_repo.list_all():
+                self._group_selector.addItem(g["name"], g["id"])
+            # 恢复之前的选中项
+            if current:
+                for i in range(self._group_selector.count()):
+                    if self._group_selector.itemData(i) == current:
+                        self._group_selector.setCurrentIndex(i)
+                        break
+            self._group_selector.blockSignals(False)
 
     def _on_activity_double_clicked(self, row: int, _col: int) -> None:
         id_item = self._activity_table.item(row, 0)
@@ -773,6 +793,7 @@ class ActivityPanel(QWidget):
                 checkin_mode=self._checkin_mode.currentData(),
                 checkin_start=self._checkin_start.dateTime().toPython(),
                 checkin_end=self._checkin_end.dateTime().toPython(),
+                group_id=self._group_selector.currentData(),
             )
             self.refresh()
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")

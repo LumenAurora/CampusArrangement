@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
 from app.domain.models import ActivityStatus, Registration, RegistrationStatus, SignupMode
 from app.infrastructure.db import transaction
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, TimeSlotRepository
+
+if TYPE_CHECKING:
+    from app.infrastructure.repositories import GroupRepository
 
 
 class RegistrationService:
@@ -14,10 +18,12 @@ class RegistrationService:
         slot_repo: TimeSlotRepository,
         reg_repo: RegistrationRepository,
         activity_repo: ActivityRepository,
+        group_repo: GroupRepository | None = None,
     ) -> None:
         self._slot_repo = slot_repo
         self._reg_repo = reg_repo
         self._activity_repo = activity_repo
+        self._group_repo = group_repo
 
     def register(self, user_id: str, activity_id: str, slot_id: str, priority: int) -> Registration:
         if priority < 1:
@@ -27,6 +33,10 @@ class RegistrationService:
             raise ValidationError("活动不存在")
         if activity["status"] != ActivityStatus.OPEN.value:
             raise ValidationError("该活动当前不在报名中")
+        # 校验小组权限：如果活动有小组限制，检查用户是否是成员
+        if self._group_repo and activity.get("group_id"):
+            if not self._group_repo.is_member(activity["group_id"], user_id):
+                raise ValidationError("该活动仅限小组成员报名，请先加入对应小组")
         # 校验报名时间窗口
         now = datetime.now(timezone.utc)
         signup_start = activity.get("signup_start")

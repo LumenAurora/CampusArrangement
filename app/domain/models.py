@@ -58,6 +58,19 @@ class CheckInStatus(str, Enum):
     ABSENT = "absent"
 
 
+class GroupRole(str, Enum):
+    """小组内角色"""
+    ADMIN = "admin"   # 小组管理员（创建者）
+    MEMBER = "member"  # 普通成员
+
+
+class MemberStatus(str, Enum):
+    """小组成员状态"""
+    PENDING = "pending"    # 待审批
+    APPROVED = "approved"  # 已通过
+    REJECTED = "rejected"  # 已拒绝
+
+
 class ActivityType(str, Enum):
     """活动模式：归并为两种核心模式"""
     TIME_SLOT = "time_slot"  # 时段模式（活动报名）：按时段报名，可细化岗位
@@ -102,6 +115,7 @@ class Activity:
     checkin_mode: CheckInMode = CheckInMode.MANUAL
     checkin_start: datetime | None = None
     checkin_end: datetime | None = None
+    group_id: str | None = None  # 小组限制：None=公开，非None=仅小组成员可报名
 
     @staticmethod
     def create(
@@ -118,6 +132,7 @@ class Activity:
         checkin_mode: CheckInMode = CheckInMode.MANUAL,
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
+        group_id: str | None = None,
     ) -> "Activity":
         return Activity(
             id=str(uuid4()),
@@ -135,6 +150,7 @@ class Activity:
             checkin_mode=checkin_mode,
             checkin_start=checkin_start,
             checkin_end=checkin_end,
+            group_id=group_id,
         )
 
 
@@ -298,4 +314,49 @@ class CheckIn:
             latitude=latitude,
             longitude=longitude,
             photo_path=photo_path,
+        )
+
+
+@dataclass(frozen=True)
+class Group:
+    """用户小组：用于限制活动报名范围"""
+    id: str
+    name: str
+    description: str
+    owner_id: str  # 创建者用户ID
+    created_at: datetime
+
+    @staticmethod
+    def create(name: str, owner_id: str, description: str = "") -> "Group":
+        return Group(
+            id=str(uuid4()),
+            name=name,
+            description=description,
+            owner_id=owner_id,
+            created_at=datetime.now(timezone.utc),
+        )
+
+
+@dataclass(frozen=True)
+class GroupMember:
+    """小组成员记录"""
+    group_id: str
+    user_id: str
+    role: GroupRole
+    status: MemberStatus
+    joined_at: datetime
+
+    @staticmethod
+    def create(
+        group_id: str,
+        user_id: str,
+        role: GroupRole = GroupRole.MEMBER,
+        status: MemberStatus = MemberStatus.PENDING,
+    ) -> "GroupMember":
+        return GroupMember(
+            group_id=group_id,
+            user_id=user_id,
+            role=role,
+            status=status,
+            joined_at=datetime.now(timezone.utc),
         )

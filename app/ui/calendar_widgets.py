@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, Signal
+from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget,
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.domain.models import User
-from app.infrastructure.repositories import ScheduleRepository, ActivityRepository, TimeSlotRepository
+from app.infrastructure.repositories import CheckInRepository, ScheduleRepository, ActivityRepository, TimeSlotRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import StyledComboBox, ModeSelector, to_utc
 
@@ -89,6 +89,37 @@ class _CustomEventStore:
         events = cls.load(user_id)
         events = [e for e in events if e.get("id") != event_id]
         cls.save(user_id, events)
+
+    @classmethod
+    def load_reminders(cls, user_id: str) -> dict[str, int]:
+        """加载提醒配置：{event_id: minutes_before}"""
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        return data.get(user_id, {}).get("reminders", {})
+
+    @classmethod
+    def save_reminder(cls, user_id: str, event_id: str, minutes_before: int) -> None:
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        data.setdefault(user_id, {}).setdefault("reminders", {})[event_id] = minutes_before
+        cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @classmethod
+    def delete_reminder(cls, user_id: str, event_id: str) -> None:
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        reminders = data.get(user_id, {}).get("reminders", {})
+        reminders.pop(event_id, None)
+        cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ─── 自定义日历控件 ────────────────────────────────────────────
@@ -614,6 +645,7 @@ class DayView(QWidget):
 
 class EventDetailDialog(QDialog):
     event_deleted = Signal(str)  # 发送被删除事件的 id
+    reminder_set = Signal(str, int)  # (event_id, minutes_before)
 
     def __init__(self, event: dict, parent=None) -> None:
         super().__init__(parent)
@@ -658,7 +690,11 @@ class EventDetailDialog(QDialog):
 
         layout.addStretch()
 
+        reminder_btn = QPushButton("🔔 设置提醒")
+        reminder_btn.setObjectName("secondaryButton")
+        reminder_btn.clicked.connect(self._set_reminder)
         btn_layout = QHBoxLayout()
+        btn_layout.addWidget(reminder_btn)
         if event.get("type") == "custom":
             delete_btn = QPushButton("删除")
             delete_btn.setObjectName("dangerButton")
@@ -672,6 +708,35 @@ class EventDetailDialog(QDialog):
         layout.addLayout(btn_layout)
 
         self.setLayout(layout)
+
+    def _set_reminder(self) -> None:
+        """设置日程提醒"""
+        from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox
+        event_id = self._event.get("id", "")
+        if not event_id:
+            QMessageBox.warning(self, "提示", "无法为此日程设置提醒")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("设置提醒")
+        dlg.setMinimumWidth(300)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("在日程开始前多久提醒？"))
+        combo = QComboBox()
+        combo.addItem("5 分钟前", 5)
+        combo.addItem("15 分钟前", 15)
+        combo.addItem("30 分钟前", 30)
+        combo.addItem("1 小时前", 60)
+        combo.setCurrentIndex(1)  # 默认15分钟
+        layout.addWidget(combo)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        if dlg.exec() == QDialog.Accepted:
+            minutes = combo.currentData()
+            self.reminder_set.emit(event_id, minutes)
+            QMessageBox.information(self, "提醒已设置",
+                                    f"将在日程开始前 {minutes} 分钟提醒您")
 
     def _on_delete(self) -> None:
         reply = QMessageBox.question(
@@ -694,18 +759,26 @@ class CalendarPanel(QWidget):
         activity_repo: ActivityRepository,
         slot_repo: TimeSlotRepository,
         user: User,
+        checkin_repo: CheckInRepository | None = None,
     ) -> None:
         super().__init__()
         self._schedule_repo = schedule_repo
         self._activity_repo = activity_repo
         self._slot_repo = slot_repo
         self._user = user
+        self._checkin_repo = checkin_repo
         self._selected_date = QDate.currentDate()
         self._events_by_date: dict[QDate, list[dict]] = {}
         self._all_events: list[dict] = []
+        self._fired_reminders: set[str] = set()  # 已触发的提醒事件ID
 
         self._init_ui()
         self.refresh()
+
+        # 提醒定时器：每30秒检查一次
+        self._reminder_timer = QTimer(self)
+        self._reminder_timer.timeout.connect(self._check_reminders)
+        self._reminder_timer.start(30000)
 
     def _init_ui(self) -> None:
         p = _p()
@@ -814,6 +887,7 @@ class CalendarPanel(QWidget):
         if self._view_mode.currentIndex() == 2:
             self._day_view.set_date(date)
         self._update_date_info()
+        self._update_my_events()
 
     def _on_date_jump(self, date: QDate) -> None:
         self._selected_date = date
@@ -846,7 +920,12 @@ class CalendarPanel(QWidget):
         if data:
             dlg = EventDetailDialog(data, self)
             dlg.event_deleted.connect(self._on_delete_custom_event)
+            dlg.reminder_set.connect(self._on_set_reminder)
             dlg.exec()
+
+    def _on_set_reminder(self, event_id: str, minutes_before: int) -> None:
+        """保存提醒设置"""
+        _CustomEventStore.save_reminder(self._user.id, event_id, minutes_before)
 
     def _on_add_event(self) -> None:
         dlg = AddEventDialog(self._selected_date, self)
@@ -896,6 +975,16 @@ class CalendarPanel(QWidget):
         try:
             activities = self._activity_repo.list_all()
             schedules = self._schedule_repo.list_by_user(self._user.id)
+
+            # 签到状态映射：slot_id -> checkin_status
+            checkin_map: dict[str, str] = {}
+            if self._checkin_repo:
+                try:
+                    user_checkins = self._checkin_repo.list_by_user(self._user.id)
+                    for ci in user_checkins:
+                        checkin_map[ci["slot_id"]] = ci["status"]
+                except Exception:
+                    pass
 
             # 构建活动 ID -> 活动信息映射
             activity_map: dict[str, dict] = {}
@@ -964,6 +1053,7 @@ class CalendarPanel(QWidget):
                                         "type": "schedule",
                                         "start_hour": dt.hour,
                                         "end_hour": end_hour,
+                                        "checkin_status": checkin_map.get(slot_id),
                                     }
                                     events_by_date.setdefault(qdate, []).append(event)
                                     all_events.append(event)
@@ -1020,18 +1110,49 @@ class CalendarPanel(QWidget):
 
     def _update_my_events(self) -> None:
         self._my_events_list.clear()
-        for event in sorted(self._all_events, key=lambda e: e.get("time", "")):
+        p = _p()
+        # 只显示选中日期的日程
+        day_events = self._events_by_date.get(self._selected_date, [])
+        if not day_events:
+            item = QListWidgetItem("当日无日程")
+            item.setFlags(Qt.ItemIsEnabled)
+            item.setForeground(QColor(p.text_tertiary))
+            self._my_events_list.addItem(item)
+            return
+        for event in sorted(day_events, key=lambda e: e.get("start_hour", 0)):
+            etype = event.get("type", "schedule")
+            checkin_status = event.get("checkin_status")
+
+            # 根据类型和签到状态选择颜色和图标
+            if etype == "activity":
+                prefix = "📋 "
+                color = p.accent
+            elif etype == "custom":
+                prefix = "📌 "
+                color = p.warning_fg
+            elif checkin_status == "checked_in":
+                prefix = "✅ "
+                color = p.success_fg
+            elif checkin_status == "absent":
+                prefix = "❌ "
+                color = p.error_fg
+            else:
+                prefix = "⬜ "
+                color = p.text_secondary
+
             title = event.get("title", "未知活动")
             time_range = event.get("time_range", "")
             location = event.get("location", "")
-            parts = [title]
+            parts = [prefix + title]
             if time_range:
                 parts.append(time_range)
             if location:
                 parts.append(location)
-            display = " | ".join(parts)
+            display = " · ".join(parts)
+
             item = QListWidgetItem(display)
             item.setData(Qt.UserRole, event)
+            item.setForeground(QColor(color))
             self._my_events_list.addItem(item)
 
     def _update_date_info(self) -> None:
@@ -1095,6 +1216,51 @@ class CalendarPanel(QWidget):
 
                 card.setLayout(card_layout)
                 self._date_info_layout.addWidget(card)
+
+    def _check_reminders(self) -> None:
+        """检查是否有即将到来的日程需要提醒"""
+        try:
+            reminders = _CustomEventStore.load_reminders(self._user.id)
+            if not reminders:
+                return
+            now = datetime.now()
+            for event_id, minutes_before in reminders.items():
+                if event_id in self._fired_reminders:
+                    continue
+                # 在所有日程和自定义事件中查找匹配的事件
+                for event in self._all_events:
+                    if event.get("id") == event_id:
+                        time_str = event.get("time", "")
+                        if time_str:
+                            try:
+                                event_dt = self._parse_dt(time_str)
+                                if event_dt:
+                                    delta = (event_dt - now.astimezone(event_dt.tzinfo) if event_dt.tzinfo else event_dt - now).total_seconds()
+                                    if 0 <= delta <= minutes_before * 60:
+                                        self._show_reminder(event)
+                                        self._fired_reminders.add(event_id)
+                            except Exception:
+                                pass
+                        break
+        except Exception:
+            pass
+
+    def _show_reminder(self, event: dict) -> None:
+        """显示提醒通知"""
+        title = event.get("title", "日程提醒")
+        time_range = event.get("time_range", "")
+        location = event.get("location", "")
+        msg = f"{title}\n时间：{time_range}"
+        if location:
+            msg += f"\n地点：{location}"
+        # 使用简单的消息框作为提醒
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle("⏰ 日程提醒")
+        box.setText(msg)
+        box.setIcon(QMessageBox.Information)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.show()
 
     @staticmethod
     def _parse_dt(value: str) -> datetime | None:
