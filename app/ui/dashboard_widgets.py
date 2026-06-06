@@ -187,7 +187,7 @@ class DashboardPanel(QWidget):
             row_frame = QFrame()
             status_val = act.get("status", "draft")
             status_text = format_activity_status(act)
-            color = status_colors.get(status_text, status_colors.get(status_val, p.text_tertiary))
+            color = status_colors.get(status_text) or status_colors.get(status_val, p.text_tertiary)
             row_frame.setStyleSheet(f"""
                 QFrame {{
                     background: {p.bg_input};

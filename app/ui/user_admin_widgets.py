@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -158,7 +159,6 @@ class UserAdminPanel(QWidget):
         left_widget.setMinimumWidth(280)
         left_widget.setMaximumWidth(420)
 
-        from PySide6.QtWidgets import QSplitter
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_widget)
         splitter.addWidget(list_group)
@@ -339,7 +339,7 @@ class UserAdminPanel(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle(f"用户详情 - {user.get('username', '')}")
         dialog.setMinimumWidth(380)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
+        dialog.setWindowFlags((dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint) | Qt.WindowCloseButtonHint)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(24, 24, 24, 24)
