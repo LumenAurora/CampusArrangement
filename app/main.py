@@ -46,7 +46,7 @@ from app.ui.client_window import ClientWindow
 def ensure_admin(user_service: UserService, user_repo: UserRepository) -> None:
     if user_repo.get_by_username("admin"):
         return
-    user_service.register(username="admin", password="admin", role=Role.SUPER_ADMIN)
+    user_service.register(current_user=None, username="admin", password="admin", role=Role.SUPER_ADMIN)
 
 
 def main() -> int:
@@ -115,6 +115,7 @@ def main() -> int:
             checkin_service=checkin_service,
         )
     window.resize(980, 640)
+    window.setMinimumSize(900, 600)
     window.show()
     return app.exec()
 

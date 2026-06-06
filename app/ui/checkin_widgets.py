@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -9,7 +9,11 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -21,7 +25,25 @@ from app.application.checkin_service import CheckInService
 from app.domain.exceptions import ConflictError, PermissionDenied, ValidationError
 from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty, format_status
+from app.ui.style import get_palette
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
+
+# 签到页面的活动状态映射（区别于报名页面的"报名已结束"）
+_CHECKIN_STATUS_MAP = {
+    "open": "报名进行中",
+    "closed": "签到中",
+    "archived": "已归档",
+    "draft": "草稿",
+    "pending_review": "待审核",
+}
+
+_CHECKIN_MODE_LABELS = {
+    CheckInMode.MANUAL.value: "手动签到",
+    CheckInMode.QRCODE.value: "二维码签到",
+    CheckInMode.SELF_CODE.value: "签到码签到",
+    CheckInMode.LOCATION.value: "位置签到",
+    CheckInMode.PHOTO.value: "拍照签到",
+}
 
 
 class CheckInPanel(QWidget):
@@ -45,11 +67,31 @@ class CheckInPanel(QWidget):
         self._message = QLabel("")
         set_banner(self._message, "info", "")
 
-        # Checkin code display
+        # Activity info display
+        self._activity_info_frame = QFrame()
+        self._activity_info_frame.setObjectName("activityInfoFrame")
+        self._activity_info_layout = QHBoxLayout()
+        self._activity_info_layout.setContentsMargins(16, 10, 16, 10)
+        self._activity_info_layout.setSpacing(24)
+        self._activity_info_frame.setLayout(self._activity_info_layout)
+        self._activity_info_frame.setVisible(False)
+
+        # Checkin code display — prominent card
+        self._checkin_code_frame = QFrame()
+        self._checkin_code_frame.setObjectName("checkinCodeFrame")
+        code_layout = QVBoxLayout()
+        code_layout.setContentsMargins(24, 16, 24, 16)
+        code_layout.setSpacing(4)
+        code_title = QLabel("签到码")
+        code_title.setObjectName("checkinCodeTitle")
+        code_title.setAlignment(Qt.AlignCenter)
         self._checkin_code_label = QLabel("")
         self._checkin_code_label.setObjectName("checkinCodeLabel")
         self._checkin_code_label.setAlignment(Qt.AlignCenter)
-        self._checkin_code_label.setVisible(False)
+        code_layout.addWidget(code_title)
+        code_layout.addWidget(self._checkin_code_label)
+        self._checkin_code_frame.setLayout(code_layout)
+        self._checkin_code_frame.setVisible(False)
 
         # QR code display
         self._qr_label = QLabel("")
@@ -65,8 +107,8 @@ class CheckInPanel(QWidget):
         self._stats_frame.setLayout(self._stats_layout)
         self._stats_frame.setVisible(False)
 
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["用户名", "时段", "签到状态", "user_id", "slot_id"])
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(["用户名", "时段", "签到状态", "签到时间", "user_id", "slot_id"])
         configure_table(self._table)
 
         checkin_btn = QPushButton("签到")
@@ -81,11 +123,15 @@ class CheckInPanel(QWidget):
         unabsent_btn.setObjectName("secondaryButton")
         unabsent_btn.clicked.connect(self._unmark_absent)
 
+        self._batch_checkin_btn = QPushButton("全选已签到")
+        self._batch_checkin_btn.setObjectName("primaryButton")
+        self._batch_checkin_btn.clicked.connect(self._batch_check_in)
+
         refresh_btn = QPushButton("刷新")
         refresh_btn.setObjectName("secondaryButton")
         refresh_btn.clicked.connect(self._load_results)
 
-        self._generate_code_btn = QPushButton("生成签到码")
+        self._generate_code_btn = QPushButton("刷新签到码")
         self._generate_code_btn.setObjectName("primaryButton")
         self._generate_code_btn.clicked.connect(self._generate_checkin_code)
 
@@ -94,6 +140,7 @@ class CheckInPanel(QWidget):
         btn_layout.addWidget(checkin_btn)
         btn_layout.addWidget(absent_btn)
         btn_layout.addWidget(unabsent_btn)
+        btn_layout.addWidget(self._batch_checkin_btn)
         btn_layout.addWidget(self._generate_code_btn)
         btn_layout.addWidget(refresh_btn)
         btn_layout.addStretch()
@@ -104,23 +151,53 @@ class CheckInPanel(QWidget):
         selector_layout.addWidget(self._activity_selector, 1)
         selector_layout.addStretch()
 
-        group = QGroupBox("签到管理")
-        group_layout = QVBoxLayout()
-        group_layout.setContentsMargins(12, 12, 12, 12)
-        group_layout.addLayout(selector_layout)
-        group_layout.addWidget(self._checkin_code_label)
-        group_layout.addWidget(self._qr_label)
-        group_layout.addWidget(self._stats_frame)
-        group_layout.addWidget(self._table)
-        group_layout.addLayout(btn_layout)
-        group_layout.addWidget(self._message)
-        group.setLayout(group_layout)
+        # ---- 左侧面板：活动信息 + 签到码 + 统计（可滚动） ----
+        left_content = QVBoxLayout()
+        left_content.setSpacing(8)
+        left_content.addWidget(self._activity_info_frame)
+        left_content.addWidget(self._checkin_code_frame)
+        left_content.addWidget(self._qr_label)
+        left_content.addWidget(self._stats_frame)
+        left_content.addStretch(1)
 
+        left_widget = QWidget()
+        left_widget.setLayout(left_content)
+        left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_widget)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setMinimumWidth(260)
+        left_scroll.setMaximumWidth(380)
+        left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+
+        # ---- 右侧面板：表格 + 按钮 ----
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(8)
+        right_layout.addWidget(self._table, 1)
+        right_layout.addLayout(btn_layout)
+        right_layout.addWidget(self._message)
+
+        right_widget = QWidget()
+        right_widget.setLayout(right_layout)
+
+        # ---- QSplitter 左右分栏 ----
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([300, 700])
+
+        # ---- 整体布局 ----
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(make_page_header("签到", "管理活动签到与缺勤标记"))
-        layout.addWidget(group, 1)
+        layout.addLayout(selector_layout)
+        layout.addWidget(splitter, 1)
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_results)
@@ -133,27 +210,32 @@ class CheckInPanel(QWidget):
 
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
+        self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
         if not activities:
-            set_table_empty(self._table, 5, "暂无活动")
+            set_table_empty(self._table, 6, "暂无活动")
+            self._activity_selector.blockSignals(False)
             return
         # Only show activities with status closed or later (排班完成后才有签到需求)
         visible_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value}
         for activity in activities:
             if activity.get("status", "draft") not in visible_statuses:
                 continue
-            status_text = format_status(activity.get("status", "draft"))
+            status_text = _CHECKIN_STATUS_MAP.get(activity.get("status", "draft"), activity.get("status", "draft"))
             self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
+        self._activity_selector.blockSignals(False)
         self._load_results()
 
     def _load_results(self) -> None:
         activity_id = self._activity_selector.currentData()
         if not activity_id:
-            set_table_empty(self._table, 5, "请选择活动")
-            self._checkin_code_label.setVisible(False)
+            set_table_empty(self._table, 6, "请选择活动")
+            self._checkin_code_frame.setVisible(False)
             self._qr_label.setVisible(False)
             self._stats_frame.setVisible(False)
+            self._activity_info_frame.setVisible(False)
             self._generate_code_btn.setVisible(False)
+            self._batch_checkin_btn.setVisible(False)
             self._refresh_timer.stop()
             return
 
@@ -163,19 +245,23 @@ class CheckInPanel(QWidget):
 
         # Show generate code button only for SELF_CODE and QRCODE modes
         self._generate_code_btn.setVisible(is_code_mode)
+        self._batch_checkin_btn.setVisible(True)
+
+        # Activity info display
+        self._load_activity_info(activity)
 
         # Show checkin code if available and mode supports it
         if is_code_mode and activity and activity.get("checkin_code"):
             code = activity["checkin_code"]
-            self._checkin_code_label.setText(f"签到码: {code}")
-            self._checkin_code_label.setVisible(True)
+            self._checkin_code_label.setText(code)
+            self._checkin_code_frame.setVisible(True)
             # Try to show QR code image for QRCODE mode
             if checkin_mode == CheckInMode.QRCODE.value:
                 self._show_qr_code(code)
             else:
                 self._qr_label.setVisible(False)
         else:
-            self._checkin_code_label.setVisible(False)
+            self._checkin_code_frame.setVisible(False)
             self._qr_label.setVisible(False)
 
         # Load statistics
@@ -183,18 +269,24 @@ class CheckInPanel(QWidget):
 
         rows = self._schedule_repo.list_by_activity(activity_id)
         if not rows:
-            set_table_empty(self._table, 5, "暂无排班结果")
+            set_table_empty(self._table, 6, "暂无排班结果")
             return
         slot_map: dict[str, str] = {}
         for slot in self._activity_service.list_slots(activity_id):
-            slot_map[slot["id"]] = f"{format_datetime(slot['start_time'])} - {format_datetime(slot['end_time'])}"
+            if slot.get("name"):
+                slot_map[slot["id"]] = slot["name"]
+            elif slot.get("start_time"):
+                slot_map[slot["id"]] = f"{format_datetime(slot['start_time'])} - {format_datetime(slot['end_time'])}"
+            else:
+                slot_map[slot["id"]] = slot["id"]
         checkins = self._checkin_service.list_by_activity(activity_id)
-        checkin_map: dict[str, str] = {}
+        checkin_map: dict[str, dict] = {}
         for ci in checkins:
-            checkin_map[ci["user_id"] + ":" + ci["slot_id"]] = ci["status"]
+            checkin_map[ci["user_id"] + ":" + ci["slot_id"]] = ci
         user_cache: dict[str, str] = {}
         self._table.clearSpans()
         self._table.setRowCount(len(rows))
+        p = get_palette()
         for row_index, row in enumerate(rows):
             uid = row["user_id"]
             if uid not in user_cache:
@@ -203,18 +295,30 @@ class CheckInPanel(QWidget):
             self._table.setItem(row_index, 0, QTableWidgetItem(user_cache[uid]))
             slot_label = slot_map.get(row["slot_id"], row["slot_id"])
             self._table.setItem(row_index, 1, QTableWidgetItem(slot_label))
-            status_raw = checkin_map.get(uid + ":" + row["slot_id"], "")
+
+            ci = checkin_map.get(uid + ":" + row["slot_id"])
+            status_raw = ci["status"] if ci else ""
             if status_raw == "checked_in":
                 status_text = "已签到"
             elif status_raw == "absent":
                 status_text = "缺勤"
             else:
                 status_text = "未签到"
-            self._table.setItem(row_index, 2, QTableWidgetItem(status_text))
-            self._table.setItem(row_index, 3, QTableWidgetItem(uid))
-            self._table.setItem(row_index, 4, QTableWidgetItem(row["slot_id"]))
-        self._table.setColumnHidden(3, True)
+
+            # Visual status indicator
+            status_item = self._make_checkin_status_item(status_text, p)
+            self._table.setItem(row_index, 2, status_item)
+
+            # Checked-at time
+            checked_at_text = ""
+            if ci and ci.get("checked_at"):
+                checked_at_text = format_datetime(ci["checked_at"])
+            self._table.setItem(row_index, 3, QTableWidgetItem(checked_at_text))
+
+            self._table.setItem(row_index, 4, QTableWidgetItem(uid))
+            self._table.setItem(row_index, 5, QTableWidgetItem(row["slot_id"]))
         self._table.setColumnHidden(4, True)
+        self._table.setColumnHidden(5, True)
 
         # Start auto-refresh for closed or archived activities (both allow check-in)
         if activity and activity.get("status") in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value):
@@ -223,8 +327,81 @@ class CheckInPanel(QWidget):
         else:
             self._refresh_timer.stop()
 
+    def _load_activity_info(self, activity: dict | None) -> None:
+        """Display activity metadata: location, checkin mode, checkin time range."""
+        # Clear existing
+        for i in reversed(range(self._activity_info_layout.count())):
+            item = self._activity_info_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setParent(None)
+
+        if not activity:
+            self._activity_info_frame.setVisible(False)
+            return
+
+        p = get_palette()
+        self._activity_info_frame.setStyleSheet(f"""
+            QFrame#activityInfoFrame {{
+                background: {p.bg_input};
+                border: 1px solid {p.border_light};
+                border-radius: 12px;
+            }}
+            QFrame#activityInfoFrame QLabel {{
+                color: {p.text_primary};
+                border: none;
+                background: transparent;
+            }}
+        """)
+
+        info_items: list[tuple[str, str]] = []
+
+        # 活动状态（签到上下文）
+        activity_status = activity.get("status", "draft")
+        status_label = _CHECKIN_STATUS_MAP.get(activity_status, activity_status)
+        info_items.append(("状态", status_label))
+
+        # Location
+        location = activity.get("location", "")
+        if location:
+            info_items.append(("地点", location))
+
+        # Checkin mode
+        mode_val = activity.get("checkin_mode", CheckInMode.MANUAL.value)
+        mode_label = _CHECKIN_MODE_LABELS.get(mode_val, mode_val)
+        info_items.append(("签到方式", mode_label))
+
+        # Checkin time range
+        checkin_start = activity.get("checkin_start", "")
+        checkin_end = activity.get("checkin_end", "")
+        if checkin_start and checkin_end:
+            info_items.append(("签到时间", f"{format_datetime(checkin_start)} ~ {format_datetime(checkin_end)}"))
+        elif checkin_start:
+            info_items.append(("签到开始", format_datetime(checkin_start)))
+
+        if not info_items:
+            self._activity_info_frame.setVisible(False)
+            return
+
+        self._activity_info_frame.setVisible(True)
+        for label_text, value_text in info_items:
+            pair = QFrame()
+            pair.setStyleSheet("background: transparent; border: none;")
+            pair_layout = QVBoxLayout()
+            pair_layout.setContentsMargins(0, 0, 0, 0)
+            pair_layout.setSpacing(2)
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none; background: transparent;")
+            val = QLabel(value_text)
+            val.setStyleSheet(f"color: {p.text_primary}; font-size: 13px; font-weight: 500; border: none; background: transparent;")
+            pair_layout.addWidget(lbl)
+            pair_layout.addWidget(val)
+            pair.setLayout(pair_layout)
+            self._activity_info_layout.addWidget(pair)
+
+        self._activity_info_layout.addStretch()
+
     def _load_stats(self, activity_id: str) -> None:
-        """Load and display check-in statistics."""
+        """Load and display check-in statistics with progress bars and percentages."""
         # Clear existing stats
         for i in reversed(range(self._stats_layout.count())):
             item = self._stats_layout.itemAt(i)
@@ -249,31 +426,98 @@ class CheckInPanel(QWidget):
         self._stats_frame.setVisible(True)
 
         cards = [
-            ("总分配", str(total_assigned)),
-            ("已签到", str(checked_in)),
-            ("缺勤", str(absent)),
-            ("未签到", str(not_checked_in)),
+            ("总分配", str(total_assigned), total_assigned, total_assigned, "accent"),
+            ("已签到", str(checked_in), checked_in, total_assigned, "success"),
+            ("缺勤", str(absent), absent, total_assigned, "error"),
+            ("未签到", str(not_checked_in), not_checked_in, total_assigned, "warning"),
         ]
 
-        for index, (label, value) in enumerate(cards):
-            card = self._make_stat_card(label, value)
+        for index, (label, value, progress_val, progress_max, accent_key) in enumerate(cards):
+            card = self._make_stat_card(label, value, progress_val, progress_max, accent_key)
             self._stats_layout.addWidget(card, 0, index)
 
-    def _make_stat_card(self, label: str, value: str) -> QFrame:
+    def _make_stat_card(
+        self, label: str, value: str, progress_val: int, progress_max: int, accent_key: str
+    ) -> QFrame:
+        p = get_palette()
+        color_map = {
+            "accent": p.accent,
+            "success": p.success_fg,
+            "error": p.error_fg,
+            "warning": p.warning_fg,
+        }
+        accent_color = color_map.get(accent_key, p.accent)
+
         card = QFrame()
         card.setObjectName("statCard")
-        card.setFixedHeight(80)
+        card.setProperty("accentColor", accent_key)
+        card.setFixedHeight(110)
+        # Force style re-evaluation for dynamic property
+        card.style().unpolish(card)
+        card.style().polish(card)
+
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(4)
+
         name_label = QLabel(label)
         name_label.setObjectName("statLabel")
+        layout.addWidget(name_label)
+
+        # Value + percentage row
+        val_row = QHBoxLayout()
+        val_row.setSpacing(8)
         value_label = QLabel(value)
         value_label.setObjectName("statValue")
-        layout.addWidget(name_label)
-        layout.addWidget(value_label)
+        val_row.addWidget(value_label)
+
+        if progress_max > 0:
+            pct = progress_val / progress_max * 100
+            pct_label = QLabel(f"{pct:.0f}%")
+            pct_label.setStyleSheet(
+                f"color: {accent_color}; font-size: 13px; font-weight: 600; border: none; background: transparent;"
+            )
+            val_row.addWidget(pct_label)
+        val_row.addStretch()
+        layout.addLayout(val_row)
+
+        # Progress bar
+        if progress_max > 0:
+            bar = QProgressBar()
+            bar.setRange(0, progress_max)
+            bar.setValue(progress_val)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(6)
+            bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background: {p.bg_input};
+                    border: none;
+                    border-radius: 3px;
+                }}
+                QProgressBar::chunk {{
+                    background: {accent_color};
+                    border-radius: 3px;
+                }}
+            """)
+            layout.addWidget(bar)
+
         card.setLayout(layout)
         return card
+
+    @staticmethod
+    def _make_checkin_status_item(text: str, p) -> QTableWidgetItem:
+        """Create a table item with colored foreground/background for checkin status."""
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignCenter)
+        color_map = {
+            "已签到": (p.success_fg, p.success_bg),
+            "缺勤": (p.error_fg, p.error_bg),
+            "未签到": (p.text_tertiary, p.bg_base),
+        }
+        fg, bg = color_map.get(text, (p.text_secondary, p.bg_base))
+        item.setForeground(QBrush(QColor(fg)))
+        item.setBackground(QBrush(QColor(bg)))
+        return item
 
     def _generate_checkin_code(self) -> None:
         try:
@@ -283,15 +527,16 @@ class CheckInPanel(QWidget):
                 set_banner(self._message, "error", "请先选择活动")
                 return
             code = self._checkin_service.generate_checkin_code(user=self._user, activity_id=activity_id)
-            self._checkin_code_label.setText(f"签到码: {code}")
-            self._checkin_code_label.setVisible(True)
+            # 直接更新签到码显示，避免 _load_results 重新加载导致闪烁
+            self._checkin_code_label.setText(code)
+            self._checkin_code_frame.setVisible(True)
             # Show QR code if QRCODE mode
             activity = self._activity_service.get_activity(activity_id)
             if activity and activity.get("checkin_mode") == CheckInMode.QRCODE.value:
                 self._show_qr_code(code)
             else:
                 self._qr_label.setVisible(False)
-            set_banner(self._message, "success", f"签到码已生成: {code}")
+            set_banner(self._message, "success", f"签到码已刷新: {code}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._message, "error", str(exc))
 
@@ -306,8 +551,8 @@ class CheckInPanel(QWidget):
             if current_row < 0:
                 set_banner(self._message, "error", "请选择一行进行签到")
                 return
-            user_id_item = self._table.item(current_row, 3)
-            slot_id_item = self._table.item(current_row, 4)
+            user_id_item = self._table.item(current_row, 4)
+            slot_id_item = self._table.item(current_row, 5)
             if not user_id_item or not slot_id_item:
                 set_banner(self._message, "error", "数据异常")
                 return
@@ -322,6 +567,56 @@ class CheckInPanel(QWidget):
         except (ConflictError, PermissionDenied, ValidationError) as exc:
             set_banner(self._message, "error", str(exc))
 
+    def _batch_check_in(self) -> None:
+        """Batch check-in all selected rows in the table."""
+        try:
+            set_banner(self._message, "info", "")
+            activity_id = self._activity_selector.currentData()
+            if not activity_id:
+                set_banner(self._message, "error", "请先选择活动")
+                return
+            selected_rows = set()
+            for item in self._table.selectedItems():
+                selected_rows.add(item.row())
+            if not selected_rows:
+                set_banner(self._message, "error", "请先选择要签到的行")
+                return
+            success_count = 0
+            skip_count = 0
+            error_count = 0
+            for row_index in sorted(selected_rows):
+                user_id_item = self._table.item(row_index, 4)
+                slot_id_item = self._table.item(row_index, 5)
+                status_item = self._table.item(row_index, 2)
+                if not user_id_item or not slot_id_item:
+                    error_count += 1
+                    continue
+                # Skip already checked-in
+                if status_item and status_item.text() == "已签到":
+                    skip_count += 1
+                    continue
+                try:
+                    self._checkin_service.check_in(
+                        user=self._user,
+                        activity_id=activity_id,
+                        user_id=user_id_item.text(),
+                        slot_id=slot_id_item.text(),
+                    )
+                    success_count += 1
+                except (ConflictError, ValidationError):
+                    skip_count += 1
+            parts = []
+            if success_count:
+                parts.append(f"签到成功 {success_count} 人")
+            if skip_count:
+                parts.append(f"跳过 {skip_count} 人")
+            if error_count:
+                parts.append(f"异常 {error_count} 人")
+            set_banner(self._message, "success", "，".join(parts) if parts else "无操作")
+            self._load_results()
+        except PermissionDenied as exc:
+            set_banner(self._message, "error", str(exc))
+
     def _mark_absent(self) -> None:
         try:
             set_banner(self._message, "info", "")
@@ -333,8 +628,8 @@ class CheckInPanel(QWidget):
             if current_row < 0:
                 set_banner(self._message, "error", "请选择一行进行标记")
                 return
-            user_id_item = self._table.item(current_row, 3)
-            slot_id_item = self._table.item(current_row, 4)
+            user_id_item = self._table.item(current_row, 4)
+            slot_id_item = self._table.item(current_row, 5)
             if not user_id_item or not slot_id_item:
                 set_banner(self._message, "error", "数据异常")
                 return
@@ -360,8 +655,8 @@ class CheckInPanel(QWidget):
             if current_row < 0:
                 set_banner(self._message, "error", "请选择一行进行取消缺勤")
                 return
-            user_id_item = self._table.item(current_row, 3)
-            slot_id_item = self._table.item(current_row, 4)
+            user_id_item = self._table.item(current_row, 4)
+            slot_id_item = self._table.item(current_row, 5)
             if not user_id_item or not slot_id_item:
                 set_banner(self._message, "error", "数据异常")
                 return

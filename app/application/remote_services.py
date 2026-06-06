@@ -5,6 +5,7 @@ from datetime import datetime
 from app.domain.models import (
     Activity,
     ActivityStatus,
+    ActivityType,
     AllocationMode,
     CheckIn,
     CheckInMode,
@@ -13,8 +14,10 @@ from app.domain.models import (
     RegistrationStatus,
     Role,
     SignupMode,
+    SlotType,
     TimeSlot,
     User,
+    UserStatus,
 )
 from app.infrastructure.api_client import ApiClient
 
@@ -23,9 +26,27 @@ class RemoteUserService:
     def __init__(self, api_client: ApiClient) -> None:
         self._api = api_client
 
-    def register(self, username: str, password: str, role: Role) -> User:
+    def register(self, current_user: User | None, username: str, password: str, role: Role) -> User:
         payload = self._api.post("/users", json={"username": username, "password": password, "role": role.value})
-        return User(id=payload["id"], username=payload["username"], role=Role(payload["role"]))
+        return User(id=payload["id"], username=payload["username"], role=Role(payload["role"]),
+                    status=UserStatus(payload.get("status", "approved")))
+
+    def self_register(self, username: str, password: str) -> User:
+        """用户自助注册，注册后需等待审批"""
+        payload = self._api.post("/auth/register", json={"username": username, "password": password}, require_auth=False)
+        return User(id=payload["id"], username=payload["username"], role=Role(payload["role"]),
+                    status=UserStatus(payload.get("status", "pending_review")))
+
+    def approve_user(self, current_user: User, user_id: str) -> User:
+        payload = self._api.post(f"/users/{user_id}/approve", json={})
+        return User(id=payload["id"], username=payload["username"], role=Role(payload["role"]),
+                    status=UserStatus(payload.get("status", "approved")))
+
+    def reject_user(self, current_user: User, user_id: str) -> None:
+        self._api.post(f"/users/{user_id}/reject", json={})
+
+    def list_pending_users(self, current_user: User) -> list[dict]:
+        return self._api.get("/users/pending")
 
     def authenticate(self, username: str, password: str) -> User:
         return self._api.login(username, password)
@@ -49,10 +70,13 @@ class RemoteActivityService:
         signup_mode: SignupMode = SignupMode.REALTIME,
         allocation_mode: AllocationMode = AllocationMode.GREEDY,
         location: str = "",
+        activity_type: ActivityType = ActivityType.TIME_SLOT,
         checkin_mode: str = "manual",
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
     ) -> Activity:
+        # 确保 checkin_mode 序列化为字符串
+        checkin_mode_str = checkin_mode.value if isinstance(checkin_mode, CheckInMode) else str(checkin_mode)
         json_data = {
             "name": name,
             "signup_start": signup_start.isoformat(),
@@ -61,7 +85,8 @@ class RemoteActivityService:
             "signup_mode": signup_mode.value,
             "allocation_mode": allocation_mode.value,
             "location": location,
-            "checkin_mode": checkin_mode,
+            "activity_type": activity_type.value,
+            "checkin_mode": checkin_mode_str,
         }
         if checkin_start:
             json_data["checkin_start"] = checkin_start.isoformat()
@@ -79,6 +104,7 @@ class RemoteActivityService:
             signup_mode=SignupMode(payload["signup_mode"]),
             allocation_mode=AllocationMode(payload["allocation_mode"]),
             location=payload.get("location", ""),
+            activity_type=ActivityType(payload.get("activity_type", "time_slot")),
             checkin_code=payload.get("checkin_code", ""),
             checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
             checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
@@ -92,23 +118,97 @@ class RemoteActivityService:
         start_time: datetime,
         end_time: datetime,
         capacity: int,
+        name: str = "",
     ) -> TimeSlot:
+        json_data: dict = {
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "capacity": capacity,
+        }
+        if name:
+            json_data["name"] = name
         payload = self._api.post(
             f"/activities/{activity_id}/slots",
-            json={
-                "start_time": start_time.isoformat(),
-                "end_time": end_time.isoformat(),
-                "capacity": capacity,
-            },
+            json=json_data,
         )
         return TimeSlot(
             id=payload["id"],
             activity_id=payload["activity_id"],
-            start_time=datetime.fromisoformat(payload["start_time"]),
-            end_time=datetime.fromisoformat(payload["end_time"]),
+            slot_type=SlotType(payload.get("slot_type", "time_slot")),
+            name=payload.get("name", ""),
+            start_time=datetime.fromisoformat(payload["start_time"]) if payload.get("start_time") else None,
+            end_time=datetime.fromisoformat(payload["end_time"]) if payload.get("end_time") else None,
             capacity=payload["capacity"],
             used_count=payload["used_count"],
+            parent_slot_id=payload.get("parent_slot_id"),
+            metadata=payload.get("metadata", ""),
         )
+
+    def add_slot_generic(
+        self,
+        user: User,
+        activity_id: str,
+        slot_type: SlotType,
+        name: str,
+        capacity: int,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        metadata: str = "",
+    ) -> TimeSlot:
+        """添加通用报名选项（远程模式）"""
+        json_data: dict = {
+            "slot_type": slot_type.value,
+            "name": name,
+            "capacity": capacity,
+            "metadata": metadata,
+        }
+        if start_time:
+            json_data["start_time"] = start_time.isoformat()
+        if end_time:
+            json_data["end_time"] = end_time.isoformat()
+        payload = self._api.post(f"/activities/{activity_id}/slots", json=json_data)
+        return TimeSlot(
+            id=payload["id"],
+            activity_id=payload["activity_id"],
+            slot_type=SlotType(payload.get("slot_type", "time_slot")),
+            name=payload.get("name", ""),
+            start_time=datetime.fromisoformat(payload["start_time"]) if payload.get("start_time") else None,
+            end_time=datetime.fromisoformat(payload["end_time"]) if payload.get("end_time") else None,
+            capacity=payload["capacity"],
+            used_count=payload["used_count"],
+            parent_slot_id=payload.get("parent_slot_id"),
+            metadata=payload.get("metadata", ""),
+        )
+
+    def add_position(
+        self,
+        user: User,
+        activity_id: str,
+        parent_slot_id: str,
+        name: str,
+        capacity: int,
+    ) -> TimeSlot:
+        """为时段添加子岗位（远程模式）"""
+        payload = self._api.post(
+            f"/activities/{activity_id}/positions",
+            json={"parent_slot_id": parent_slot_id, "name": name, "capacity": capacity},
+        )
+        return TimeSlot(
+            id=payload["id"],
+            activity_id=payload["activity_id"],
+            slot_type=SlotType(payload.get("slot_type", "time_slot")),
+            name=payload.get("name", ""),
+            start_time=datetime.fromisoformat(payload["start_time"]) if payload.get("start_time") else None,
+            end_time=datetime.fromisoformat(payload["end_time"]) if payload.get("end_time") else None,
+            capacity=payload["capacity"],
+            used_count=payload["used_count"],
+            parent_slot_id=payload.get("parent_slot_id"),
+            metadata=payload.get("metadata", ""),
+        )
+
+    def list_positions(self, parent_slot_id: str) -> list[dict]:
+        """获取某时段下的所有子岗位（远程模式）"""
+        return self._api.get(f"/slots/{parent_slot_id}/positions")
 
     def list_activities(self) -> list[dict]:
         return self._api.get("/activities")
@@ -143,6 +243,43 @@ class RemoteActivityService:
 
     def reject_activity(self, user: User, activity_id: str) -> None:
         self._api.post(f"/activities/{activity_id}/status", json={"action": "reject"})
+
+    def duplicate_activity(
+        self,
+        user: User,
+        activity_id: str,
+        new_signup_start: datetime,
+        new_signup_end: datetime,
+        new_checkin_start: datetime | None = None,
+        new_checkin_end: datetime | None = None,
+    ) -> Activity:
+        """复制活动（远程模式）"""
+        json_data: dict = {
+            "new_signup_start": new_signup_start.isoformat(),
+            "new_signup_end": new_signup_end.isoformat(),
+        }
+        if new_checkin_start:
+            json_data["new_checkin_start"] = new_checkin_start.isoformat()
+        if new_checkin_end:
+            json_data["new_checkin_end"] = new_checkin_end.isoformat()
+        payload = self._api.post(f"/activities/{activity_id}/duplicate", json=json_data)
+        return Activity(
+            id=payload["id"],
+            name=payload["name"],
+            status=ActivityStatus(payload["status"]),
+            owner_id=payload["owner_id"],
+            signup_start=datetime.fromisoformat(payload["signup_start"]),
+            signup_end=datetime.fromisoformat(payload["signup_end"]),
+            details=payload["details"],
+            signup_mode=SignupMode(payload["signup_mode"]),
+            allocation_mode=AllocationMode(payload["allocation_mode"]),
+            location=payload.get("location", ""),
+            activity_type=ActivityType(payload.get("activity_type", "time_slot")),
+            checkin_code=payload.get("checkin_code", ""),
+            checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
+            checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
+            checkin_end=datetime.fromisoformat(payload["checkin_end"]) if payload.get("checkin_end") else None,
+        )
 
 
 class RemoteRegistrationService:

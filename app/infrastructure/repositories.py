@@ -14,6 +14,7 @@ from app.domain.models import (
     RegistrationStatus,
     ScheduleResult,
     TimeSlot,
+    UserStatus,
 )
 from app.infrastructure.db import get_connection, transaction
 
@@ -38,7 +39,7 @@ class UserRepository:
     def list_all(self) -> list[dict]:
         conn = get_connection()
         try:
-            rows = conn.execute("SELECT id, username, role, created_at FROM users ORDER BY created_at DESC").fetchall()
+            rows = conn.execute("SELECT id, username, role, status, created_at FROM users ORDER BY created_at DESC").fetchall()
             return [dict(row) for row in rows]
         finally:
             conn.close()
@@ -55,9 +56,43 @@ class UserRepository:
     def create(self, user, password_hash: str) -> None:
         conn = get_connection()
         try:
+            status = user.status.value if hasattr(user.status, 'value') else (user.status or 'approved')
             conn.execute(
-                "INSERT INTO users (id, username, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                (user.id, user.username, user.role.value, password_hash, datetime.now(timezone.utc).isoformat()),
+                "INSERT INTO users (id, username, role, password_hash, created_at, status) VALUES (?, ?, ?, ?, ?, ?)",
+                (user.id, user.username, user.role.value, password_hash, datetime.now(timezone.utc).isoformat(), status),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_status(self, user_id: str, status: UserStatus) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET status = ? WHERE id = ?",
+                (status.value, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_by_status(self, status: UserStatus) -> list[dict]:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT id, username, role, status, created_at FROM users WHERE status = ? ORDER BY created_at DESC",
+                (status.value,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
             )
             conn.commit()
         finally:
@@ -69,8 +104,8 @@ class ActivityRepository:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, checkin_code, checkin_mode, checkin_start, checkin_end) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -82,6 +117,7 @@ class ActivityRepository:
                     activity.signup_mode.value,
                     activity.allocation_mode.value,
                     activity.location,
+                    activity.activity_type.value,
                     activity.checkin_code,
                     activity.checkin_mode.value,
                     activity.checkin_start.isoformat() if activity.checkin_start else None,
@@ -184,16 +220,23 @@ class TimeSlotRepository:
     def create(self, slot: TimeSlot) -> None:
         conn = get_connection()
         try:
+            # 兼容：对于非时段类型，start_time和end_time允许为空（使用空字符串）
+            start_time_str = slot.start_time.isoformat() if slot.start_time else ""
+            end_time_str = slot.end_time.isoformat() if slot.end_time else ""
             conn.execute(
-                "INSERT INTO slots (id, activity_id, start_time, end_time, capacity, used_count) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO slots (id, activity_id, slot_type, name, start_time, end_time, capacity, used_count, metadata, parent_slot_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     slot.id,
                     slot.activity_id,
-                    slot.start_time.isoformat(),
-                    slot.end_time.isoformat(),
+                    slot.slot_type.value,
+                    slot.name,
+                    start_time_str,
+                    end_time_str,
                     slot.capacity,
                     slot.used_count,
+                    slot.metadata,
+                    slot.parent_slot_id,
                 ),
             )
             conn.commit()
@@ -205,11 +248,32 @@ class TimeSlotRepository:
         if own:
             conn = get_connection()
         try:
-            rows = conn.execute("SELECT * FROM slots WHERE activity_id = ? ORDER BY start_time ASC", (activity_id,)).fetchall()
+            # 排序：先时段按时间，其他按名称；子岗位紧跟父时段
+            rows = conn.execute("""
+                SELECT * FROM slots 
+                WHERE activity_id = ? 
+                ORDER BY 
+                    CASE WHEN parent_slot_id IS NULL THEN 0 ELSE 1 END,
+                    CASE WHEN slot_type = 'time_slot' AND parent_slot_id IS NULL THEN start_time ELSE name END,
+                    parent_slot_id,
+                    name
+                """, (activity_id,)).fetchall()
             return [dict(row) for row in rows]
         finally:
             if own:
                 conn.close()
+
+    def list_positions(self, parent_slot_id: str) -> list[dict]:
+        """获取某时段下的所有子岗位"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM slots WHERE parent_slot_id = ? ORDER BY name",
+                (parent_slot_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
 
     def count_all(self) -> int:
         conn = get_connection()
@@ -295,16 +359,40 @@ class TimeSlotRepository:
 
     @staticmethod
     def to_models(rows: Iterable[dict]) -> list[TimeSlot]:
+        from app.domain.models import SlotType
         slots: list[TimeSlot] = []
         for row in rows:
+            # 兼容旧数据
+            slot_type = SlotType(row.get("slot_type", "time_slot"))
+            name = row.get("name", "")
+            metadata = row.get("metadata", "")
+            parent_slot_id = row.get("parent_slot_id")
+
+            start_time = None
+            end_time = None
+            if row.get("start_time"):
+                try:
+                    start_time = datetime.fromisoformat(row["start_time"])
+                except (ValueError, TypeError):
+                    pass
+            if row.get("end_time"):
+                try:
+                    end_time = datetime.fromisoformat(row["end_time"])
+                except (ValueError, TypeError):
+                    pass
+
             slots.append(
                 TimeSlot(
                     id=row["id"],
                     activity_id=row["activity_id"],
-                    start_time=datetime.fromisoformat(row["start_time"]),
-                    end_time=datetime.fromisoformat(row["end_time"]),
+                    slot_type=slot_type,
+                    name=name,
+                    start_time=start_time,
+                    end_time=end_time,
                     capacity=row["capacity"],
                     used_count=row["used_count"],
+                    parent_slot_id=parent_slot_id,
+                    metadata=metadata,
                 )
             )
         return slots

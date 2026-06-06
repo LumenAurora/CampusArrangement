@@ -7,13 +7,13 @@ from app.application.checkin_service import CheckInService
 from app.application.registration_service import RegistrationService
 from app.domain.models import User
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, ScheduleRepository, TimeSlotRepository
+from app.ui.calendar_widgets import CalendarPanel
 from app.ui.dashboard_widgets import DashboardPanel
 from app.ui.icon_loader import load_icon
 from app.ui.my_results_widgets import MyResultsPanel
 from app.ui.registration_widgets import RegistrationPanel
 from app.ui.self_checkin_widgets import SelfCheckInPanel
 from app.ui.shell import NavigationWindow
-from app.ui.timetable_widgets import TimetablePanel
 
 
 class ClientWindow(NavigationWindow):
@@ -35,7 +35,7 @@ class ClientWindow(NavigationWindow):
             ("signup", "报名", RegistrationPanel(activity_service, registration_service, user, reg_repo), load_icon("signup")),
             ("results", "我的结果", MyResultsPanel(schedule_repo, activity_service, user), load_icon("results")),
             ("checkin", "签到", SelfCheckInPanel(checkin_service, activity_service, schedule_repo, user), load_icon("checkin")),
-            ("timetable", "日程表", TimetablePanel(schedule_repo, checkin_service, activity_service, user), load_icon("scheduling")),
+            ("calendar", "日程表", CalendarPanel(schedule_repo, activity_repo, slot_repo, user), load_icon("scheduling")),
         ]
         self.set_pages(pages)
         self.attach_menus(QApplication.instance())
