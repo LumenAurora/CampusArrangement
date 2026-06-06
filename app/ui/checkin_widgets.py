@@ -11,9 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
-    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -151,53 +149,24 @@ class CheckInPanel(QWidget):
         selector_layout.addWidget(self._activity_selector, 1)
         selector_layout.addStretch()
 
-        # ---- 左侧面板：活动信息 + 签到码 + 统计（可滚动） ----
-        left_content = QVBoxLayout()
-        left_content.setSpacing(8)
-        left_content.addWidget(self._activity_info_frame)
-        left_content.addWidget(self._checkin_code_frame)
-        left_content.addWidget(self._qr_label)
-        left_content.addWidget(self._stats_frame)
-        left_content.addStretch(1)
+        # ---- 信息区域：活动信息 + 签到码 + 统计（水平排列，紧凑展示） ----
+        info_row = QHBoxLayout()
+        info_row.setSpacing(12)
+        info_row.addWidget(self._activity_info_frame, 3)
+        info_row.addWidget(self._checkin_code_frame, 1)
+        info_row.addWidget(self._qr_label, 1)
 
-        left_widget = QWidget()
-        left_widget.setLayout(left_content)
-        left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-
-        left_scroll = QScrollArea()
-        left_scroll.setWidget(left_widget)
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setMinimumWidth(260)
-        left_scroll.setMaximumWidth(380)
-        left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-
-        # ---- 右侧面板：表格 + 按钮 ----
-        right_layout = QVBoxLayout()
-        right_layout.setSpacing(8)
-        right_layout.addWidget(self._table, 1)
-        right_layout.addLayout(btn_layout)
-        right_layout.addWidget(self._message)
-
-        right_widget = QWidget()
-        right_widget.setLayout(right_layout)
-
-        # ---- QSplitter 左右分栏 ----
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_scroll)
-        splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([300, 700])
-
-        # ---- 整体布局 ----
+        # ---- 整体布局（纵向排布） ----
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(make_page_header("签到", "管理活动签到与缺勤标记"))
         layout.addLayout(selector_layout)
-        layout.addWidget(splitter, 1)
+        layout.addLayout(info_row)
+        layout.addWidget(self._stats_frame)
+        layout.addWidget(self._table, 1)
+        layout.addLayout(btn_layout)
+        layout.addWidget(self._message)
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_results)

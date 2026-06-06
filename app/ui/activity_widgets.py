@@ -366,6 +366,10 @@ class ActivityPanel(QWidget):
 
         self._slot_capacity = QSpinBox()
         self._slot_capacity.setRange(1, 1000)
+        self._auto_create_position = QComboBox()
+        self._auto_create_position.addItem("不划分岗位", "none")
+        self._auto_create_position.addItem("自动创建默认岗位", "default")
+        self._auto_create_position.setCurrentIndex(0)
         self._slot_message = QLabel("")
         set_banner(self._slot_message, "info", "")
         self._add_slot_btn = QPushButton("添加时段")
@@ -381,6 +385,9 @@ class ActivityPanel(QWidget):
         self._add_position_btn = QPushButton("为选中时段添加岗位")
         self._add_position_btn.setObjectName("secondaryButton")
         self._add_position_btn.clicked.connect(self._add_position)
+        self._add_default_position_btn = QPushButton("一键创建默认岗位")
+        self._add_default_position_btn.setObjectName("secondaryButton")
+        self._add_default_position_btn.clicked.connect(self._add_default_position)
 
         # 批量添加时段控件（仅时段模式）
         self._batch_start_date = QDateTimeEdit(QDateTime.currentDateTime())
@@ -430,6 +437,7 @@ class ActivityPanel(QWidget):
         self._slot_form.addRow("选项类型", self._slot_option_type)
         self._slot_form.addRow("说明", self._slot_description)
         self._slot_form.addRow("容量", self._slot_capacity)
+        self._slot_form.addRow("岗位模式", self._auto_create_position)
         self._slot_form.addRow(self._add_slot_btn)
         self._slot_form.addRow(self._slot_message)
 
@@ -449,6 +457,7 @@ class ActivityPanel(QWidget):
         position_layout.addRow("岗位名称", self._position_name)
         position_layout.addRow("岗位容量", self._position_capacity)
         position_layout.addRow(self._add_position_btn)
+        position_layout.addRow(self._add_default_position_btn)
         self._position_section.setLayout(position_layout)
         self._slot_form.addRow(self._position_section)
 
@@ -496,6 +505,10 @@ class ActivityPanel(QWidget):
         # 时段模式字段
         self._slot_start.setVisible(is_time_slot_mode)
         self._slot_end.setVisible(is_time_slot_mode)
+        self._auto_create_position.setVisible(is_time_slot_mode)
+        auto_pos_label = self._slot_form.labelForField(self._auto_create_position)
+        if auto_pos_label:
+            auto_pos_label.setVisible(is_time_slot_mode)
         # 非时段模式字段
         self._slot_option_type.setVisible(not is_time_slot_mode)
         self._slot_description.setVisible(not is_time_slot_mode)
@@ -624,7 +637,8 @@ class ActivityPanel(QWidget):
             self._slot_tree.setItemWidget(parent_item, 7, _CapacityBar(used, capacity))
 
             # 添加子岗位
-            for child in child_map.get(slot["id"], []):
+            children = child_map.get(slot["id"], [])
+            for child in children:
                 child_name = format_slot_name(child)
                 child_capacity = int(child["capacity"])
                 child_used = int(child["used_count"])
@@ -634,7 +648,15 @@ class ActivityPanel(QWidget):
                 parent_item.addChild(child_item)
                 self._slot_tree.setItemWidget(child_item, 7, _CapacityBar(child_used, child_capacity))
 
-            if child_map.get(slot["id"]):
+            if children:
+                parent_item.setExpanded(True)
+            elif slot_type == "time_slot":
+                # 时段模式下，没有子岗位时显示提示
+                hint_item = QTreeWidgetItem(["  └ 未划分岗位（报名直接分配到时段）", "", "", "", "", "", "", ""])
+                hint_item.setFlags(hint_item.flags() & ~Qt.ItemIsSelectable & ~Qt.ItemIsEditable)
+                p_hint = get_palette()
+                hint_item.setForeground(0, QColor(p_hint.text_tertiary))
+                parent_item.addChild(hint_item)
                 parent_item.setExpanded(True)
 
         self._update_activity_detail_card()
@@ -881,9 +903,10 @@ class ActivityPanel(QWidget):
             is_time_slot_mode = activity and activity.get("activity_type") == ActivityType.TIME_SLOT.value
             name = self._slot_name.text().strip()
             capacity = self._slot_capacity.value()
+            auto_position = self._auto_create_position.currentData() == "default"
 
             if is_time_slot_mode:
-                self._service.add_slot(
+                slot = self._service.add_slot(
                     user=self._user,
                     activity_id=activity_id,
                     start_time=self._slot_start.dateTime().toPython(),
@@ -891,6 +914,16 @@ class ActivityPanel(QWidget):
                     capacity=capacity,
                     name=name,
                 )
+                # 自动创建默认岗位
+                if auto_position and slot:
+                    position_name = name or format_slot_name({"start_time": str(slot.start_time), "end_time": str(slot.end_time), "name": "", "id": ""})
+                    self._service.add_position(
+                        user=self._user,
+                        activity_id=activity_id,
+                        parent_slot_id=slot.id,
+                        name=position_name,
+                        capacity=capacity,
+                    )
             else:
                 slot_type = SlotType(self._slot_option_type.currentData())
                 metadata = self._slot_description.text().strip()
@@ -903,7 +936,7 @@ class ActivityPanel(QWidget):
                     metadata=metadata,
                 )
             self.refresh()
-            set_banner(self._slot_message, "success", "已添加")
+            set_banner(self._slot_message, "success", "已添加" + ("（含默认岗位）" if auto_position and is_time_slot_mode else ""))
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._slot_message, "error", str(exc))
 
@@ -945,6 +978,58 @@ class ActivityPanel(QWidget):
             self._position_name.clear()
             self.refresh()
             set_banner(self._slot_message, "success", f"已添加岗位：{name}")
+        except (PermissionDenied, ValidationError) as exc:
+            set_banner(self._slot_message, "error", str(exc))
+
+    def _add_default_position(self) -> None:
+        """为选中的时段一键创建默认岗位（名称与时段相同，容量等于时段容量）"""
+        try:
+            set_banner(self._slot_message, "info", "")
+            activity_id = self._activity_selector.currentData()
+            if not activity_id:
+                raise ValidationError("请选择活动")
+
+            selected = self._slot_tree.currentItem()
+            if not selected:
+                raise ValidationError("请先在选项列表中选择一个时段")
+            slot_data = selected.data(0, Qt.UserRole)
+            if not slot_data:
+                raise ValidationError("请选择一个有效的时段")
+
+            # 如果选中的是子岗位，取其父级
+            if slot_data.get("parent_slot_id"):
+                parent_slot_id = slot_data["parent_slot_id"]
+                parent_data = None
+            elif slot_data.get("slot_type") == "time_slot" and not slot_data.get("parent_slot_id"):
+                parent_slot_id = slot_data["id"]
+                parent_data = slot_data
+            else:
+                raise ValidationError("只能为时段类型的选项创建默认岗位")
+
+            # 检查是否已有岗位
+            existing_positions = self._service.list_positions(parent_slot_id)
+            if existing_positions:
+                raise ValidationError("该时段已有岗位，请手动添加")
+
+            # 获取父时段信息用于生成默认岗位名
+            if not parent_data:
+                parent_data = self._service.list_slots(activity_id)
+                parent_data = next((s for s in parent_data if s["id"] == parent_slot_id), None)
+            if not parent_data:
+                raise ValidationError("未找到父时段信息")
+
+            position_name = format_slot_name(parent_data)
+            capacity = int(parent_data["capacity"])
+
+            self._service.add_position(
+                user=self._user,
+                activity_id=activity_id,
+                parent_slot_id=parent_slot_id,
+                name=position_name,
+                capacity=capacity,
+            )
+            self.refresh()
+            set_banner(self._slot_message, "success", f"已创建默认岗位：{position_name}（容量 {capacity}）")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._slot_message, "error", str(exc))
 
