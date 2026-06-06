@@ -63,8 +63,8 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS slots (
                 id TEXT PRIMARY KEY,
                 activity_id TEXT NOT NULL,
-                start_time TEXT NOT NULL,
-                end_time TEXT NOT NULL,
+                start_time TEXT,
+                end_time TEXT,
                 capacity INTEGER NOT NULL,
                 used_count INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE

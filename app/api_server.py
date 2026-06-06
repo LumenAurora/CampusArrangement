@@ -228,7 +228,6 @@ def login(payload: LoginRequest) -> dict:
         user = user_service.authenticate(payload.username, payload.password)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     token = secrets.token_hex(16)
     with _tokens_lock:
         _tokens[token] = (user.id, time.time())
@@ -266,7 +265,6 @@ def create_user(payload: UserCreateRequest, current_user: User = Depends(_get_cu
         user = user_service.register(current_user=current_user, username=payload.username, password=payload.password, role=payload.role)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
 
 
@@ -277,7 +275,6 @@ def delete_user(user_id: str, current_user: User = Depends(_get_current_user)) -
         user_service.delete_user(current_user, user_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -288,7 +285,6 @@ def self_register(payload: SelfRegisterRequest) -> dict:
         user = user_service.self_register(username=payload.username, password=payload.password)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
 
 
@@ -300,7 +296,6 @@ def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[
         return user_service.list_pending_users(current_user)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
 
 
 @app.post("/users/{user_id}/approve")
@@ -311,7 +306,6 @@ def approve_user(user_id: str, current_user: User = Depends(_get_current_user)) 
         user = user_service.approve_user(current_user, user_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
 
 
@@ -323,7 +317,6 @@ def reject_user(user_id: str, current_user: User = Depends(_get_current_user)) -
         user_service.reject_user(current_user, user_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -364,7 +357,6 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": activity.id,
         "name": activity.name,
@@ -390,7 +382,6 @@ def delete_activity(activity_id: str, current_user: User = Depends(_get_current_
         activity_service.delete_activity(user=current_user, activity_id=activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -411,7 +402,6 @@ def duplicate_activity(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": activity.id,
         "name": activity.name,
@@ -462,7 +452,6 @@ def update_activity_status(
             activity_service.reject_activity(user=current_user, activity_id=activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -493,7 +482,6 @@ def add_position(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": slot.id,
         "activity_id": slot.activity_id,
@@ -558,7 +546,6 @@ def add_slot(
                 )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": slot.id,
         "activity_id": slot.activity_id,
@@ -615,7 +602,6 @@ def create_registration(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": registration.id,
         "user_id": registration.user_id,
@@ -636,7 +622,6 @@ def cancel_registration(
         registration_service.cancel(user_id=current_user.id, registration_id=registration_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -647,7 +632,6 @@ def run_scheduling(payload: ScheduleRunRequest, current_user: User = Depends(_ge
         count = scheduling_service.run(payload.activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"count": count}
 
 
@@ -704,7 +688,6 @@ def create_checkin(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": checkin.id,
         "activity_id": checkin.activity_id,
@@ -739,7 +722,6 @@ def mark_absent(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -758,7 +740,6 @@ def unmark_absent(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"ok": True}
 
 
@@ -772,7 +753,6 @@ def generate_checkin_code(
         code = checkin_service.generate_checkin_code(user=current_user, activity_id=activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {"checkin_code": code}
 
 
@@ -790,7 +770,6 @@ def self_check_in(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": checkin.id,
         "activity_id": checkin.activity_id,
@@ -819,7 +798,6 @@ def location_check_in(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": checkin.id,
         "activity_id": checkin.activity_id,
@@ -847,7 +825,6 @@ def photo_check_in(
         )
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
     return {
         "id": checkin.id,
         "activity_id": checkin.activity_id,
@@ -879,7 +856,6 @@ def checkin_stats(
         return checkin_service.get_checkin_stats(activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
-        raise
 
 
 @app.get("/metrics/overview")
