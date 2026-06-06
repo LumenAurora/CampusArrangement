@@ -267,7 +267,8 @@ QComboBox {{
 }}
 QComboBox:focus {{
     background: {p.bg_input_focus};
-    border-color: {p.accent_soft};
+    border: 1.5px solid {p.accent};
+    border-radius: 10px;
 }}
 QComboBox:hover {{
     background: {p.bg_input_focus};
@@ -290,7 +291,8 @@ QComboBox::down-arrow {{
     margin-right: 6px;
 }}
 QComboBox:on {{
-    border-color: {p.accent};
+    border: 1.5px solid {p.accent};
+    border-radius: 10px;
     background: {p.bg_input_focus};
 }}
 QComboBox::down-arrow:on {{
@@ -318,6 +320,67 @@ QComboBox QAbstractItemView::item:hover {{
 QComboBox QAbstractItemView::item:selected {{
     background: {p.accent_soft};
     color: {p.accent};
+}}
+QComboBox QAbstractItemView::viewport {{
+    background: transparent;
+}}
+QComboBox QListView {{
+    background: {p.bg_card};
+    border: 1px solid {p.border};
+    border-radius: 12px;
+    padding: 6px;
+    outline: none;
+}}
+QComboBox QListView::item {{
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-height: 24px;
+}}
+QComboBox QListView::item:hover {{
+    background: {p.nav_hover_bg};
+    color: {p.text_primary};
+}}
+QComboBox QListView::item:selected {{
+    background: {p.accent_soft};
+    color: {p.accent};
+}}
+QComboBox QListView::viewport {{
+    background: transparent;
+}}
+
+/* ===== 模式选择器（pill-style） ===== */
+QComboBox#modeSelector {{
+    background: {p.btn_secondary_bg};
+    color: {p.btn_secondary_fg};
+    border: 1px solid {p.border_light};
+    border-radius: 20px;
+    padding: 6px 16px 6px 14px;
+    padding-right: 30px;
+    font-weight: 600;
+    font-size: 12px;
+    min-height: 18px;
+}}
+QComboBox#modeSelector:hover {{
+    background: {p.btn_secondary_hover};
+    border-color: {p.border};
+}}
+QComboBox#modeSelector:on {{
+    background: {p.accent_soft};
+    color: {p.accent};
+    border-color: {p.accent};
+}}
+QComboBox#modeSelector::drop-down {{
+    border: none;
+    width: 24px;
+}}
+QComboBox#modeSelector::down-arrow {{
+    image: none;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {p.text_tertiary};
+    margin-right: 4px;
 }}
 
 /* ===== 按钮 ===== */
@@ -673,51 +736,6 @@ QDateEdit QCalendarWidget {{
     border-radius: 12px;
 }}
 
-/* ===== 下拉选择框增强 ===== */
-QComboBox QAbstractItemView {{
-    background: {p.bg_card};
-    color: {p.text_primary};
-    border: 1px solid {p.border};
-    border-radius: 12px;
-    padding: 6px;
-    outline: none;
-    selection-background-color: {p.accent_soft};
-    selection-color: {p.accent};
-}}
-QComboBox QAbstractItemView::item {{
-    padding: 8px 12px;
-    border-radius: 8px;
-    min-height: 24px;
-}}
-QComboBox QAbstractItemView::item:hover {{
-    background: {p.nav_hover_bg};
-    color: {p.text_primary};
-}}
-QComboBox QAbstractItemView::item:selected {{
-    background: {p.accent_soft};
-    color: {p.accent};
-}}
-QComboBox QListView {{
-    background: {p.bg_card};
-    border: 1px solid {p.border};
-    border-radius: 12px;
-    padding: 6px;
-    outline: none;
-}}
-QComboBox QListView::item {{
-    padding: 8px 12px;
-    border-radius: 8px;
-    min-height: 24px;
-}}
-QComboBox QListView::item:hover {{
-    background: {p.nav_hover_bg};
-    color: {p.text_primary};
-}}
-QComboBox QListView::item:selected {{
-    background: {p.accent_soft};
-    color: {p.accent};
-}}
-
 /* ===== 统计卡片（带彩色左边框） ===== */
 QFrame#statCard {{
     background: {p.bg_card};
@@ -770,10 +788,6 @@ QDialog {{
 /* ===== 输入框聚焦增强 ===== */
 QLineEdit:focus, QSpinBox:focus, QDateTimeEdit:focus, QDateEdit:focus {{
     background: {p.bg_input_focus};
-    border: 1.5px solid {p.accent};
-    border-radius: 10px;
-}}
-QComboBox:focus, QComboBox:on {{
     border: 1.5px solid {p.accent};
     border-radius: 10px;
 }}

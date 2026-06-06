@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QDate, QDateTime, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QComboBox,
     QDateTimeEdit,
     QDialog,
     QFormLayout,
@@ -37,7 +36,20 @@ from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, S
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_activity_status, format_datetime, format_slot_name, make_page_header, make_status_item, set_banner, set_table_empty, SearchBox, format_status
+from app.ui.ui_utils import (
+    ModeSelector,
+    SearchBox,
+    StyledComboBox,
+    configure_table,
+    format_activity_status,
+    format_datetime,
+    format_slot_name,
+    format_status,
+    make_page_header,
+    make_status_item,
+    set_banner,
+    set_table_empty,
+)
 
 
 class _CapacityBar(QWidget):
@@ -110,7 +122,7 @@ class ActivityPanel(QWidget):
         self._slot_tree.setColumnWidth(6, 50)
         self._slot_tree.setColumnWidth(7, 110)
 
-        self._activity_selector = QComboBox()
+        self._activity_selector = StyledComboBox()
         self._activity_selector.setMinimumWidth(240)
 
         self._search_box = SearchBox()
@@ -248,7 +260,7 @@ class ActivityPanel(QWidget):
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setMinimumWidth(280)
-        left_scroll.setMaximumWidth(500)
+        left_scroll.setMaximumWidth(520)
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         right_col = QVBoxLayout()
@@ -282,7 +294,7 @@ class ActivityPanel(QWidget):
     def _init_activity_form(self) -> None:
         self._activity_name = QLineEdit()
         self._activity_name.setPlaceholderText("例如：志愿服务（图书馆）")
-        self._activity_type = QComboBox()
+        self._activity_type = ModeSelector()
         self._activity_type.addItem("活动报名（时段模式）", ActivityType.TIME_SLOT)
         self._activity_type.addItem("选课/选题（非时段模式）", ActivityType.NON_TIME_SLOT)
         self._signup_start = QDateTimeEdit(QDateTime.currentDateTime())
@@ -295,14 +307,14 @@ class ActivityPanel(QWidget):
         self._details.setPlaceholderText("简要说明活动内容与要求")
         self._location = QLineEdit()
         self._location.setPlaceholderText("例如：图书馆一楼大厅（位置签到需填坐标，如 39.9042,116.4074）")
-        self._signup_mode = QComboBox()
+        self._signup_mode = ModeSelector()
         self._signup_mode.addItem("实时显示名额", SignupMode.REALTIME)
         self._signup_mode.addItem("非实时显示名额", SignupMode.BLIND)
-        self._allocation_mode = QComboBox()
+        self._allocation_mode = ModeSelector()
         self._allocation_mode.addItem("志愿优先(贪心)", AllocationMode.GREEDY)
         self._allocation_mode.addItem("先到先得", AllocationMode.FIRST_COME)
         self._allocation_mode.addItem("抽签随机", AllocationMode.LOTTERY)
-        self._checkin_mode = QComboBox()
+        self._checkin_mode = ModeSelector()
         self._checkin_mode.addItem("手动签到", CheckInMode.MANUAL)
         self._checkin_mode.addItem("二维码签到", CheckInMode.QRCODE)
         self._checkin_mode.addItem("自助签到码", CheckInMode.SELF_CODE)
@@ -357,7 +369,7 @@ class ActivityPanel(QWidget):
         self._slot_end.setDisplayFormat("yyyy-MM-dd HH:mm")
 
         # 非时段模式字段
-        self._slot_option_type = QComboBox()
+        self._slot_option_type = ModeSelector()
         self._slot_option_type.addItem("选题", SlotType.TOPIC)
         self._slot_option_type.addItem("课程", SlotType.COURSE)
         self._slot_option_type.addItem("自定义", SlotType.CUSTOM_OPTION)
@@ -366,7 +378,7 @@ class ActivityPanel(QWidget):
 
         self._slot_capacity = QSpinBox()
         self._slot_capacity.setRange(1, 1000)
-        self._auto_create_position = QComboBox()
+        self._auto_create_position = ModeSelector()
         self._auto_create_position.addItem("不划分岗位", "none")
         self._auto_create_position.addItem("自动创建默认岗位", "default")
         self._auto_create_position.setCurrentIndex(0)
@@ -396,9 +408,9 @@ class ActivityPanel(QWidget):
         self._batch_end_date = QDateTimeEdit(QDateTime.currentDateTime().addDays(7))
         self._batch_end_date.setCalendarPopup(True)
         self._batch_end_date.setDisplayFormat("yyyy-MM-dd HH:mm")
-        self._batch_interval = QComboBox()
+        self._batch_interval = ModeSelector()
         self._batch_interval.addItems(["每天", "每2天", "每3天", "每周", "每2周"])
-        self._batch_day_of_week = QComboBox()
+        self._batch_day_of_week = ModeSelector()
         self._batch_day_of_week.addItems(["周一", "周二", "周三", "周四", "周五", "周六", "周日"])
         self._batch_day_of_week.setEnabled(False)
         self._batch_start_time = QDateTimeEdit(QDateTime.currentDateTime().time())
@@ -1152,7 +1164,7 @@ class CopyActivityDialog(QDialog):
         self._new_checkin_end.setCalendarPopup(True)
         self._new_checkin_end.setDisplayFormat("yyyy-MM-dd HH:mm")
 
-        quick_select = QComboBox()
+        quick_select = StyledComboBox()
         quick_select.addItems(["自定义", "下一周", "下两周"])
         quick_select.currentIndexChanged.connect(self._on_quick_select)
 

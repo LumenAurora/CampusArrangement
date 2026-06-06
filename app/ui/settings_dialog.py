@@ -5,7 +5,6 @@ import threading
 import requests
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -38,6 +37,7 @@ from app.ui.style import (
     set_density,
     set_theme,
 )
+from app.ui.ui_utils import StyledComboBox
 
 
 class SettingsDialog(QDialog):
@@ -53,17 +53,17 @@ class SettingsDialog(QDialog):
         # ── 外观设置 ──────────────────────────────────────────
         appearance_header = self._make_section_header("外观设置", p)
 
-        self._theme = QComboBox()
+        self._theme = StyledComboBox()
         self._theme.addItem("浅色", THEME_LIGHT)
         self._theme.addItem("深色", THEME_DARK)
         self._theme.setCurrentIndex(0 if get_theme() == THEME_LIGHT else 1)
 
-        self._density = QComboBox()
+        self._density = StyledComboBox()
         self._density.addItem("舒适", DENSITY_COMFORTABLE)
         self._density.addItem("紧凑", DENSITY_COMPACT)
         self._density.setCurrentIndex(0 if get_density() == DENSITY_COMFORTABLE else 1)
 
-        self._default_page = QComboBox()
+        self._default_page = StyledComboBox()
         for key, title in pages:
             self._default_page.addItem(title, key)
         default_key = get_default_page()
@@ -83,7 +83,7 @@ class SettingsDialog(QDialog):
         # ── 数据设置 ──────────────────────────────────────────
         data_header = self._make_section_header("数据设置", p)
 
-        self._data_mode = QComboBox()
+        self._data_mode = StyledComboBox()
         self._data_mode.addItem("本地模式（单机）", DATA_MODE_LOCAL)
         self._data_mode.addItem("服务端模式（多端协同）", DATA_MODE_REMOTE)
         self._data_mode.setCurrentIndex(0 if get_data_mode() == DATA_MODE_LOCAL else 1)
