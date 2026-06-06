@@ -79,6 +79,9 @@ def main() -> int:
         registration_service = RemoteRegistrationService(api_client)
         scheduling_service = RemoteSchedulingService(api_client)
         checkin_service = RemoteCheckInService(api_client)
+        # 远程模式暂不支持小组功能
+        group_repo = None
+        group_service = None
     else:
         activity_repo = ActivityRepository()
         slot_repo = TimeSlotRepository()
