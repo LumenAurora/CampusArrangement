@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from app.domain.models import User
 from app.infrastructure.repositories import ScheduleRepository, ActivityRepository, TimeSlotRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import StyledComboBox, ModeSelector
+from app.ui.ui_utils import StyledComboBox, ModeSelector, to_utc
 
 
 # ─── 调色板辅助 ──────────────────────────────────────────────
@@ -1101,7 +1101,7 @@ class CalendarPanel(QWidget):
         if not value:
             return None
         try:
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return to_utc(value)
         except (ValueError, TypeError):
             return None
 

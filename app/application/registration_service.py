@@ -33,14 +33,12 @@ class RegistrationService:
         signup_end = activity.get("signup_end")
         if signup_start:
             start = datetime.fromisoformat(str(signup_start)) if isinstance(signup_start, str) else signup_start
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
+            start = start.astimezone(timezone.utc)
             if now < start:
                 raise ValidationError("报名尚未开始")
         if signup_end:
             end = datetime.fromisoformat(str(signup_end)) if isinstance(signup_end, str) else signup_end
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
+            end = end.astimezone(timezone.utc)
             if now > end:
                 raise ValidationError("报名已截止")
         slot = self._slot_repo.get(slot_id)
@@ -89,6 +87,8 @@ class RegistrationService:
         if reg["status"] == RegistrationStatus.ASSIGNED.value:
             raise ValidationError("已分配的报名无法取消，请联系管理员")
         activity = self._activity_repo.get(reg["activity_id"])
+        if activity and activity["status"] == ActivityStatus.CLOSED.value:
+            raise ValidationError("报名已结束，如需取消请联系组织者请假")
         if activity and activity["status"] == ActivityStatus.ARCHIVED.value:
             raise ValidationError("已归档的活动无法取消报名")
         # Only release the slot if the registration is PENDING in realtime mode.

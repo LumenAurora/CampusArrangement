@@ -93,11 +93,15 @@ def format_status(status_str: str) -> str:
     return mapping.get(status_str, status_str)
 
 
-def _to_utc(value: str | datetime) -> datetime:
-    """将时间值转为UTC。无时区信息的时间视为本地时间。"""
+def to_utc(value: str | datetime) -> datetime:
+    """将时间值转为UTC-aware datetime。
+
+    无时区信息(naive)的时间视为本地时间，通过 astimezone 正确转换为 UTC。
+    有时区信息(aware)的时间也统一转换为 UTC，确保所有比较使用同一时区。
+
+    这是整个应用中时间解析的唯一标准入口。
+    """
     dt = datetime.fromisoformat(str(value)) if isinstance(value, str) else value
-    if dt.tzinfo is None:
-        return dt.astimezone(timezone.utc)
     return dt.astimezone(timezone.utc)
 
 
@@ -120,11 +124,11 @@ def format_activity_status(activity: dict) -> str:
         signup_start = activity.get("signup_start")
         signup_end = activity.get("signup_end")
         if signup_start:
-            start = _to_utc(signup_start)
+            start = to_utc(signup_start)
             if now < start:
                 return "报名未开始"
         if signup_end:
-            end = _to_utc(signup_end)
+            end = to_utc(signup_end)
             if now > end:
                 return "报名已截止"
         return "报名中"
@@ -134,11 +138,11 @@ def format_activity_status(activity: dict) -> str:
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")
         if checkin_start:
-            start = _to_utc(checkin_start)
+            start = to_utc(checkin_start)
             if now < start:
                 return "签到未开始"
         if checkin_end:
-            end = _to_utc(checkin_end)
+            end = to_utc(checkin_end)
             if now > end:
                 return "签到已结束"
         return "签到中"
@@ -218,11 +222,8 @@ class CountdownLabel(QLabel):
 
     @staticmethod
     def _parse_local(value: str) -> datetime:
-        """Parse an ISO datetime string and treat naive datetimes as local time."""
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            return dt.astimezone(timezone.utc)
-        return dt.astimezone(timezone.utc)
+        """Parse an ISO datetime string into UTC-aware datetime."""
+        return to_utc(value)
 
     def _tick(self) -> None:
         if not self._start or not self._end:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import QDate, QDateTime, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
@@ -42,6 +42,7 @@ from app.ui.ui_utils import (
     make_page_header,
     set_banner,
     set_table_empty,
+    to_utc,
 )
 
 
@@ -113,7 +114,7 @@ class SlotGridWidget(QWidget):
                 continue  # 子岗位不直接在格子中显示
             if slot.get("start_time"):
                 try:
-                    dt = datetime.fromisoformat(slot["start_time"].replace('Z', '+00:00'))
+                    dt = to_utc(slot["start_time"]).astimezone()
                     date_key = dt.strftime("%Y-%m-%d")
                     date_groups.setdefault(date_key, []).append(slot)
                 except (ValueError, TypeError):
@@ -249,8 +250,8 @@ class SlotGridWidget(QWidget):
         # 时间（如果有）— 突出显示
         if slot.get("start_time"):
             try:
-                st = datetime.fromisoformat(slot["start_time"].replace('Z', '+00:00'))
-                et = datetime.fromisoformat(slot["end_time"].replace('Z', '+00:00')) if slot.get("end_time") else None
+                st = to_utc(slot["start_time"]).astimezone()
+                et = to_utc(slot["end_time"]).astimezone() if slot.get("end_time") else None
                 time_text = st.strftime("%H:%M")
                 if et:
                     time_text += f" - {et.strftime('%H:%M')}"
@@ -464,15 +465,11 @@ class RegistrationPanel(QWidget):
             signup_end = activity.get("signup_end") if activity else None
             can_signup = True
             if signup_start:
-                start = datetime.fromisoformat(str(signup_start)) if isinstance(signup_start, str) else signup_start
-                if start.tzinfo is None:
-                    start = start.replace(tzinfo=timezone.utc)
+                start = to_utc(signup_start)
                 if now < start:
                     can_signup = False
             if signup_end:
-                end = datetime.fromisoformat(str(signup_end)) if isinstance(signup_end, str) else signup_end
-                if end.tzinfo is None:
-                    end = end.replace(tzinfo=timezone.utc)
+                end = to_utc(signup_end)
                 if now > end:
                     can_signup = False
         slots = self._activity_service.list_slots(activity_id)
@@ -554,7 +551,9 @@ class RegistrationPanel(QWidget):
         if not regs:
             set_table_empty(self._my_reg_table, 5, "暂无报名记录")
             return
-        activities = {a["id"]: a["name"] for a in self._activity_service.list_activities()}
+        raw_activities = self._activity_service.list_activities()
+        activities = {a["id"]: a["name"] for a in raw_activities}
+        activity_status_map = {a["id"]: a.get("status", "") for a in raw_activities}
         slots = {s["id"]: s for s_list in [self._activity_service.list_slots(aid) for aid in activities] if s_list for s in s_list}
         self._my_reg_table.clearSpans()
         self._my_reg_table.setRowCount(len(regs))
@@ -567,7 +566,15 @@ class RegistrationPanel(QWidget):
             self._my_reg_table.setItem(row_index, 2, QTableWidgetItem(slot_text))
             status_text = format_status(reg["status"])
             self._my_reg_table.setItem(row_index, 3, QTableWidgetItem(status_text))
-            if reg["status"] in (RegistrationStatus.PENDING.value, RegistrationStatus.CONFIRMED.value, RegistrationStatus.NOT_ASSIGNED.value):
+            # 取消按钮：仅当报名状态允许且活动未关闭/未归档时才显示
+            reg_cancellable = reg["status"] in (
+                RegistrationStatus.PENDING.value,
+                RegistrationStatus.CONFIRMED.value,
+                RegistrationStatus.NOT_ASSIGNED.value,
+            )
+            act_status = activity_status_map.get(reg["activity_id"], "")
+            act_ended = act_status in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value)
+            if reg_cancellable and not act_ended:
                 cancel_btn = QPushButton("取消")
                 cancel_btn.setObjectName("dangerButton")
                 cancel_btn.setCursor(Qt.PointingHandCursor)
