@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QPropertyAnimation, QSize, Qt
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtCore import QPropertyAnimation, QSize, Qt, QSettings
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -26,6 +26,7 @@ from app.ui.style import (
     apply_app_style,
     get_default_page,
     get_density,
+    get_palette,
     get_theme,
     set_density,
     set_theme,
@@ -40,6 +41,15 @@ class NavigationWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(title)
         self._nav_expanded = True
+
+        # 恢复窗口几何信息
+        settings = QSettings("CampusScheduler", "CampusScheduler")
+        geometry = settings.value("ui/window_geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+
+        # 状态栏
+        self.statusBar().showMessage("就绪")
 
         # 侧边导航
         self._nav = QListWidget()
@@ -59,6 +69,13 @@ class NavigationWindow(QMainWindow):
 
         top_bar = self._build_topbar(user_label)
 
+        # 顶栏与内容之间的分隔线
+        p = get_palette()
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFixedHeight(1)
+        separator.setStyleSheet(f"background: {p.border_light}; border: none;")
+
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(12)
@@ -67,13 +84,28 @@ class NavigationWindow(QMainWindow):
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(16, 12, 16, 16)
-        root_layout.setSpacing(12)
+        root_layout.setSpacing(0)
         root_layout.addWidget(top_bar)
+        root_layout.addWidget(separator)
+        root_layout.addSpacing(12)
         root_layout.addLayout(body_layout)
 
         root = QWidget()
         root.setLayout(root_layout)
         self.setCentralWidget(root)
+
+        # 键盘快捷键：Ctrl+1 ~ Ctrl+5 切换页面
+        self._page_shortcuts: list[QShortcut] = []
+        for i in range(5):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
+            shortcut.activated.connect(lambda checked=False, idx=i: self._switch_to_page(idx))
+            self._page_shortcuts.append(shortcut)
+
+    def closeEvent(self, event) -> None:
+        """窗口关闭时保存几何信息。"""
+        settings = QSettings("CampusScheduler", "CampusScheduler")
+        settings.setValue("ui/window_geometry", self.saveGeometry())
+        super().closeEvent(event)
 
     def set_pages(self, pages: list[tuple[str, str, QWidget, object | None]]) -> None:
         self._nav.clear()
@@ -184,11 +216,19 @@ class NavigationWindow(QMainWindow):
 
     def _on_page_changed(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
+        # 更新状态栏显示当前页面名称
+        if 0 <= index < len(self._page_titles):
+            self.statusBar().showMessage(self._page_titles[index])
         # Refresh the page data when switching tabs
         if 0 <= index < len(self._pages):
             page = self._pages[index]
             if hasattr(page, "refresh") and callable(page.refresh):
                 page.refresh()
+
+    def _switch_to_page(self, index: int) -> None:
+        """通过快捷键切换到指定页面。"""
+        if 0 <= index < self._nav.count():
+            self._nav.setCurrentRow(index)
 
     def _open_settings(self, app: QApplication) -> None:
         pages = list(zip(self._page_keys, self._page_titles))
@@ -217,6 +257,7 @@ class NavigationWindow(QMainWindow):
         self._toggle_btn = QPushButton("☰")
         self._toggle_btn.setObjectName("sidebarToggle")
         self._toggle_btn.setCursor(Qt.PointingHandCursor)
+        self._toggle_btn.setToolTip("切换侧边栏")
         self._toggle_btn.clicked.connect(self._toggle_sidebar)
         layout.addWidget(self._toggle_btn)
 
@@ -234,10 +275,29 @@ class NavigationWindow(QMainWindow):
         title_col.addWidget(subtitle)
         layout.addLayout(title_col, 1)
 
-        # 右侧：用户标签
+        # 右侧：用户标签 + 登出按钮
+        p = get_palette()
         user = QLabel(user_label)
         user.setObjectName("userBadge")
         layout.addWidget(user)
+
+        logout_btn = QPushButton("登出")
+        logout_btn.setObjectName("logoutButton")
+        logout_btn.setCursor(Qt.PointingHandCursor)
+        logout_btn.setToolTip("退出当前账号")
+        logout_btn.setStyleSheet(
+            f"QPushButton#logoutButton {{"
+            f" background: {p.btn_secondary_bg}; color: {p.text_secondary};"
+            f" border: 1px solid {p.border_light}; border-radius: 6px;"
+            f" padding: 4px 12px; font-size: 12px; font-weight: 500;"
+            f"}}"
+            f"QPushButton#logoutButton:hover {{"
+            f" background: {p.btn_danger_bg}; color: {p.error_fg};"
+            f" border-color: {p.error_fg};"
+            f"}}"
+        )
+        logout_btn.clicked.connect(self.close)
+        layout.addWidget(logout_btn)
 
         bar.setLayout(layout)
         return bar

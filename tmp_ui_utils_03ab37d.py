@@ -45,6 +45,17 @@ def make_page_header(title: str, subtitle: str | None = None) -> QWidget:
     return container
 
 
+def format_slot_name(slot: dict) -> str:
+    """缁熶竴鐨?slot 鍚嶇О鏄剧ず锛氫紭鍏堝悕绉?鈫?鏃堕棿鑼冨洿 鈫?ID 鈫?鍗犱綅绗?""
+    if slot.get("name"):
+        return slot["name"]
+    if slot.get("start_time"):
+        return f"{format_datetime(slot['start_time'])} ~ {format_datetime(slot['end_time'])}"
+    if slot.get("id"):
+        return str(slot["id"])
+    return "-"
+
+
 def format_datetime(value: str) -> str:
     try:
         dt = datetime.fromisoformat(value)
@@ -53,37 +64,20 @@ def format_datetime(value: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def format_slot_name(slot: dict) -> str:
-    """Format a slot dict into a human-readable label."""
-    name = slot.get("name")
-    if name:
-        return name
-    start = slot.get("start_time")
-    end = slot.get("end_time")
-    if start and end:
-        try:
-            s = datetime.fromisoformat(str(start))
-            e = datetime.fromisoformat(str(end))
-            return f"{s.strftime('%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
-        except ValueError:
-            pass
-    return str(slot.get("id", "—"))
-
-
 def format_status(status_str: str) -> str:
     mapping = {
-        "open": "报名中",
-        "closed": "报名已结束",
-        "archived": "已归档",
-        "draft": "草稿",
-        "pending_review": "待审核",
-        "pending": "待处理",
-        "confirmed": "已确认",
-        "assigned": "已分配",
-        "cancelled": "已取消",
-        "not_assigned": "未中签",
-        "checked_in": "已签到",
-        "absent": "缺勤",
+        "open": "鎶ュ悕涓?,
+        "closed": "鎶ュ悕宸茬粨鏉?,
+        "archived": "宸插綊妗?,
+        "draft": "鑽夌",
+        "pending_review": "寰呭鏍?,
+        "pending": "寰呭鐞?,
+        "confirmed": "宸茬‘璁?,
+        "assigned": "宸插垎閰?,
+        "cancelled": "宸插彇娑?,
+        "not_assigned": "鏈腑绛?,
+        "checked_in": "宸茬鍒?,
+        "absent": "缂哄嫟",
     }
     return mapping.get(status_str, status_str)
 
@@ -101,7 +95,7 @@ def set_banner(label: QLabel, kind: str, text: str) -> None:
     label.style().polish(label)
 
 
-def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数据") -> None:
+def set_table_empty(table: QTableWidget, columns: int, message: str = "鏆傛棤鏁版嵁") -> None:
     table.setRowCount(1)
     table.setColumnCount(columns)
     table.setSpan(0, 0, 1, columns)
@@ -118,11 +112,11 @@ def make_status_item(text: str) -> QTableWidgetItem:
     item.setTextAlignment(Qt.AlignCenter)
     p = get_palette()
     color_map = {
-        "报名中": (p.success_fg, p.success_bg),
-        "已结束": (p.error_fg, p.error_bg),
-        "已归档": (p.text_tertiary, p.bg_sidebar),
-        "草稿": (p.warning_fg, p.warning_bg),
-        "待审核": (p.accent, p.accent_soft),
+        "鎶ュ悕涓?: (p.success_fg, p.success_bg),
+        "宸茬粨鏉?: (p.error_fg, p.error_bg),
+        "宸插綊妗?: (p.text_tertiary, p.bg_sidebar),
+        "鑽夌": (p.warning_fg, p.warning_bg),
+        "寰呭鏍?: (p.accent, p.accent_soft),
     }
     fg, bg = color_map.get(text, (p.text_secondary, p.bg_base))
     item.setForeground(QBrush(QColor(fg)))
@@ -166,33 +160,33 @@ class CountdownLabel(QLabel):
             return
         now = datetime.now(timezone.utc)
         if now >= self._end:
-            self.setText("已结束")
+            self.setText("宸茬粨鏉?)
             self._timer.stop()
             return
         if now >= self._start:
-            self.setText("报名进行中")
+            self.setText("鎶ュ悕杩涜涓?)
             return
         delta = self._start - now
         if delta.total_seconds() <= 60:
-            self.setText("即将开始")
+            self.setText("鍗冲皢寮€濮?)
             return
         days = delta.days
         hours, remainder = divmod(delta.seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         parts: list[str] = []
         if days > 0:
-            parts.append(f"{days}天")
+            parts.append(f"{days}澶?)
         if hours > 0 or days > 0:
-            parts.append(f"{hours}时")
+            parts.append(f"{hours}鏃?)
         if minutes > 0 or hours > 0 or days > 0:
-            parts.append(f"{minutes}分")
-        parts.append(f"{seconds}秒")
+            parts.append(f"{minutes}鍒?)
+        parts.append(f"{seconds}绉?)
         self.setText("".join(parts))
 
 
 class SearchBox(QLineEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setPlaceholderText("搜索...")
+        self.setPlaceholderText("鎼滅储...")
         self.setClearButtonEnabled(True)
         self.setObjectName("searchBox")

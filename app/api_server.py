@@ -17,7 +17,7 @@ from app.application.registration_service import RegistrationService
 from app.application.scheduling_service import SchedulingService
 from app.application.user_service import UserService
 from app.domain.exceptions import CapacityExceeded, ConflictError, PermissionDenied, ValidationError
-from app.domain.models import ActivityStatus, AllocationMode, CheckInMode, CheckInStatus, RegistrationStatus, Role, SignupMode, User
+from app.domain.models import ActivityStatus, ActivityType, AllocationMode, CheckInMode, CheckInStatus, RegistrationStatus, Role, SignupMode, SlotType, User, UserStatus
 from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
@@ -62,7 +62,7 @@ _TOKEN_TTL = 86400
 def _ensure_admin() -> None:
     if user_repo.get_by_username("admin"):
         return
-    user_service.register(username="admin", password="admin", role=Role.SUPER_ADMIN)
+    user_service.register(current_user=None, username="admin", password="admin", role=Role.SUPER_ADMIN)
 
 
 _ensure_admin()
@@ -89,14 +89,25 @@ class ActivityCreateRequest(BaseModel):
     signup_mode: SignupMode = SignupMode.REALTIME
     allocation_mode: AllocationMode = AllocationMode.GREEDY
     location: str = ""
+    activity_type: ActivityType = ActivityType.TIME_SLOT
     checkin_mode: CheckInMode = CheckInMode.MANUAL
     checkin_start: datetime | None = None
     checkin_end: datetime | None = None
 
 
 class SlotCreateRequest(BaseModel):
-    start_time: datetime
-    end_time: datetime
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    capacity: int = Field(..., ge=1)
+    slot_type: str = "time_slot"
+    name: str = ""
+    metadata: str = ""
+    parent_slot_id: str | None = None  # 子岗位的父时段ID
+
+
+class PositionCreateRequest(BaseModel):
+    parent_slot_id: str
+    name: str = Field(..., min_length=1)
     capacity: int = Field(..., ge=1)
 
 
@@ -116,6 +127,11 @@ class UserCreateRequest(BaseModel):
     role: Role
 
 
+class SelfRegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
 class CheckInRequest(BaseModel):
     activity_id: str
     user_id: str
@@ -124,6 +140,13 @@ class CheckInRequest(BaseModel):
 
 class StatusUpdateRequest(BaseModel):
     action: str = Field(..., pattern="^(publish|close|archive|submit_review|reject|reopen)$")
+
+
+class DuplicateActivityRequest(BaseModel):
+    new_signup_start: datetime
+    new_signup_end: datetime
+    new_checkin_start: datetime | None = None
+    new_checkin_end: datetime | None = None
 
 
 class SelfCheckInRequest(BaseModel):
@@ -152,7 +175,8 @@ class UnmarkAbsentRequest(BaseModel):
 
 
 def _to_user(record: dict) -> User:
-    return User(id=record["id"], username=record["username"], role=Role(record["role"]))
+    return User(id=record["id"], username=record["username"], role=Role(record["role"]),
+                status=UserStatus(record.get("status", "approved")))
 
 
 def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
@@ -210,7 +234,7 @@ def login(payload: LoginRequest) -> dict:
         _tokens[token] = (user.id, time.time())
     return {
         "token": token,
-        "user": {"id": user.id, "username": user.username, "role": user.role.value},
+        "user": {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value},
     }
 
 
@@ -237,13 +261,13 @@ def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> d
 
 @app.post("/users")
 def create_user(payload: UserCreateRequest, current_user: User = Depends(_get_current_user)) -> dict:
-    _require_roles(current_user, {Role.SUPER_ADMIN})
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     try:
-        user = user_service.register(payload.username, payload.password, payload.role)
+        user = user_service.register(current_user=current_user, username=payload.username, password=payload.password, role=payload.role)
     except Exception as exc:
         _handle_domain_error(exc)
         raise
-    return {"id": user.id, "username": user.username, "role": user.role.value}
+    return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
 
 
 @app.post("/users/{user_id}/delete")
@@ -251,6 +275,52 @@ def delete_user(user_id: str, current_user: User = Depends(_get_current_user)) -
     _require_roles(current_user, {Role.SUPER_ADMIN})
     try:
         user_service.delete_user(current_user, user_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"ok": True}
+
+
+@app.post("/auth/register")
+def self_register(payload: SelfRegisterRequest) -> dict:
+    """用户自助注册，注册后需等待审批"""
+    try:
+        user = user_service.self_register(username=payload.username, password=payload.password)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
+
+
+@app.get("/users/pending")
+def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
+    """获取待审批用户列表"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        return user_service.list_pending_users(current_user)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+
+
+@app.post("/users/{user_id}/approve")
+def approve_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    """审批通过用户注册"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        user = user_service.approve_user(current_user, user_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
+
+
+@app.post("/users/{user_id}/reject")
+def reject_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    """拒绝用户注册"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        user_service.reject_user(current_user, user_id)
     except Exception as exc:
         _handle_domain_error(exc)
         raise
@@ -287,6 +357,7 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
             signup_mode=payload.signup_mode,
             allocation_mode=payload.allocation_mode,
             location=payload.location,
+            activity_type=payload.activity_type,
             checkin_mode=payload.checkin_mode.value,
             checkin_start=payload.checkin_start,
             checkin_end=payload.checkin_end,
@@ -305,6 +376,7 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         "signup_mode": activity.signup_mode.value,
         "allocation_mode": activity.allocation_mode.value,
         "location": activity.location,
+        "activity_type": activity.activity_type.value,
         "checkin_code": activity.checkin_code,
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
@@ -320,6 +392,43 @@ def delete_activity(activity_id: str, current_user: User = Depends(_get_current_
         _handle_domain_error(exc)
         raise
     return {"ok": True}
+
+
+@app.post("/activities/{activity_id}/duplicate")
+def duplicate_activity(
+    activity_id: str,
+    payload: DuplicateActivityRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    try:
+        activity = activity_service.duplicate_activity(
+            user=current_user,
+            activity_id=activity_id,
+            new_signup_start=payload.new_signup_start,
+            new_signup_end=payload.new_signup_end,
+            new_checkin_start=payload.new_checkin_start,
+            new_checkin_end=payload.new_checkin_end,
+        )
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {
+        "id": activity.id,
+        "name": activity.name,
+        "status": activity.status.value,
+        "owner_id": activity.owner_id,
+        "signup_start": activity.signup_start.isoformat(),
+        "signup_end": activity.signup_end.isoformat(),
+        "details": activity.details,
+        "signup_mode": activity.signup_mode.value,
+        "allocation_mode": activity.allocation_mode.value,
+        "location": activity.location,
+        "activity_type": activity.activity_type.value,
+        "checkin_code": activity.checkin_code,
+        "checkin_mode": activity.checkin_mode.value,
+        "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
+        "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+    }
 
 
 @app.post("/activities/{activity_id}/status")
@@ -362,6 +471,43 @@ def list_slots(activity_id: str, _: User = Depends(_get_current_user)) -> list[d
     return slot_repo.list_by_activity(activity_id)
 
 
+@app.get("/activities/{activity_id}/slots/{parent_slot_id}/positions")
+def list_positions(activity_id: str, parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+    """获取某时段下的所有子岗位"""
+    return slot_repo.list_positions(parent_slot_id)
+
+
+@app.post("/activities/{activity_id}/positions")
+def add_position(
+    activity_id: str,
+    payload: PositionCreateRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    try:
+        slot = activity_service.add_position(
+            user=current_user,
+            activity_id=activity_id,
+            parent_slot_id=payload.parent_slot_id,
+            name=payload.name,
+            capacity=payload.capacity,
+        )
+    except Exception as exc:
+        _handle_domain_error(exc)
+        raise
+    return {
+        "id": slot.id,
+        "activity_id": slot.activity_id,
+        "slot_type": slot.slot_type.value,
+        "name": slot.name,
+        "start_time": slot.start_time.isoformat() if slot.start_time else None,
+        "end_time": slot.end_time.isoformat() if slot.end_time else None,
+        "capacity": slot.capacity,
+        "used_count": slot.used_count,
+        "parent_slot_id": slot.parent_slot_id,
+        "metadata": slot.metadata,
+    }
+
+
 @app.get("/slots/{slot_id}")
 def get_slot(slot_id: str, _: User = Depends(_get_current_user)) -> dict:
     slot = slot_repo.get(slot_id)
@@ -377,23 +523,53 @@ def add_slot(
     current_user: User = Depends(_get_current_user),
 ) -> dict:
     try:
-        slot = activity_service.add_slot(
-            user=current_user,
-            activity_id=activity_id,
-            start_time=payload.start_time,
-            end_time=payload.end_time,
-            capacity=payload.capacity,
-        )
+        # 如果有 parent_slot_id，添加子岗位
+        if payload.parent_slot_id:
+            slot = activity_service.add_position(
+                user=current_user,
+                activity_id=activity_id,
+                parent_slot_id=payload.parent_slot_id,
+                name=payload.name,
+                capacity=payload.capacity,
+            )
+        else:
+            slot_type = SlotType(payload.slot_type)
+            if slot_type == SlotType.TIME_SLOT:
+                if not payload.start_time or not payload.end_time:
+                    raise ValidationError("时段类型必须设置开始和结束时间")
+                slot = activity_service.add_slot(
+                    user=current_user,
+                    activity_id=activity_id,
+                    start_time=payload.start_time,
+                    end_time=payload.end_time,
+                    capacity=payload.capacity,
+                    name=payload.name,
+                )
+            else:
+                slot = activity_service.add_slot_generic(
+                    user=current_user,
+                    activity_id=activity_id,
+                    slot_type=slot_type,
+                    name=payload.name,
+                    capacity=payload.capacity,
+                    start_time=payload.start_time,
+                    end_time=payload.end_time,
+                    metadata=payload.metadata,
+                )
     except Exception as exc:
         _handle_domain_error(exc)
         raise
     return {
         "id": slot.id,
         "activity_id": slot.activity_id,
-        "start_time": slot.start_time.isoformat(),
-        "end_time": slot.end_time.isoformat(),
+        "slot_type": slot.slot_type.value,
+        "name": slot.name,
+        "start_time": slot.start_time.isoformat() if slot.start_time else None,
+        "end_time": slot.end_time.isoformat() if slot.end_time else None,
         "capacity": slot.capacity,
         "used_count": slot.used_count,
+        "parent_slot_id": slot.parent_slot_id,
+        "metadata": slot.metadata,
     }
 
 

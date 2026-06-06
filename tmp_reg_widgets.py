@@ -42,7 +42,7 @@ def _color(hex_str: str) -> QColor:
 
 
 class SlotGridWidget(QWidget):
-    """医院挂号式的时段格子视图：按日期分组，每个格子显示时段名称和剩余名额"""
+    """鍖婚櫌鎸傚彿寮忕殑鏃舵鏍煎瓙瑙嗗浘锛氭寜鏃ユ湡鍒嗙粍锛屾瘡涓牸瀛愭樉绀烘椂娈靛悕绉板拰鍓╀綑鍚嶉"""
     slot_clicked = Signal(str)  # slot_id
 
     def __init__(self, parent=None):
@@ -82,21 +82,20 @@ class SlotGridWidget(QWidget):
         return self._selected_slot_id
 
     def _rebuild_grid(self):
-        # 清空旧内容
-        while self._grid_layout.count():
+        # 娓呯┖鏃у唴瀹?        while self._grid_layout.count():
             item = self._grid_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         p = _p()
 
-        # 按日期分组（仅时段类型）
+        # 鎸夋棩鏈熷垎缁勶紙浠呮椂娈电被鍨嬶級
         date_groups: dict[str, list[dict]] = {}
         non_time_slots: list[dict] = []
 
         for slot in self._slots:
             if slot.get("parent_slot_id"):
-                continue  # 子岗位不直接在格子中显示
+                continue  # 瀛愬矖浣嶄笉鐩存帴鍦ㄦ牸瀛愪腑鏄剧ず
             if slot.get("start_time"):
                 try:
                     dt = datetime.fromisoformat(slot["start_time"].replace('Z', '+00:00'))
@@ -109,20 +108,19 @@ class SlotGridWidget(QWidget):
 
         row = 0
 
-        # 时段模式：按日期分组显示格子
+        # 鏃舵妯″紡锛氭寜鏃ユ湡鍒嗙粍鏄剧ず鏍煎瓙
         for date_key in sorted(date_groups.keys()):
             slots_for_date = date_groups[date_key]
             try:
                 dt = datetime.strptime(date_key, "%Y-%m-%d")
-                weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                weekday_names = ["鍛ㄤ竴", "鍛ㄤ簩", "鍛ㄤ笁", "鍛ㄥ洓", "鍛ㄤ簲", "鍛ㄥ叚", "鍛ㄦ棩"]
                 weekday = weekday_names[dt.weekday()]
-                date_label = QLabel(f"  {dt.strftime('%m月%d日')} {weekday}")
+                date_label = QLabel(f"  {dt.strftime('%m鏈?d鏃?)} {weekday}")
                 date_label.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {p.text_primary}; margin-top: 4px;")
                 self._grid_layout.addWidget(date_label, row, 0, 1, -1)
                 row += 1
 
-                # 格子行
-                col = 0
+                # 鏍煎瓙琛?                col = 0
                 max_cols = 4
                 for slot in sorted(slots_for_date, key=lambda s: s.get("start_time", "")):
                     card = self._create_slot_card(slot)
@@ -137,10 +135,10 @@ class SlotGridWidget(QWidget):
                 for slot in slots_for_date:
                     non_time_slots.append(slot)
 
-        # 非时段选项：列表式显示
+        # 闈炴椂娈甸€夐」锛氬垪琛ㄥ紡鏄剧ず
         if non_time_slots:
             if date_groups:
-                sep = QLabel("  选项列表")
+                sep = QLabel("  閫夐」鍒楄〃")
                 sep.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {p.text_primary}; margin-top: 8px;")
                 self._grid_layout.addWidget(sep, row, 0, 1, -1)
                 row += 1
@@ -168,8 +166,7 @@ class SlotGridWidget(QWidget):
         card.setCursor(Qt.PointingHandCursor if not is_full else Qt.ForbiddenCursor)
         card.setProperty("slot_id", slot["id"])
 
-        # 选中状态
-        is_selected = self._selected_slot_id == slot["id"]
+        # 閫変腑鐘舵€?        is_selected = self._selected_slot_id == slot["id"]
 
         if is_full:
             border_color = p.text_tertiary
@@ -199,15 +196,14 @@ class SlotGridWidget(QWidget):
         card_layout.setContentsMargins(8, 6, 8, 6)
         card_layout.setSpacing(2)
 
-        # 名称
+        # 鍚嶇О
         name = format_slot_name(slot)
         name_label = QLabel(name)
         name_label.setStyleSheet(f"font-weight: 600; font-size: 12px; color: {p.text_primary if not is_full else p.text_tertiary}; border: none;")
         name_label.setWordWrap(True)
         card_layout.addWidget(name_label)
 
-        # 时间（如果有）
-        if slot.get("start_time"):
+        # 鏃堕棿锛堝鏋滄湁锛?        if slot.get("start_time"):
             try:
                 st = datetime.fromisoformat(slot["start_time"].replace('Z', '+00:00'))
                 et = datetime.fromisoformat(slot["end_time"].replace('Z', '+00:00')) if slot.get("end_time") else None
@@ -220,22 +216,22 @@ class SlotGridWidget(QWidget):
             except (ValueError, TypeError):
                 pass
 
-        # 剩余名额
+        # 鍓╀綑鍚嶉
         if self._signup_mode == SignupMode.REALTIME.value:
             if is_full:
-                quota_label = QLabel("已满")
+                quota_label = QLabel("宸叉弧")
                 quota_label.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {p.error_fg}; border: none;")
             else:
-                quota_label = QLabel(f"剩余 {remaining} 名")
+                quota_label = QLabel(f"鍓╀綑 {remaining} 鍚?)
                 quota_label.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {p.success_fg}; border: none;")
         else:
-            quota_label = QLabel("名额保密")
+            quota_label = QLabel("鍚嶉淇濆瘑")
             quota_label.setStyleSheet(f"font-size: 12px; color: {p.text_tertiary}; border: none;")
         card_layout.addWidget(quota_label)
 
         card.setLayout(card_layout)
 
-        # 点击事件
+        # 鐐瑰嚮浜嬩欢
         if not is_full:
             card.mousePressEvent = lambda event, s=slot: self._on_card_click(s)
 
@@ -270,70 +266,69 @@ class RegistrationPanel(QWidget):
 
         self._countdown_label = CountdownLabel("", "")
 
-        # 格子视图
+        # 鏍煎瓙瑙嗗浘
         self._slot_grid = SlotGridWidget()
         self._slot_grid.slot_clicked.connect(self._on_grid_slot_clicked)
 
-        # 详细表格（传统视图）
+        # 璇︾粏琛ㄦ牸锛堜紶缁熻鍥撅級
         self._slot_table = QTableWidget(0, 8)
-        self._slot_table.setHorizontalHeaderLabels(["ID", "类型", "名称", "开始", "结束", "容量", "已用", "剩余"])
+        self._slot_table.setHorizontalHeaderLabels(["ID", "绫诲瀷", "鍚嶇О", "寮€濮?, "缁撴潫", "瀹归噺", "宸茬敤", "鍓╀綑"])
         configure_table(self._slot_table)
 
-        # 视图切换
+        # 瑙嗗浘鍒囨崲
         self._view_toggle = QComboBox()
-        self._view_toggle.addItems(["格子视图", "表格视图"])
+        self._view_toggle.addItems(["鏍煎瓙瑙嗗浘", "琛ㄦ牸瑙嗗浘"])
         self._view_toggle.currentIndexChanged.connect(self._on_view_toggle)
 
         self._view_stack = QStackedWidget()
         self._view_stack.addWidget(self._slot_grid)
         self._view_stack.addWidget(self._slot_table)
 
-        # 操作区
-        form = QFormLayout()
+        # 鎿嶄綔鍖?        form = QFormLayout()
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(10)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.addRow("活动", self._activity_selector)
+        form.addRow("娲诲姩", self._activity_selector)
         form.addRow(self._countdown_label)
 
-        # 操作行：视图切换 + 选项选择 + 报名按钮
+        # 鎿嶄綔琛岋細瑙嗗浘鍒囨崲 + 閫夐」閫夋嫨 + 鎶ュ悕鎸夐挳
         action_row = QHBoxLayout()
-        action_row.addWidget(QLabel("视图"))
+        action_row.addWidget(QLabel("瑙嗗浘"))
         action_row.addWidget(self._view_toggle)
         action_row.addSpacing(16)
-        action_row.addWidget(QLabel("选项"))
+        action_row.addWidget(QLabel("閫夐」"))
         action_row.addWidget(self._slot_selector, 1)
-        submit_btn = QPushButton("提交报名")
+        submit_btn = QPushButton("鎻愪氦鎶ュ悕")
         submit_btn.setObjectName("primaryButton")
         submit_btn.clicked.connect(self._register)
         action_row.addWidget(submit_btn)
         form.addRow(action_row)
         form.addRow(self._message)
 
-        form_group = QGroupBox("报名操作")
+        form_group = QGroupBox("鎶ュ悕鎿嶄綔")
         form_layout = QVBoxLayout()
         form_layout.setContentsMargins(12, 12, 12, 12)
         form_layout.addLayout(form)
         form_group.setLayout(form_layout)
 
         self._my_reg_table = QTableWidget(0, 5)
-        self._my_reg_table.setHorizontalHeaderLabels(["报名ID", "活动", "时段", "状态", "操作"])
+        self._my_reg_table.setHorizontalHeaderLabels(["鎶ュ悕ID", "娲诲姩", "鏃舵", "鐘舵€?, "鎿嶄綔"])
         configure_table(self._my_reg_table)
 
-        my_reg_group = QGroupBox("我的报名")
+        my_reg_group = QGroupBox("鎴戠殑鎶ュ悕")
         my_reg_layout = QVBoxLayout()
         my_reg_layout.setContentsMargins(12, 12, 12, 12)
         my_reg_layout.addWidget(self._my_reg_table)
         my_reg_group.setLayout(my_reg_layout)
 
-        # 选项详情区域
-        detail_group = QGroupBox("选项详情")
+        # 閫夐」璇︽儏鍖哄煙
+        detail_group = QGroupBox("閫夐」璇︽儏")
         detail_layout = QVBoxLayout()
         detail_layout.setContentsMargins(12, 12, 12, 12)
         detail_layout.addWidget(self._view_stack)
         detail_group.setLayout(detail_layout)
 
-        header = make_page_header("报名", "选择活动和时段完成报名")
+        header = make_page_header("鎶ュ悕", "閫夋嫨娲诲姩鍜屾椂娈靛畬鎴愭姤鍚?)
 
         right_col = QVBoxLayout()
         right_col.setSpacing(12)
@@ -362,7 +357,7 @@ class RegistrationPanel(QWidget):
         self._view_stack.setCurrentIndex(index)
 
     def _on_grid_slot_clicked(self, slot_id: str):
-        """格子视图点击后同步到下拉框"""
+        """鏍煎瓙瑙嗗浘鐐瑰嚮鍚庡悓姝ュ埌涓嬫媺妗?""
         for i in range(self._slot_selector.count()):
             if self._slot_selector.itemData(i) == slot_id:
                 self._slot_selector.setCurrentIndex(i)
@@ -373,7 +368,7 @@ class RegistrationPanel(QWidget):
         self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
         if not activities:
-            set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动")
+            set_table_empty(self._slot_table, 8, "鏆傛棤娲诲姩锛岃绛夊緟绠＄悊鍛樺垱寤烘椿鍔?)
             self._activity_selector.blockSignals(False)
             self._load_my_registrations()
             return
@@ -381,8 +376,8 @@ class RegistrationPanel(QWidget):
         other_activities = [a for a in activities if a.get("status") != ActivityStatus.OPEN.value]
         for activity in open_activities:
             at = activity.get("activity_type", "time_slot")
-            mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
-            self._activity_selector.addItem(f"{activity['name']} [{mode_tag}] (报名中)", activity["id"])
+            mode_tag = "鏃舵" if at == ActivityType.TIME_SLOT.value else "閫夐」"
+            self._activity_selector.addItem(f"{activity['name']} [{mode_tag}] (鎶ュ悕涓?", activity["id"])
         if other_activities:
             self._activity_selector.insertSeparator(self._activity_selector.count())
             for activity in other_activities:
@@ -406,29 +401,28 @@ class RegistrationPanel(QWidget):
         is_open = activity.get("status") == ActivityStatus.OPEN.value if activity else False
         slots = self._activity_service.list_slots(activity_id)
 
-        # 过滤掉子岗位（用户报名选择父时段，排班系统分配岗位）
-        top_slots = [s for s in slots if not s.get("parent_slot_id")]
+        # 杩囨护鎺夊瓙宀椾綅锛堢敤鎴锋姤鍚嶉€夋嫨鐖舵椂娈碉紝鎺掔彮绯荤粺鍒嗛厤宀椾綅锛?        top_slots = [s for s in slots if not s.get("parent_slot_id")]
 
         if not top_slots:
-            set_table_empty(self._slot_table, 8, "暂无选项")
+            set_table_empty(self._slot_table, 8, "鏆傛棤閫夐」")
             self._slot_grid.set_slots([], signup_mode)
             return
 
-        # 更新格子视图
+        # 鏇存柊鏍煎瓙瑙嗗浘
         self._slot_grid.set_slots(top_slots, signup_mode)
 
-        # 更新表格视图
+        # 鏇存柊琛ㄦ牸瑙嗗浘
         self._slot_table.setRowCount(len(top_slots))
         for row_index, slot in enumerate(top_slots):
             self._slot_table.setItem(row_index, 0, QTableWidgetItem(str(slot["id"])))
 
             slot_type = slot.get("slot_type", "time_slot")
             type_text = {
-                "time_slot": "时段",
-                "topic": "选题",
-                "course": "课程",
-                "custom_option": "自定义"
-            }.get(slot_type, "其他")
+                "time_slot": "鏃舵",
+                "topic": "閫夐",
+                "course": "璇剧▼",
+                "custom_option": "鑷畾涔?
+            }.get(slot_type, "鍏朵粬")
             self._slot_table.setItem(row_index, 1, QTableWidgetItem(type_text))
 
             self._slot_table.setItem(row_index, 2, QTableWidgetItem(format_slot_name(slot)))
@@ -445,8 +439,8 @@ class RegistrationPanel(QWidget):
             capacity_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self._slot_table.setItem(row_index, 5, capacity_item)
             if signup_mode == SignupMode.BLIND.value:
-                used_text = "保密"
-                remaining_text = "保密"
+                used_text = "淇濆瘑"
+                remaining_text = "淇濆瘑"
             else:
                 used_text = str(used)
                 remaining_text = str(remaining)
@@ -457,10 +451,9 @@ class RegistrationPanel(QWidget):
             self._slot_table.setItem(row_index, 6, used_item)
             self._slot_table.setItem(row_index, 7, remaining_item)
 
-            # 下拉框
-            base_label = format_slot_name(slot)
+            # 涓嬫媺妗?            base_label = format_slot_name(slot)
             if signup_mode == SignupMode.REALTIME.value:
-                slot_label = f"{base_label} (剩余{remaining}名)"
+                slot_label = f"{base_label} (鍓╀綑{remaining}鍚?"
             else:
                 slot_label = base_label
             self._slot_selector.addItem(slot_label, slot["id"])
@@ -478,7 +471,7 @@ class RegistrationPanel(QWidget):
         except Exception:
             regs = []
         if not regs:
-            set_table_empty(self._my_reg_table, 5, "暂无报名记录")
+            set_table_empty(self._my_reg_table, 5, "鏆傛棤鎶ュ悕璁板綍")
             return
         activities = {a["id"]: a["name"] for a in self._activity_service.list_activities()}
         slots = {s["id"]: s for s_list in [self._activity_service.list_slots(aid) for aid in activities] if s_list for s in s_list}
@@ -486,7 +479,7 @@ class RegistrationPanel(QWidget):
         self._my_reg_table.setRowCount(len(regs))
         for row_index, reg in enumerate(regs):
             self._my_reg_table.setItem(row_index, 0, QTableWidgetItem(str(reg["id"])))
-            activity_name = activities.get(reg["activity_id"], "未知活动")
+            activity_name = activities.get(reg["activity_id"], "鏈煡娲诲姩")
             self._my_reg_table.setItem(row_index, 1, QTableWidgetItem(activity_name))
             slot = slots.get(reg["slot_id"])
             slot_text = format_slot_name(slot) if slot else "-"
@@ -494,7 +487,7 @@ class RegistrationPanel(QWidget):
             status_text = format_status(reg["status"])
             self._my_reg_table.setItem(row_index, 3, QTableWidgetItem(status_text))
             if reg["status"] in (RegistrationStatus.PENDING.value, RegistrationStatus.CONFIRMED.value, RegistrationStatus.NOT_ASSIGNED.value):
-                cancel_btn = QPushButton("取消")
+                cancel_btn = QPushButton("鍙栨秷")
                 cancel_btn.setObjectName("dangerButton")
                 cancel_btn.setCursor(Qt.PointingHandCursor)
                 cancel_btn.clicked.connect(lambda checked, rid=reg["id"]: self._cancel_registration(rid))
@@ -509,15 +502,15 @@ class RegistrationPanel(QWidget):
             activity_id = self._activity_selector.currentData()
             slot_id = self._slot_selector.currentData()
             if not activity_id or not slot_id:
-                raise ValidationError("请选择活动与时段")
+                raise ValidationError("璇烽€夋嫨娲诲姩涓庢椂娈?)
             self._registration_service.register(
                 user_id=self._user.id,
                 activity_id=activity_id,
                 slot_id=slot_id,
                 priority=1,
             )
-            set_banner(self._message, "success", "报名成功")
-            notify(f"报名成功：用户 {self._user.username}")
+            set_banner(self._message, "success", "鎶ュ悕鎴愬姛")
+            notify(f"鎶ュ悕鎴愬姛锛氱敤鎴?{self._user.username}")
             self._load_slots()
             self._load_my_registrations()
         except (CapacityExceeded, ConflictError, ValidationError) as exc:
@@ -526,8 +519,8 @@ class RegistrationPanel(QWidget):
     def _cancel_registration(self, registration_id: str) -> None:
         reply = QMessageBox.question(
             self,
-            "确认取消",
-            "确定要取消此报名吗？",
+            "纭鍙栨秷",
+            "纭畾瑕佸彇娑堟鎶ュ悕鍚楋紵",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -535,7 +528,7 @@ class RegistrationPanel(QWidget):
             return
         try:
             self._registration_service.cancel(user_id=self._user.id, registration_id=registration_id)
-            set_banner(self._message, "success", "报名已取消")
+            set_banner(self._message, "success", "鎶ュ悕宸插彇娑?)
             self._load_slots()
             self._load_my_registrations()
         except (ConflictError, ValidationError) as exc:

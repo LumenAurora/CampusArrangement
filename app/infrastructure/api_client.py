@@ -5,7 +5,7 @@ from typing import Any
 import requests
 
 from app.domain.exceptions import ConflictError, PermissionDenied, ValidationError
-from app.domain.models import Role, User
+from app.domain.models import Role, User, UserStatus
 
 
 class ApiClient:
@@ -28,13 +28,14 @@ class ApiClient:
         user = payload.get("user", {})
         if token:
             self.set_token(token)
-        return User(id=user["id"], username=user["username"], role=Role(user["role"]))
+        return User(id=user["id"], username=user["username"], role=Role(user["role"]),
+                    status=UserStatus(user.get("status", "approved")))
 
     def get(self, path: str, params: dict | None = None) -> Any:
         return self._request("GET", path, params=params)
 
-    def post(self, path: str, json: dict | None = None) -> Any:
-        return self._request("POST", path, json=json)
+    def post(self, path: str, json: dict | None = None, require_auth: bool = True) -> Any:
+        return self._request("POST", path, json=json, require_auth=require_auth)
 
     def _request(
         self,

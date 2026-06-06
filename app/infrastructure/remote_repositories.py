@@ -100,6 +100,10 @@ class RemoteTimeSlotRepository:
     def list_by_activity(self, activity_id: str) -> list[dict]:
         return self._api.get(f"/activities/{activity_id}/slots")
 
+    def list_positions(self, parent_slot_id: str) -> list[dict]:
+        """获取某时段下的所有子岗位（远程模式）"""
+        return self._api.get(f"/activities/-/slots/{parent_slot_id}/positions")
+
     def count_all(self) -> int:
         return int(self._metrics.get_overview().get("slots", 0))
 

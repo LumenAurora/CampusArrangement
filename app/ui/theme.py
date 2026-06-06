@@ -518,4 +518,287 @@ QToolTip {{
     border-radius: 8px;
     padding: 6px 10px;
 }}
+
+/* ===== 日历控件 ===== */
+QCalendarWidget {{
+    background: {p.bg_card};
+    border: 1px solid {p.border};
+    border-radius: 12px;
+}}
+QCalendarWidget QWidget {{
+    alternate-background-color: {p.table_alt_bg};
+}}
+QCalendarWidget QToolButton {{
+    background: transparent;
+    color: {p.text_primary};
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-weight: 600;
+    font-size: 13px;
+}}
+QCalendarWidget QToolButton:hover {{
+    background: {p.nav_hover_bg};
+}}
+QCalendarWidget QToolButton::menu-indicator {{
+    image: none;
+}}
+QCalendarWidget QMenu {{
+    background: {p.bg_card};
+    border: 1px solid {p.border};
+    border-radius: 10px;
+    padding: 4px;
+}}
+QCalendarWidget QAbstractItemView {{
+    background: {p.bg_card};
+    color: {p.text_primary};
+    border: none;
+    selection-background-color: {p.accent_soft};
+    selection-color: {p.accent};
+    alternate-background-color: {p.table_alt_bg};
+}}
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background: {p.bg_card};
+    border-bottom: 1px solid {p.border_light};
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    padding: 4px;
+}}
+QCalendarWidget QWidget#qt_calendar_monthbutton {{
+    background: transparent;
+    color: {p.text_primary};
+    font-weight: 700;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}}
+QCalendarWidget QWidget#qt_calendar_monthbutton:hover {{
+    background: {p.nav_hover_bg};
+}}
+QCalendarWidget QWidget#qt_calendar_yearbutton {{
+    background: transparent;
+    color: {p.text_primary};
+    font-weight: 700;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}}
+QCalendarWidget QWidget#qt_calendar_yearbutton:hover {{
+    background: {p.nav_hover_bg};
+}}
+QCalendarWidget QTableView {{
+    background: {p.bg_card};
+    border: none;
+    border-radius: 0 0 12px 12px;
+    selection-background-color: {p.accent_soft};
+    selection-color: {p.accent};
+    outline: none;
+    gridline-color: {p.border_light};
+}}
+QCalendarWidget QTableView::item {{
+    padding: 4px;
+    border-radius: 6px;
+}}
+QCalendarWidget QTableView::item:hover {{
+    background: {p.nav_hover_bg};
+}}
+QCalendarWidget QTableView::item:selected {{
+    background: {p.accent_soft};
+    color: {p.accent};
+}}
+
+/* ===== 堆叠页面 ===== */
+QStackedWidget {{
+    background: transparent;
+}}
+
+/* ===== 滚动区域 ===== */
+QScrollArea {{
+    background: transparent;
+    border: none;
+}}
+QScrollArea > QWidget > QWidget {{
+    background: transparent;
+}}
+
+/* ===== 滚动区域内的分组框 ===== */
+QScrollArea QGroupBox {{
+    background: {p.bg_card};
+    border: 1px solid {p.border_light};
+    border-radius: 16px;
+    margin-top: 14px;
+    padding-top: 16px;
+}}
+QScrollArea QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 16px;
+    padding: 0 8px;
+    color: {p.text_secondary};
+    font-weight: 600;
+    font-size: 12px;
+}}
+
+/* ===== 日期编辑弹窗 ===== */
+QDateEdit {{
+    background: {p.bg_input};
+    color: {p.text_primary};
+    border: 1.5px solid transparent;
+    border-radius: 10px;
+    padding: 8px 12px;
+}}
+QDateEdit:focus {{
+    background: {p.bg_input_focus};
+    border-color: {p.accent_soft};
+}}
+QDateEdit::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    border: none;
+    width: 28px;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+}}
+QDateEdit::down-arrow {{
+    image: none;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid {p.text_tertiary};
+    margin-right: 6px;
+}}
+QDateEdit QCalendarWidget {{
+    background: {p.bg_card};
+    border: 1px solid {p.border};
+    border-radius: 12px;
+}}
+
+/* ===== 下拉选择框增强 ===== */
+QComboBox QAbstractItemView {{
+    background: {p.bg_card};
+    color: {p.text_primary};
+    border: 1px solid {p.border};
+    border-radius: 12px;
+    padding: 6px;
+    outline: none;
+    selection-background-color: {p.accent_soft};
+    selection-color: {p.accent};
+}}
+QComboBox QAbstractItemView::item {{
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-height: 24px;
+}}
+QComboBox QAbstractItemView::item:hover {{
+    background: {p.nav_hover_bg};
+    color: {p.text_primary};
+}}
+QComboBox QAbstractItemView::item:selected {{
+    background: {p.accent_soft};
+    color: {p.accent};
+}}
+QComboBox QListView {{
+    background: {p.bg_card};
+    border: 1px solid {p.border};
+    border-radius: 12px;
+    padding: 6px;
+    outline: none;
+}}
+QComboBox QListView::item {{
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-height: 24px;
+}}
+QComboBox QListView::item:hover {{
+    background: {p.nav_hover_bg};
+    color: {p.text_primary};
+}}
+QComboBox QListView::item:selected {{
+    background: {p.accent_soft};
+    color: {p.accent};
+}}
+
+/* ===== 统计卡片（带彩色左边框） ===== */
+QFrame#statCard {{
+    background: {p.bg_card};
+    border: 1px solid {p.border_light};
+    border-left: 4px solid {p.accent};
+    border-radius: 16px;
+}}
+QFrame#statCard[accentColor="success"] {{
+    border-left: 4px solid {p.success_fg};
+}}
+QFrame#statCard[accentColor="warning"] {{
+    border-left: 4px solid {p.warning_fg};
+}}
+QFrame#statCard[accentColor="error"] {{
+    border-left: 4px solid {p.error_fg};
+}}
+QFrame#statCard[accentColor="accent"] {{
+    border-left: 4px solid {p.accent};
+}}
+
+/* ===== 签到码卡片 ===== */
+QFrame#checkinCodeFrame {{
+    background: {p.bg_card};
+    border: 2px solid {p.accent};
+    border-radius: 16px;
+}}
+QLabel#checkinCodeTitle {{
+    font-size: 13px;
+    font-weight: 600;
+    color: {p.text_secondary};
+}}
+QLabel#checkinCodeLabel {{
+    font-size: 42px;
+    font-weight: 700;
+    color: {p.accent};
+    letter-spacing: 6px;
+}}
+
+/* ===== 分组框内的标签卡片覆盖 ===== */
+QGroupBox QLabel {{
+    border: none;
+    background: transparent;
+}}
+
+/* ===== 对话框 ===== */
+QDialog {{
+    background-color: {p.bg_base};
+}}
+
+/* ===== 输入框聚焦增强 ===== */
+QLineEdit:focus, QSpinBox:focus, QDateTimeEdit:focus, QDateEdit:focus {{
+    background: {p.bg_input_focus};
+    border: 1.5px solid {p.accent};
+    border-radius: 10px;
+}}
+QComboBox:focus, QComboBox:on {{
+    border: 1.5px solid {p.accent};
+    border-radius: 10px;
+}}
+QTextEdit {{
+    background: {p.bg_input};
+    color: {p.text_primary};
+    border: 1.5px solid transparent;
+    border-radius: 10px;
+    padding: 8px 12px;
+}}
+QTextEdit:focus {{
+    background: {p.bg_input_focus};
+    border: 1.5px solid {p.accent};
+    border-radius: 10px;
+}}
+QPlainTextEdit {{
+    background: {p.bg_input};
+    color: {p.text_primary};
+    border: 1.5px solid transparent;
+    border-radius: 10px;
+    padding: 8px 12px;
+}}
+QPlainTextEdit:focus {{
+    background: {p.bg_input_focus};
+    border: 1.5px solid {p.accent};
+    border-radius: 10px;
+}}
 """

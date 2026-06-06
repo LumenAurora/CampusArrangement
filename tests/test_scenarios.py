@@ -48,9 +48,9 @@ class ScenarioTests(unittest.TestCase):
         self.checkin_service = CheckInService(self.checkin_repo, self.schedule_repo, self.activity_repo)
 
     def test_full_flow_blind_lottery(self) -> None:
-        admin = self.user_service.register("admin1", "pass", Role.SUPER_ADMIN)
-        user_a = self.user_service.register("user_a", "pass", Role.USER)
-        user_b = self.user_service.register("user_b", "pass", Role.USER)
+        admin = self.user_service.register(current_user=None, username="admin1", password="pass", role=Role.SUPER_ADMIN)
+        user_a = self.user_service.register(current_user=admin, username="user_a", password="pass", role=Role.USER)
+        user_b = self.user_service.register(current_user=admin, username="user_b", password="pass", role=Role.USER)
 
         activity = self.activity_service.create_activity(
             user=admin,
@@ -95,8 +95,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(os.path.exists(output_path))
 
     def test_registration_cancel_and_checkin(self) -> None:
-        admin = self.user_service.register("admin2", "pass", Role.SUPER_ADMIN)
-        user_c = self.user_service.register("user_c", "pass", Role.USER)
+        admin = self.user_service.register(current_user=None, username="admin2", password="pass", role=Role.SUPER_ADMIN)
+        user_c = self.user_service.register(current_user=admin, username="user_c", password="pass", role=Role.USER)
 
         activity = self.activity_service.create_activity(
             user=admin,
@@ -140,8 +140,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(result["status"], CheckInStatus.CHECKED_IN.value)
 
     def test_registration_requires_open_activity(self) -> None:
-        admin = self.user_service.register("admin3", "pass", Role.SUPER_ADMIN)
-        user_d = self.user_service.register("user_d", "pass", Role.USER)
+        admin = self.user_service.register(current_user=None, username="admin3", password="pass", role=Role.SUPER_ADMIN)
+        user_d = self.user_service.register(current_user=admin, username="user_d", password="pass", role=Role.USER)
 
         activity = self.activity_service.create_activity(
             user=admin,

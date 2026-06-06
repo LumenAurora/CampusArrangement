@@ -15,7 +15,7 @@ from app.application.activity_service import ActivityService
 from app.domain.models import User
 from app.infrastructure.repositories import ScheduleRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty
 
 
 class ResultDetailDialog(QDialog):

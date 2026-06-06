@@ -26,7 +26,7 @@ from app.domain.exceptions import ConflictError, PermissionDenied, ValidationErr
 from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty
 
 # 签到页面的活动状态映射（区别于报名页面的"报名已结束"）
 _CHECKIN_STATUS_MAP = {
@@ -273,7 +273,12 @@ class CheckInPanel(QWidget):
             return
         slot_map: dict[str, str] = {}
         for slot in self._activity_service.list_slots(activity_id):
-            slot_map[slot["id"]] = format_slot_name(slot)
+            if slot.get("name"):
+                slot_map[slot["id"]] = slot["name"]
+            elif slot.get("start_time"):
+                slot_map[slot["id"]] = f"{format_datetime(slot['start_time'])} - {format_datetime(slot['end_time'])}"
+            else:
+                slot_map[slot["id"]] = slot["id"]
         checkins = self._checkin_service.list_by_activity(activity_id)
         checkin_map: dict[str, dict] = {}
         for ci in checkins:
