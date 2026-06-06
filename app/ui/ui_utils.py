@@ -195,7 +195,7 @@ class CountdownLabel(QLabel):
 class StyledComboBox(QComboBox):
     """QComboBox 子类，修复弹出菜单圆角后出现黑色背景的问题。
 
-    通过重写 showPopup() 对弹出视图设置透明背景属性。
+    通过重写 showPopup() 对弹出视图及其容器窗口设置透明背景属性。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -203,13 +203,18 @@ class StyledComboBox(QComboBox):
 
     def showPopup(self) -> None:
         super().showPopup()
-        # 修复弹出视图的黑角问题：设置透明背景
+        # 修复弹出视图的黑角问题：逐层设置透明背景
         popup = self.findChild(QAbstractItemView)
         if popup is not None:
             popup.setAttribute(Qt.WA_TranslucentBackground)
-            popup_window = popup.window()
-            if popup_window is not None:
-                popup_window.setAttribute(Qt.WA_TranslucentBackground)
+            popup.setAutoFillBackground(False)
+            # 视图的父级容器（QComboBoxPrivateContainer QFrame）也需要透明
+            container = popup.parent()
+            while container is not None and container is not self:
+                container.setAttribute(Qt.WA_TranslucentBackground)
+                container.setAutoFillBackground(False)
+                container.setStyleSheet("background: transparent;")
+                container = container.parent()
 
 
 class ModeSelector(StyledComboBox):
