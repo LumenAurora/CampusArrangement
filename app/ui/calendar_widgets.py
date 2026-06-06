@@ -148,6 +148,18 @@ class ActivityCalendar(QCalendarWidget):
         painter.restore()
 
 
+# ─── 周视图网格内容 ──────────────────────────────────────────
+
+class _WeekGridWidget(QWidget):
+    """周视图的网格内容区，拥有自己的 paintEvent 以正确响应重绘。"""
+    def __init__(self, week_view: WeekView) -> None:
+        super().__init__()
+        self._week_view = week_view
+
+    def paintEvent(self, event) -> None:
+        self._week_view._paint_grid()
+
+
 # ─── 周视图 ──────────────────────────────────────────────────
 
 class WeekView(QWidget):
@@ -199,7 +211,7 @@ class WeekView(QWidget):
         self._grid_area = QScrollArea()
         self._grid_area.setWidgetResizable(True)
         self._grid_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._grid_content = QWidget()
+        self._grid_content = _WeekGridWidget(self)
         self._grid_content.setMinimumHeight((self._hour_end - self._hour_start) * self._cell_height + self._header_height)
         self._grid_area.setWidget(self._grid_content)
 
@@ -231,7 +243,7 @@ class WeekView(QWidget):
         end_str = self._week_start.addDays(6).toString("MM月dd日")
         self._header_label.setText(f"{start_str} — {end_str}")
 
-    def paintEvent(self, event) -> None:
+    def _paint_grid(self) -> None:
         p = _p()
         painter = QPainter(self._grid_content)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -350,6 +362,18 @@ class WeekView(QWidget):
         painter.end()
 
 
+# ─── 日视图网格内容 ──────────────────────────────────────────
+
+class _DayGridWidget(QWidget):
+    """日视图的内容区，拥有自己的 paintEvent 以正确响应重绘。"""
+    def __init__(self, day_view: DayView) -> None:
+        super().__init__()
+        self._day_view = day_view
+
+    def paintEvent(self, event) -> None:
+        self._day_view._paint_content()
+
+
 # ─── 日视图 ──────────────────────────────────────────────────
 
 class DayView(QWidget):
@@ -401,7 +425,7 @@ class DayView(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._content = QWidget()
+        self._content = _DayGridWidget(self)
         self._content.setMinimumHeight((self._hour_end - self._hour_start) * self._cell_height + self._header_height)
         self._scroll.setWidget(self._content)
 
@@ -435,7 +459,7 @@ class DayView(QWidget):
         weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][self._date.dayOfWeek() - 1]
         self._header_label.setText(f"{date_str} {weekday}")
 
-    def paintEvent(self, event) -> None:
+    def _paint_content(self) -> None:
         p = _p()
         painter = QPainter(self._content)
         painter.setRenderHint(QPainter.Antialiasing)
