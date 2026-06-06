@@ -24,6 +24,7 @@ from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
+    ItemDetailDialog,
     StyledComboBox,
     configure_table,
     format_activity_status,
@@ -168,6 +169,7 @@ class CheckInPanel(QWidget):
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_results)
+        self._table.cellDoubleClicked.connect(self._on_checkin_double_clicked)
 
         # Auto-refresh timer for real-time stats
         self._refresh_timer = QTimer(self)
@@ -192,6 +194,13 @@ class CheckInPanel(QWidget):
             self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
         self._activity_selector.blockSignals(False)
         self._load_results()
+
+    def _on_checkin_double_clicked(self, row: int, _col: int) -> None:
+        data = {}
+        for col, key in enumerate(["用户名", "时段", "签到状态", "签到时间"]):
+            item = self._table.item(row, col)
+            data[key] = item.text() if item else "—"
+        ItemDetailDialog("签到详情", data, self).exec()
 
     def _load_results(self) -> None:
         activity_id = self._activity_selector.currentData()

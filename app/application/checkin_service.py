@@ -27,12 +27,13 @@ class CheckInService:
         self._activity_repo = activity_repo
 
     @staticmethod
-    def _make_aware_as_local(dt: datetime) -> datetime:
-        """将 naive datetime 视为本地时间并转为 UTC-aware；已 aware 的直接返回。"""
-        if dt.tzinfo is None:
-            # astimezone 对 naive datetime 会假定其为本地时区
-            return dt.astimezone(timezone.utc)
-        return dt
+    def _to_utc(dt: datetime) -> datetime:
+        """将任意 datetime 统一转为 UTC-aware，用于与 now(UTC) 比较。
+
+        naive datetime 会被视为本地时间正确转换；
+        aware datetime 也会统一转换到 UTC 时区。
+        """
+        return dt.astimezone(timezone.utc)
 
     def _validate_checkin_allowed(self, activity: dict) -> None:
         """校验活动状态和签到时间窗口"""
@@ -43,12 +44,12 @@ class CheckInService:
         checkin_end = activity.get("checkin_end")
         if checkin_start:
             start = datetime.fromisoformat(checkin_start) if isinstance(checkin_start, str) else checkin_start
-            start = self._make_aware_as_local(start)
+            start = self._to_utc(start)
             if now < start:
                 raise ValidationError("签到尚未开始")
         if checkin_end:
             end = datetime.fromisoformat(checkin_end) if isinstance(checkin_end, str) else checkin_end
-            end = self._make_aware_as_local(end)
+            end = self._to_utc(end)
             if now > end:
                 raise ValidationError("签到已结束")
 

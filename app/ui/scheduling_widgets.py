@@ -24,6 +24,7 @@ from app.infrastructure.exporter import export_to_excel
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
+    ItemDetailDialog,
     StyledComboBox,
     configure_table,
     format_activity_status,
@@ -166,8 +167,8 @@ class _StatusComboBox(StyledComboBox):
         if data:
             activity = self._find_activity_by_id(data)
             if activity:
-                status = activity.get("status", "draft")
-                dot_color = self._status_color(status, p)
+                status_text = format_activity_status(activity)
+                dot_color = self._status_color(status_text, p)
                 dot_x = self.rect().width() - 30
                 dot_y = self.rect().height() // 2
                 painter.setBrush(QColor(dot_color))
@@ -190,15 +191,19 @@ class _StatusComboBox(StyledComboBox):
         return None
 
     @staticmethod
-    def _status_color(status: str, p) -> str:
+    def _status_color(status_text: str, p) -> str:
         mapping = {
-            "draft": p.warning_fg,
-            "pending_review": p.accent,
-            "open": p.success_fg,
-            "closed": p.error_fg,
-            "archived": p.text_tertiary,
+            "报名中": p.success_fg,
+            "报名未开始": p.accent,
+            "报名已截止": p.error_fg,
+            "签到未开始": p.accent,
+            "签到中": p.success_fg,
+            "签到已结束": p.error_fg,
+            "草稿": p.warning_fg,
+            "待审核": p.accent,
+            "已归档": p.text_tertiary,
         }
-        return mapping.get(status, p.text_secondary)
+        return mapping.get(status_text, p.text_secondary)
 
     def set_activities(self, activities: list[dict]) -> None:
         """Populate the combo box with activities and store them for lookup."""
@@ -298,12 +303,20 @@ class SchedulingPanel(QWidget):
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_results)
+        self._result_table.cellDoubleClicked.connect(self._on_result_double_clicked)
         self.refresh()
 
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
         self._activity_selector.set_activities(activities)
         self._load_results()
+
+    def _on_result_double_clicked(self, row: int, _col: int) -> None:
+        data = {}
+        for col, key in enumerate(["用户", "时段", "地点", "选项类型", "生成时间"]):
+            item = self._result_table.item(row, col)
+            data[key] = item.text() if item else "—"
+        ItemDetailDialog("排班详情", data, self).exec()
 
     def _load_results(self) -> None:
         try:

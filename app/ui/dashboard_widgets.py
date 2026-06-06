@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -12,7 +12,7 @@ from app.infrastructure.repositories import (
     TimeSlotRepository,
 )
 from app.ui.style import get_palette
-from app.ui.ui_utils import format_activity_status
+from app.ui.ui_utils import format_activity_status, to_utc
 
 
 class DashboardPanel(QWidget):
@@ -96,14 +96,19 @@ class DashboardPanel(QWidget):
     def _upcoming_schedules(self) -> list[dict]:
         """For regular users: next 3 schedule results with slot info."""
         rows = self._schedule_repo.list_by_user(self._user.id)
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         upcoming = []
         for row in rows:
             slot = self._slot_repo.get(row.get("slot_id", ""))
             if slot:
                 end = slot.get("end_time", "")
-                if end and end >= now:
-                    upcoming.append({**row, "_slot": slot})
+                if end:
+                    try:
+                        end_dt = to_utc(end)
+                        if end_dt >= now:
+                            upcoming.append({**row, "_slot": slot})
+                    except (ValueError, TypeError):
+                        pass
         upcoming.sort(key=lambda r: r["_slot"].get("start_time", ""))
         return upcoming[:3]
 

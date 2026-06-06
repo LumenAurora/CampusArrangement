@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
 from app.domain.models import ActivityStatus, Registration, RegistrationStatus, SignupMode
 from app.infrastructure.db import transaction
@@ -25,6 +27,20 @@ class RegistrationService:
             raise ValidationError("活动不存在")
         if activity["status"] != ActivityStatus.OPEN.value:
             raise ValidationError("该活动当前不在报名中")
+        # 校验报名时间窗口
+        now = datetime.now(timezone.utc)
+        signup_start = activity.get("signup_start")
+        signup_end = activity.get("signup_end")
+        if signup_start:
+            start = datetime.fromisoformat(str(signup_start)) if isinstance(signup_start, str) else signup_start
+            start = start.astimezone(timezone.utc)
+            if now < start:
+                raise ValidationError("报名尚未开始")
+        if signup_end:
+            end = datetime.fromisoformat(str(signup_end)) if isinstance(signup_end, str) else signup_end
+            end = end.astimezone(timezone.utc)
+            if now > end:
+                raise ValidationError("报名已截止")
         slot = self._slot_repo.get(slot_id)
         if not slot or slot["activity_id"] != activity_id:
             raise ValidationError("所选时段不属于该活动")
@@ -71,6 +87,8 @@ class RegistrationService:
         if reg["status"] == RegistrationStatus.ASSIGNED.value:
             raise ValidationError("已分配的报名无法取消，请联系管理员")
         activity = self._activity_repo.get(reg["activity_id"])
+        if activity and activity["status"] == ActivityStatus.CLOSED.value:
+            raise ValidationError("报名已结束，如需取消请联系组织者请假")
         if activity and activity["status"] == ActivityStatus.ARCHIVED.value:
             raise ValidationError("已归档的活动无法取消报名")
         # Only release the slot if the registration is PENDING in realtime mode.

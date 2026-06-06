@@ -7,9 +7,13 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QFormLayout,
+    QFrame,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -89,13 +93,23 @@ def format_status(status_str: str) -> str:
     return mapping.get(status_str, status_str)
 
 
+def to_utc(value: str | datetime) -> datetime:
+    """将时间值转为UTC-aware datetime。
+
+    无时区信息(naive)的时间视为本地时间，通过 astimezone 正确转换为 UTC。
+    有时区信息(aware)的时间也统一转换为 UTC，确保所有比较使用同一时区。
+
+    这是整个应用中时间解析的唯一标准入口。
+    """
+    dt = datetime.fromisoformat(str(value)) if isinstance(value, str) else value
+    return dt.astimezone(timezone.utc)
+
+
 def format_activity_status(activity: dict) -> str:
     """根据活动状态和时间，返回细粒度的状态文字。
 
     活动生命周期：报名前 → 报名中 → 报名结束签到前 → 签到中 → 签到结束 → 已归档
     """
-    from datetime import datetime, timezone
-
     status = activity.get("status", "draft")
 
     if status == "draft":
@@ -110,15 +124,11 @@ def format_activity_status(activity: dict) -> str:
         signup_start = activity.get("signup_start")
         signup_end = activity.get("signup_end")
         if signup_start:
-            start = datetime.fromisoformat(str(signup_start)) if isinstance(signup_start, str) else signup_start
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
+            start = to_utc(signup_start)
             if now < start:
                 return "报名未开始"
         if signup_end:
-            end = datetime.fromisoformat(str(signup_end)) if isinstance(signup_end, str) else signup_end
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
+            end = to_utc(signup_end)
             if now > end:
                 return "报名已截止"
         return "报名中"
@@ -128,15 +138,11 @@ def format_activity_status(activity: dict) -> str:
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")
         if checkin_start:
-            start = datetime.fromisoformat(str(checkin_start)) if isinstance(checkin_start, str) else checkin_start
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
+            start = to_utc(checkin_start)
             if now < start:
                 return "签到未开始"
         if checkin_end:
-            end = datetime.fromisoformat(str(checkin_end)) if isinstance(checkin_end, str) else checkin_end
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
+            end = to_utc(checkin_end)
             if now > end:
                 return "签到已结束"
         return "签到中"
@@ -176,6 +182,11 @@ def make_status_item(text: str) -> QTableWidgetItem:
     p = get_palette()
     color_map = {
         "报名中": (p.success_fg, p.success_bg),
+        "报名未开始": (p.accent, p.accent_soft),
+        "报名已截止": (p.error_fg, p.error_bg),
+        "签到未开始": (p.accent, p.accent_soft),
+        "签到中": (p.success_fg, p.success_bg),
+        "签到已结束": (p.error_fg, p.error_bg),
         "已结束": (p.error_fg, p.error_bg),
         "已归档": (p.text_tertiary, p.bg_sidebar),
         "草稿": (p.warning_fg, p.warning_bg),
@@ -211,11 +222,8 @@ class CountdownLabel(QLabel):
 
     @staticmethod
     def _parse_local(value: str) -> datetime:
-        """Parse an ISO datetime string and treat naive datetimes as local time."""
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            return dt.astimezone(timezone.utc)
-        return dt.astimezone(timezone.utc)
+        """Parse an ISO datetime string into UTC-aware datetime."""
+        return to_utc(value)
 
     def _tick(self) -> None:
         if not self._start or not self._end:
@@ -248,28 +256,15 @@ class CountdownLabel(QLabel):
 
 
 class StyledComboBox(QComboBox):
-    """QComboBox 子类，修复弹出菜单圆角后出现黑色背景的问题。
+    """QComboBox 子类。
 
-    通过重写 showPopup() 对弹出视图及其容器窗口设置透明背景属性。
+    Windows 上 QComboBox 弹出窗口是原生顶层窗口，不支持逐像素透明。
+    因此不在 showPopup 中做透明化处理，而是通过 QSS 使用 border-radius: 0px
+    和实心背景来避免圆角黑边问题。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-
-    def showPopup(self) -> None:
-        super().showPopup()
-        # 修复弹出视图的黑角问题：逐层设置透明背景
-        popup = self.findChild(QAbstractItemView)
-        if popup is not None:
-            popup.setAttribute(Qt.WA_TranslucentBackground)
-            popup.setAutoFillBackground(False)
-            # 视图的父级容器（QComboBoxPrivateContainer QFrame）也需要透明
-            container = popup.parent()
-            while container is not None and container is not self:
-                container.setAttribute(Qt.WA_TranslucentBackground)
-                container.setAutoFillBackground(False)
-                container.setStyleSheet("background: transparent;")
-                container = container.parent()
 
 
 class ModeSelector(StyledComboBox):
@@ -289,3 +284,47 @@ class SearchBox(QLineEdit):
         self.setPlaceholderText("搜索...")
         self.setClearButtonEnabled(True)
         self.setObjectName("searchBox")
+
+
+class ItemDetailDialog(QDialog):
+    """Generic dialog to show detailed key-value information from a table row."""
+    def __init__(self, title: str, data: dict[str, str], parent=None) -> None:
+        super().__init__(parent)
+        p = get_palette()
+        self.setWindowTitle(title)
+        self.setMinimumWidth(400)
+        self.setStyleSheet(f"background: {p.bg_card};")
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(8)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        layout.addWidget(title_label)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color: {p.border_light};")
+        layout.addWidget(sep)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(8)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        for key, value in data.items():
+            key_label = QLabel(f"{key}:")
+            key_label.setStyleSheet(f"color: {p.text_secondary}; font-weight: 600;")
+            val_label = QLabel(str(value) if value else "—")
+            val_label.setWordWrap(True)
+            val_label.setStyleSheet(f"color: {p.text_primary};")
+            form.addRow(key_label, val_label)
+        layout.addLayout(form)
+
+        layout.addStretch()
+        close_btn = QPushButton("关闭")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+        self.setLayout(layout)

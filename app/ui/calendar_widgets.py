@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
@@ -30,7 +33,7 @@ from PySide6.QtWidgets import (
 from app.domain.models import User
 from app.infrastructure.repositories import ScheduleRepository, ActivityRepository, TimeSlotRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import StyledComboBox, ModeSelector
+from app.ui.ui_utils import StyledComboBox, ModeSelector, to_utc
 
 
 # ─── 调色板辅助 ──────────────────────────────────────────────
@@ -41,6 +44,51 @@ def _p():
 
 def _color(hex_str: str) -> QColor:
     return QColor(hex_str)
+
+
+# ─── 自定义日程存储 ──────────────────────────────────────────
+
+class _CustomEventStore:
+    """管理用户自定义日程的 JSON 持久化存储。"""
+
+    _PATH = Path.home() / ".campus_arrangement" / "custom_events.json"
+
+    @classmethod
+    def _ensure_file(cls) -> None:
+        cls._PATH.parent.mkdir(parents=True, exist_ok=True)
+        if not cls._PATH.exists():
+            cls._PATH.write_text("{}", encoding="utf-8")
+
+    @classmethod
+    def load(cls, user_id: str) -> list[dict]:
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        return data.get(user_id, {}).get("events", [])
+
+    @classmethod
+    def save(cls, user_id: str, events: list[dict]) -> None:
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        data.setdefault(user_id, {})["events"] = events
+        cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @classmethod
+    def add_event(cls, user_id: str, event: dict) -> None:
+        events = cls.load(user_id)
+        events.append(event)
+        cls.save(user_id, events)
+
+    @classmethod
+    def delete_event(cls, user_id: str, event_id: str) -> None:
+        events = cls.load(user_id)
+        events = [e for e in events if e.get("id") != event_id]
+        cls.save(user_id, events)
 
 
 # ─── 自定义日历控件 ────────────────────────────────────────────
@@ -106,6 +154,9 @@ class ActivityCalendar(QCalendarWidget):
                 etype = event.get("type", "schedule")
                 if etype == "activity":
                     bg = _color(p.accent)
+                    fg = _color(p.text_on_accent)
+                elif etype == "custom":
+                    bg = _color(p.warning_fg)
                     fg = _color(p.text_on_accent)
                 else:
                     bg = _color(p.success_fg)
@@ -330,6 +381,9 @@ class WeekView(QWidget):
                 if etype == "activity":
                     bg = _color(p.accent)
                     fg = _color(p.text_on_accent)
+                elif etype == "custom":
+                    bg = _color(p.warning_fg)
+                    fg = _color(p.text_on_accent)
                 else:
                     bg = _color(p.success_fg)
                     fg = _color(p.text_on_accent)
@@ -521,6 +575,9 @@ class DayView(QWidget):
             if etype == "activity":
                 bg = _color(p.accent)
                 fg = _color(p.text_on_accent)
+            elif etype == "custom":
+                bg = _color(p.warning_fg)
+                fg = _color(p.text_on_accent)
             else:
                 bg = _color(p.success_fg)
                 fg = _color("#ffffff")
@@ -556,9 +613,12 @@ class DayView(QWidget):
 # ─── 事件详情对话框 ──────────────────────────────────────────
 
 class EventDetailDialog(QDialog):
+    event_deleted = Signal(str)  # 发送被删除事件的 id
+
     def __init__(self, event: dict, parent=None) -> None:
         super().__init__(parent)
         p = _p()
+        self._event = event
         self.setWindowTitle("日程详情")
         self.setMinimumWidth(360)
         self.setStyleSheet(f"background: {p.bg_card}; border-radius: 16px;")
@@ -577,11 +637,14 @@ class EventDetailDialog(QDialog):
         sep.setStyleSheet(f"color: {p.border_light};")
         layout.addWidget(sep)
 
+        type_map = {"activity": "活动报名", "custom": "个人日程", "schedule": "排班"}
         fields = [
             ("时间", event.get("time_range", event.get("time", "—"))),
             ("地点", event.get("location", "—")),
-            ("类型", "活动报名" if event.get("type") == "activity" else "排班"),
+            ("类型", type_map.get(event.get("type"), "排班")),
         ]
+        if event.get("type") == "custom" and event.get("description"):
+            fields.append(("备注", event.get("description")))
         for label_text, value in fields:
             row = QHBoxLayout()
             lbl = QLabel(f"{label_text}:")
@@ -593,13 +656,33 @@ class EventDetailDialog(QDialog):
             row.addWidget(val, 1)
             layout.addLayout(row)
 
+        layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        if event.get("type") == "custom":
+            delete_btn = QPushButton("删除")
+            delete_btn.setObjectName("dangerButton")
+            delete_btn.clicked.connect(self._on_delete)
+            btn_layout.addWidget(delete_btn)
+        btn_layout.addStretch(1)
         close_btn = QPushButton("关闭")
         close_btn.setObjectName("secondaryButton")
         close_btn.clicked.connect(self.accept)
-        layout.addStretch()
-        layout.addWidget(close_btn)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
 
         self.setLayout(layout)
+
+    def _on_delete(self) -> None:
+        reply = QMessageBox.question(
+            self, "确认删除", "确定要删除此日程吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            event_id = self._event.get("id", "")
+            if event_id:
+                self.event_deleted.emit(event_id)
+            self.accept()
 
 
 # ─── 日程面板 ────────────────────────────────────────────────
@@ -653,6 +736,10 @@ class CalendarPanel(QWidget):
         today_btn.setObjectName("secondaryButton")
         today_btn.clicked.connect(self._go_to_today)
 
+        add_event_btn = QPushButton("添加日程")
+        add_event_btn.setObjectName("secondaryButton")
+        add_event_btn.clicked.connect(self._on_add_event)
+
         header.addWidget(QLabel("视图:"))
         header.addWidget(self._view_mode)
         header.addSpacing(16)
@@ -660,6 +747,7 @@ class CalendarPanel(QWidget):
         header.addWidget(self._jump_date)
         header.addWidget(jump_btn)
         header.addWidget(today_btn)
+        header.addWidget(add_event_btn)
         header.addStretch(1)
 
         # 日历视图
@@ -757,7 +845,50 @@ class CalendarPanel(QWidget):
         data = item.data(Qt.UserRole)
         if data:
             dlg = EventDetailDialog(data, self)
+            dlg.event_deleted.connect(self._on_delete_custom_event)
             dlg.exec()
+
+    def _on_add_event(self) -> None:
+        dlg = AddEventDialog(self._selected_date, self)
+        if dlg.exec() == QDialog.Accepted:
+            raw = dlg.get_event_data()
+            if not raw.get("title"):
+                return
+            event_id = str(uuid.uuid4())
+            start_dt = self._parse_dt(raw["start_time"])
+            end_dt = self._parse_dt(raw["end_time"])
+            if not start_dt:
+                return
+            end_hour = end_dt.hour if end_dt else min(start_dt.hour + 1, 24)
+            time_range = start_dt.strftime("%H:%M")
+            if end_dt:
+                time_range += f" - {end_dt.strftime('%H:%M')}"
+            custom_event = {
+                "id": event_id,
+                "title": raw["title"],
+                "location": raw.get("location", ""),
+                "start_time": raw["start_time"],
+                "end_time": raw["end_time"],
+                "description": raw.get("description", ""),
+                "type": "custom",
+                "time": raw["start_time"][:16],
+                "time_range": time_range,
+                "start_hour": start_dt.hour,
+                "end_hour": end_hour,
+            }
+            _CustomEventStore.add_event(self._user.id, {
+                "id": event_id,
+                "title": raw["title"],
+                "location": raw.get("location", ""),
+                "start_time": raw["start_time"],
+                "end_time": raw["end_time"],
+                "description": raw.get("description", ""),
+            })
+            self.refresh()
+
+    def _on_delete_custom_event(self, event_id: str) -> None:
+        _CustomEventStore.delete_event(self._user.id, event_id)
+        self.refresh()
 
     # ─── 数据刷新 ────────────────────────────────────────────
 
@@ -840,6 +971,35 @@ class CalendarPanel(QWidget):
                                 pass
                         break  # 找到匹配的 slot 即可
 
+            # 自定义日程事件
+            custom_events = _CustomEventStore.load(self._user.id)
+            for ce in custom_events:
+                try:
+                    start_dt = self._parse_dt(ce.get("start_time", ""))
+                    end_dt = self._parse_dt(ce.get("end_time", ""))
+                    if not start_dt:
+                        continue
+                    qdate = QDate(start_dt.year, start_dt.month, start_dt.day)
+                    end_hour = end_dt.hour if end_dt else min(start_dt.hour + 1, 24)
+                    time_range = start_dt.strftime("%H:%M")
+                    if end_dt:
+                        time_range += f" - {end_dt.strftime('%H:%M')}"
+                    event = {
+                        "id": ce.get("id", ""),
+                        "title": ce.get("title", "个人日程"),
+                        "time": ce.get("start_time", "")[:16],
+                        "time_range": time_range,
+                        "location": ce.get("location", ""),
+                        "description": ce.get("description", ""),
+                        "type": "custom",
+                        "start_hour": start_dt.hour,
+                        "end_hour": end_hour,
+                    }
+                    events_by_date.setdefault(qdate, []).append(event)
+                    all_events.append(event)
+                except Exception:
+                    pass
+
             self._events_by_date = events_by_date
             self._all_events = all_events
 
@@ -896,7 +1056,12 @@ class CalendarPanel(QWidget):
         else:
             for event in sorted(day_events, key=lambda e: e.get("start_hour", 0)):
                 etype = event.get("type", "schedule")
-                color = p.accent if etype == "activity" else p.success_fg
+                if etype == "activity":
+                    color = p.accent
+                elif etype == "custom":
+                    color = p.warning_fg
+                else:
+                    color = p.success_fg
                 title = event.get("title", "未知活动")
                 time_range = event.get("time_range", "")
                 location = event.get("location", "")
@@ -936,7 +1101,7 @@ class CalendarPanel(QWidget):
         if not value:
             return None
         try:
-            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return to_utc(value)
         except (ValueError, TypeError):
             return None
 

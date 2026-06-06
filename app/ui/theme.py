@@ -302,7 +302,7 @@ QComboBox QAbstractItemView {{
     background: {p.bg_card};
     color: {p.text_primary};
     border: 1px solid {p.border};
-    border-radius: 12px;
+    border-radius: 0px;
     padding: 6px;
     outline: none;
     selection-background-color: {p.accent_soft};
@@ -310,7 +310,7 @@ QComboBox QAbstractItemView {{
 }}
 QComboBox QAbstractItemView::item {{
     padding: 8px 12px;
-    border-radius: 8px;
+    border-radius: 0px;
     min-height: 24px;
 }}
 QComboBox QAbstractItemView::item:hover {{
@@ -327,13 +327,13 @@ QComboBox QAbstractItemView::viewport {{
 QComboBox QListView {{
     background: {p.bg_card};
     border: 1px solid {p.border};
-    border-radius: 12px;
+    border-radius: 0px;
     padding: 6px;
     outline: none;
 }}
 QComboBox QListView::item {{
     padding: 8px 12px;
-    border-radius: 8px;
+    border-radius: 0px;
     min-height: 24px;
 }}
 QComboBox QListView::item:hover {{
