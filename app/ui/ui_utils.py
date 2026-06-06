@@ -89,6 +89,61 @@ def format_status(status_str: str) -> str:
     return mapping.get(status_str, status_str)
 
 
+def format_activity_status(activity: dict) -> str:
+    """根据活动状态和时间，返回细粒度的状态文字。
+
+    活动生命周期：报名前 → 报名中 → 报名结束签到前 → 签到中 → 签到结束 → 已归档
+    """
+    from datetime import datetime, timezone
+
+    status = activity.get("status", "draft")
+
+    if status == "draft":
+        return "草稿"
+    if status == "pending_review":
+        return "待审核"
+    if status == "archived":
+        return "已归档"
+
+    if status == "open":
+        now = datetime.now(timezone.utc)
+        signup_start = activity.get("signup_start")
+        signup_end = activity.get("signup_end")
+        if signup_start:
+            start = datetime.fromisoformat(str(signup_start)) if isinstance(signup_start, str) else signup_start
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if now < start:
+                return "报名未开始"
+        if signup_end:
+            end = datetime.fromisoformat(str(signup_end)) if isinstance(signup_end, str) else signup_end
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            if now > end:
+                return "报名已截止"
+        return "报名中"
+
+    if status == "closed":
+        now = datetime.now(timezone.utc)
+        checkin_start = activity.get("checkin_start")
+        checkin_end = activity.get("checkin_end")
+        if checkin_start:
+            start = datetime.fromisoformat(str(checkin_start)) if isinstance(checkin_start, str) else checkin_start
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if now < start:
+                return "签到未开始"
+        if checkin_end:
+            end = datetime.fromisoformat(str(checkin_end)) if isinstance(checkin_end, str) else checkin_end
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            if now > end:
+                return "签到已结束"
+        return "签到中"
+
+    return format_status(status)
+
+
 def set_banner(label: QLabel, kind: str, text: str) -> None:
     mapping = {
         "success": "bannerSuccess",

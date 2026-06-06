@@ -23,16 +23,15 @@ from app.domain.exceptions import ConflictError, PermissionDenied, ValidationErr
 from app.domain.models import ActivityStatus, CheckInMode, User
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty, StyledComboBox
-
-# 签到页面的活动状态映射（区别于报名页面的"报名已结束"）
-_CHECKIN_STATUS_MAP = {
-    "open": "报名进行中",
-    "closed": "签到中",
-    "archived": "已归档",
-    "draft": "草稿",
-    "pending_review": "待审核",
-}
+from app.ui.ui_utils import (
+    StyledComboBox,
+    configure_table,
+    format_activity_status,
+    format_datetime,
+    make_page_header,
+    set_banner,
+    set_table_empty,
+)
 
 _CHECKIN_MODE_LABELS = {
     CheckInMode.MANUAL.value: "手动签到",
@@ -189,7 +188,7 @@ class CheckInPanel(QWidget):
         for activity in activities:
             if activity.get("status", "draft") not in visible_statuses:
                 continue
-            status_text = _CHECKIN_STATUS_MAP.get(activity.get("status", "draft"), activity.get("status", "draft"))
+            status_text = format_activity_status(activity)
             self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
         self._activity_selector.blockSignals(False)
         self._load_results()
@@ -324,8 +323,7 @@ class CheckInPanel(QWidget):
         info_items: list[tuple[str, str]] = []
 
         # 活动状态（签到上下文）
-        activity_status = activity.get("status", "draft")
-        status_label = _CHECKIN_STATUS_MAP.get(activity_status, activity_status)
+        status_label = format_activity_status(activity)
         info_items.append(("状态", status_label))
 
         # Location

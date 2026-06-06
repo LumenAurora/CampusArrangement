@@ -24,7 +24,11 @@ class LoginDialog(QDialog):
 
         self.setWindowTitle("Campus Scheduler")
         self.setFixedSize(420, 520)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            self.windowFlags()
+            & ~Qt.WindowContextHelpButtonHint
+            | Qt.WindowCloseButtonHint
+        )
 
         p = get_palette()
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QDialog,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -109,9 +110,10 @@ class UserAdminPanel(QWidget):
         self._reg_repo = RegistrationRepository()
         self._schedule_repo = ScheduleRepository()
 
-        self._table = QTableWidget(0, 5)
-        self._table.setHorizontalHeaderLabels(["ID", "用户名", "角色", "状态", "创建时间"])
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["ID", "用户名", "角色"])
         configure_table(self._table)
+        self._table.cellDoubleClicked.connect(self._show_user_detail)
 
         self._init_create_form()
         self._init_pending_section()
@@ -150,13 +152,20 @@ class UserAdminPanel(QWidget):
 
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(16)
+        body_layout.setSpacing(0)
         left_widget = QWidget()
         left_widget.setLayout(left_layout)
         left_widget.setMinimumWidth(280)
         left_widget.setMaximumWidth(420)
-        body_layout.addWidget(left_widget)
-        body_layout.addWidget(list_group, 2)
+
+        from PySide6.QtWidgets import QSplitter
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_widget)
+        splitter.addWidget(list_group)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([300, 700])
+        body_layout.addWidget(splitter)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
@@ -302,7 +311,7 @@ class UserAdminPanel(QWidget):
         self._refresh_stats(users)
 
         if not users:
-            set_table_empty(self._table, 5, "暂无用户")
+            set_table_empty(self._table, 3, "暂无用户")
         else:
             self._table.clearSpans()
             self._table.setRowCount(len(users))
@@ -311,11 +320,96 @@ class UserAdminPanel(QWidget):
                 self._table.setItem(row_index, 1, QTableWidgetItem(user["username"]))
                 # 角色徽章
                 self._table.setItem(row_index, 2, _make_role_item(user["role"]))
-                # 状态徽章
-                self._table.setItem(row_index, 3, _make_user_status_item(user.get("status", UserStatus.APPROVED.value)))
-                self._table.setItem(row_index, 4, QTableWidgetItem(format_datetime(user["created_at"])))
             self._table.setColumnHidden(0, True)
         self._refresh_pending()
+
+    # ── 用户详情弹窗 ───────────────────────────────────────────
+
+    def _show_user_detail(self, row: int, _col: int) -> None:
+        """双击用户行时弹出详细信息对话框。"""
+        user_id_item = self._table.item(row, 0)
+        if not user_id_item:
+            return
+        user_id = user_id_item.text()
+        user = self._user_repo.get_by_id(user_id)
+        if not user:
+            return
+
+        p = get_palette()
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"用户详情 - {user.get('username', '')}")
+        dialog.setMinimumWidth(380)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # 标题
+        title = QLabel(user.get("username", ""))
+        title.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {p.text_primary};")
+        layout.addWidget(title)
+
+        # 详细信息表单
+        form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        # 角色
+        role_value = user.get("role", "")
+        role_map = {
+            Role.SUPER_ADMIN.value: "超级管理员",
+            Role.ORGANIZER.value: "组织者",
+            Role.USER.value: "普通用户",
+        }
+        role_label = QLabel(role_map.get(role_value, role_value))
+        role_label.setStyleSheet(f"color: {p.accent}; font-weight: 600;")
+        form.addRow("角色", role_label)
+
+        # 状态
+        status_value = user.get("status", "")
+        status_map = {
+            UserStatus.APPROVED.value: ("已通过", p.success_fg),
+            UserStatus.PENDING_REVIEW.value: ("待审批", p.accent),
+            UserStatus.REJECTED.value: ("已拒绝", p.error_fg),
+        }
+        status_text, status_color = status_map.get(status_value, (status_value, p.text_secondary))
+        status_label = QLabel(status_text)
+        status_label.setStyleSheet(f"color: {status_color}; font-weight: 600;")
+        form.addRow("状态", status_label)
+
+        # 创建时间
+        created_at = user.get("created_at", "")
+        form.addRow("创建时间", QLabel(format_datetime(created_at) if created_at else "未知"))
+
+        # 关联数据
+        reg_count = self._reg_repo.count_by_user(user_id)
+        schedule_count = self._schedule_repo.count_by_user(user_id)
+        form.addRow("报名记录", QLabel(f"{reg_count} 条"))
+        form.addRow("排班结果", QLabel(f"{schedule_count} 条"))
+
+        layout.addLayout(form)
+
+        # 分隔线
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color: {p.border_light};")
+        layout.addWidget(sep)
+
+        # 操作按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+
+        close_btn = QPushButton("关闭")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.setFixedWidth(80)
+        close_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+        dialog.setLayout(layout)
+        dialog.exec()
 
     # ── 创建用户 ───────────────────────────────────────────────
 

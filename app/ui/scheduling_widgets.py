@@ -26,6 +26,7 @@ from app.ui.style import get_palette
 from app.ui.ui_utils import (
     StyledComboBox,
     configure_table,
+    format_activity_status,
     format_datetime,
     format_slot_name,
     format_status,
@@ -117,7 +118,7 @@ class _ActivityInfoCard(QFrame):
         self._name_label.setText(activity.get("name", "-"))
         self._location_label.setText(activity.get("location") or "-")
 
-        status_text = format_status(activity.get("status", "draft"))
+        status_text = format_activity_status(activity)
         self._status_label.setText(status_text)
 
         alloc_map = {"greedy": "贪心分配", "first_come": "先到先得", "lottery": "抽签"}
@@ -205,7 +206,7 @@ class _StatusComboBox(StyledComboBox):
         self.blockSignals(True)
         self.clear()
         for activity in activities:
-            status_text = format_status(activity.get("status", "draft"))
+            status_text = format_activity_status(activity)
             self.addItem(f"{activity['name']} ({status_text})", activity["id"])
         self.blockSignals(False)
         self.update()
