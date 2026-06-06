@@ -33,7 +33,7 @@ from app.infrastructure.repositories import ScheduleRepository, ActivityReposito
 from app.ui.style import get_palette
 
 
-# ─── 调色板辅助 ──────────────────────────────────────────────
+# 鈹€鈹€鈹€ 璋冭壊鏉胯緟鍔?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def _p():
     return get_palette()
@@ -43,10 +43,10 @@ def _color(hex_str: str) -> QColor:
     return QColor(hex_str)
 
 
-# ─── 自定义日历控件 ────────────────────────────────────────────
+# 鈹€鈹€鈹€ 鑷畾涔夋棩鍘嗘帶浠?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class ActivityCalendar(QCalendarWidget):
-    """带活动标记的月历控件，在日期格子中直接显示活动条目。"""
+    """甯︽椿鍔ㄦ爣璁扮殑鏈堝巻鎺т欢锛屽湪鏃ユ湡鏍煎瓙涓洿鎺ユ樉绀烘椿鍔ㄦ潯鐩€?""
     date_selected = Signal(QDate)
 
     def __init__(self, parent=None):
@@ -66,7 +66,7 @@ class ActivityCalendar(QCalendarWidget):
         p = _p()
         painter.save()
 
-        # 背景
+        # 鑳屾櫙
         is_selected = date == self.selectedDate()
         is_today = date == QDate.currentDate()
         is_current_month = date.month() == self.monthShown() and date.year() == self.yearShown()
@@ -78,7 +78,7 @@ class ActivityCalendar(QCalendarWidget):
         else:
             painter.fillRect(rect, _color(p.bg_card))
 
-        # 日期数字
+        # 鏃ユ湡鏁板瓧
         if is_current_month:
             painter.setPen(_color(p.text_primary))
         else:
@@ -90,19 +90,18 @@ class ActivityCalendar(QCalendarWidget):
         painter.setFont(font)
         painter.drawText(rect.adjusted(4, 2, -2, 0), Qt.AlignTop | Qt.AlignLeft, str(date.day()))
 
-        # 活动条目
+        # 娲诲姩鏉＄洰
         events = self._events_by_date.get(date, [])
         if events:
             y_offset = 18
-            max_events = min(len(events), 3)  # 最多显示3条
-            bar_height = 14
+            max_events = min(len(events), 3)  # 鏈€澶氭樉绀?鏉?            bar_height = 14
             bar_margin = 2
             for i in range(max_events):
                 event = events[i]
                 bar_rect = rect.adjusted(3, y_offset + i * (bar_height + bar_margin), -3, 0)
                 bar_rect.setHeight(bar_height)
 
-                # 条目颜色
+                # 鏉＄洰棰滆壊
                 etype = event.get("type", "schedule")
                 if etype == "activity":
                     bg = _color(p.accent)
@@ -115,14 +114,14 @@ class ActivityCalendar(QCalendarWidget):
                 painter.setBrush(bg)
                 painter.drawRoundedRect(bar_rect, 3, 3)
 
-                # 条目文字
+                # 鏉＄洰鏂囧瓧
                 painter.setPen(fg)
                 font.setPointSize(7)
                 font.setBold(False)
                 painter.setFont(font)
                 title = event.get("title", "")
                 if len(title) > 8:
-                    title = title[:7] + "…"
+                    title = title[:7] + "鈥?
                 painter.drawText(bar_rect.adjusted(3, 0, -1, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
 
             if len(events) > 3:
@@ -132,13 +131,12 @@ class ActivityCalendar(QCalendarWidget):
                 more_y = y_offset + max_events * (bar_height + bar_margin)
                 painter.drawText(rect.adjusted(5, more_y, -2, 0), Qt.AlignTop | Qt.AlignLeft, f"+{len(events) - 3}")
 
-        # 今日下划线
-        if is_today:
+        # 浠婃棩涓嬪垝绾?        if is_today:
             pen = QPen(_color(p.accent), 2)
             painter.setPen(pen)
             painter.drawLine(rect.left() + 4, rect.top() + 15, rect.left() + 14, rect.top() + 15)
 
-        # 选中边框
+        # 閫変腑杈规
         if is_selected:
             pen = QPen(_color(p.accent), 1.5)
             painter.setPen(pen)
@@ -148,10 +146,10 @@ class ActivityCalendar(QCalendarWidget):
         painter.restore()
 
 
-# ─── 周视图 ──────────────────────────────────────────────────
+# 鈹€鈹€鈹€ 鍛ㄨ鍥?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class WeekView(QWidget):
-    """周视图：7列时间网格，活动条目直接绘制在对应时段格子中。"""
+    """鍛ㄨ鍥撅細7鍒楁椂闂寸綉鏍硷紝娲诲姩鏉＄洰鐩存帴缁樺埗鍦ㄥ搴旀椂娈垫牸瀛愪腑銆?""
     date_selected = Signal(QDate)
 
     def __init__(self) -> None:
@@ -171,14 +169,13 @@ class WeekView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 导航栏
-        nav = QHBoxLayout()
+        # 瀵艰埅鏍?        nav = QHBoxLayout()
         nav.setContentsMargins(8, 4, 8, 4)
-        self._prev_btn = QPushButton("◀")
+        self._prev_btn = QPushButton("鈼€")
         self._prev_btn.setObjectName("secondaryButton")
         self._prev_btn.setFixedSize(32, 28)
         self._prev_btn.clicked.connect(self._go_prev)
-        self._next_btn = QPushButton("▶")
+        self._next_btn = QPushButton("鈻?)
         self._next_btn.setObjectName("secondaryButton")
         self._next_btn.setFixedSize(32, 28)
         self._next_btn.clicked.connect(self._go_next)
@@ -195,8 +192,7 @@ class WeekView(QWidget):
         nav.addWidget(self._next_btn)
         layout.addLayout(nav)
 
-        # 网格区域（可滚动）
-        self._grid_area = QScrollArea()
+        # 缃戞牸鍖哄煙锛堝彲婊氬姩锛?        self._grid_area = QScrollArea()
         self._grid_area.setWidgetResizable(True)
         self._grid_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._grid_content = QWidget()
@@ -227,9 +223,9 @@ class WeekView(QWidget):
         self._grid_content.update()
 
     def _update_header(self) -> None:
-        start_str = self._week_start.toString("MM月dd日")
-        end_str = self._week_start.addDays(6).toString("MM月dd日")
-        self._header_label.setText(f"{start_str} — {end_str}")
+        start_str = self._week_start.toString("MM鏈坉d鏃?)
+        end_str = self._week_start.addDays(6).toString("MM鏈坉d鏃?)
+        self._header_label.setText(f"{start_str} 鈥?{end_str}")
 
     def paintEvent(self, event) -> None:
         p = _p()
@@ -240,18 +236,17 @@ class WeekView(QWidget):
         day_w = (w - self._time_col_width) / 7
         y_top = self._header_height
 
-        # 绘制星期头
-        font = painter.font()
+        # 缁樺埗鏄熸湡澶?        font = painter.font()
         font.setPointSize(10)
         font.setBold(True)
         painter.setFont(font)
-        weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        weekdays = ["鍛ㄤ竴", "鍛ㄤ簩", "鍛ㄤ笁", "鍛ㄥ洓", "鍛ㄤ簲", "鍛ㄥ叚", "鍛ㄦ棩"]
         for i in range(7):
             x = self._time_col_width + i * day_w
             d = self._week_start.addDays(i)
             is_today = d == QDate.currentDate()
 
-            # 头部背景
+            # 澶撮儴鑳屾櫙
             painter.setPen(Qt.NoPen)
             painter.setBrush(_color(p.bg_sidebar if not is_today else p.accent_soft))
             painter.drawRect(int(x), 0, int(day_w), self._header_height)
@@ -260,12 +255,12 @@ class WeekView(QWidget):
             text = f"{weekdays[i]}\n{d.toString('MM/dd')}"
             painter.drawText(int(x), 0, int(day_w), self._header_height, Qt.AlignCenter, text)
 
-        # 时间列头
+        # 鏃堕棿鍒楀ご
         painter.setPen(Qt.NoPen)
         painter.setBrush(_color(p.bg_sidebar))
         painter.drawRect(0, 0, self._time_col_width, self._header_height)
 
-        # 绘制时间格和事件
+        # 缁樺埗鏃堕棿鏍煎拰浜嬩欢
         font.setPointSize(8)
         font.setBold(False)
         painter.setFont(font)
@@ -273,29 +268,26 @@ class WeekView(QWidget):
         for hour in range(self._hour_start, self._hour_end):
             y = y_top + (hour - self._hour_start) * self._cell_height
 
-            # 时间标签
+            # 鏃堕棿鏍囩
             painter.setPen(_color(p.text_tertiary))
             painter.drawText(0, y, self._time_col_width, self._cell_height, Qt.AlignTop | Qt.AlignHCenter, f"{hour:02d}:00")
 
-            # 水平线
-            pen = QPen(_color(p.border_light), 1)
+            # 姘村钩绾?            pen = QPen(_color(p.border_light), 1)
             painter.setPen(pen)
             painter.drawLine(self._time_col_width, y, w, y)
 
-            # 每日列
-            for day_i in range(7):
+            # 姣忔棩鍒?            for day_i in range(7):
                 x = self._time_col_width + day_i * day_w
                 d = self._week_start.addDays(day_i)
 
-                # 垂直线
-                painter.setPen(QPen(_color(p.border_light), 1))
+                # 鍨傜洿绾?                painter.setPen(QPen(_color(p.border_light), 1))
                 painter.drawLine(int(x), y, int(x), y + self._cell_height)
 
-                # 今日高亮
+                # 浠婃棩楂樹寒
                 if d == QDate.currentDate():
                     painter.fillRect(int(x) + 1, y, int(day_w) - 1, self._cell_height, _color(p.accent_soft + "30"))
 
-        # 绘制事件条目
+        # 缁樺埗浜嬩欢鏉＄洰
         for day_i in range(7):
             d = self._week_start.addDays(day_i)
             events = self._events_by_date.get(d, [])
@@ -335,13 +327,12 @@ class WeekView(QWidget):
                 location = ev.get("location", "")
                 text = title
                 if location:
-                    text += f" · {location}"
+                    text += f" 路 {location}"
                 if len(text) > 16:
-                    text = text[:15] + "…"
+                    text = text[:15] + "鈥?
                 painter.drawText(bar.adjusted(4, 2, -2, -2), Qt.AlignTop | Qt.AlignLeft, text)
 
-                # 时间行
-                time_text = ev.get("time_range", "")
+                # 鏃堕棿琛?                time_text = ev.get("time_range", "")
                 if time_text:
                     font.setPointSize(7)
                     painter.setFont(font)
@@ -350,10 +341,10 @@ class WeekView(QWidget):
         painter.end()
 
 
-# ─── 日视图 ──────────────────────────────────────────────────
+# 鈹€鈹€鈹€ 鏃ヨ鍥?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class DayView(QWidget):
-    """日视图：单日时间线，活动条目直接绘制在对应时段。"""
+    """鏃ヨ鍥撅細鍗曟棩鏃堕棿绾匡紝娲诲姩鏉＄洰鐩存帴缁樺埗鍦ㄥ搴旀椂娈点€?""
     date_selected = Signal(QDate)
 
     def __init__(self) -> None:
@@ -373,14 +364,13 @@ class DayView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 导航栏
-        nav = QHBoxLayout()
+        # 瀵艰埅鏍?        nav = QHBoxLayout()
         nav.setContentsMargins(8, 4, 8, 4)
-        self._prev_btn = QPushButton("◀")
+        self._prev_btn = QPushButton("鈼€")
         self._prev_btn.setObjectName("secondaryButton")
         self._prev_btn.setFixedSize(32, 28)
         self._prev_btn.clicked.connect(self._go_prev)
-        self._next_btn = QPushButton("▶")
+        self._next_btn = QPushButton("鈻?)
         self._next_btn.setObjectName("secondaryButton")
         self._next_btn.setFixedSize(32, 28)
         self._next_btn.clicked.connect(self._go_next)
@@ -397,7 +387,7 @@ class DayView(QWidget):
         nav.addWidget(self._next_btn)
         layout.addLayout(nav)
 
-        # 滚动区域
+        # 婊氬姩鍖哄煙
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -431,8 +421,8 @@ class DayView(QWidget):
         self._content.update()
 
     def _update_header(self) -> None:
-        date_str = self._date.toString("yyyy年MM月dd日")
-        weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][self._date.dayOfWeek() - 1]
+        date_str = self._date.toString("yyyy骞碝M鏈坉d鏃?)
+        weekday = ["鍛ㄤ竴", "鍛ㄤ簩", "鍛ㄤ笁", "鍛ㄥ洓", "鍛ㄤ簲", "鍛ㄥ叚", "鍛ㄦ棩"][self._date.dayOfWeek() - 1]
         self._header_label.setText(f"{date_str} {weekday}")
 
     def paintEvent(self, event) -> None:
@@ -443,7 +433,7 @@ class DayView(QWidget):
         w = self._content.width()
         y_top = self._header_height
 
-        # 头部
+        # 澶撮儴
         painter.setPen(Qt.NoPen)
         painter.setBrush(_color(p.bg_sidebar))
         painter.drawRect(0, 0, w, self._header_height)
@@ -452,34 +442,31 @@ class DayView(QWidget):
         font.setPointSize(12)
         font.setBold(True)
         painter.setFont(font)
-        date_str = self._date.toString("yyyy年MM月dd日")
-        weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][self._date.dayOfWeek() - 1]
+        date_str = self._date.toString("yyyy骞碝M鏈坉d鏃?)
+        weekday = ["鍛ㄤ竴", "鍛ㄤ簩", "鍛ㄤ笁", "鍛ㄥ洓", "鍛ㄤ簲", "鍛ㄥ叚", "鍛ㄦ棩"][self._date.dayOfWeek() - 1]
         painter.drawText(0, 0, w, self._header_height, Qt.AlignCenter, f"{date_str} {weekday}")
 
-        # 时间格
-        font.setPointSize(9)
+        # 鏃堕棿鏍?        font.setPointSize(9)
         font.setBold(False)
         painter.setFont(font)
 
         for hour in range(self._hour_start, self._hour_end):
             y = y_top + (hour - self._hour_start) * self._cell_height
 
-            # 时间标签
+            # 鏃堕棿鏍囩
             painter.setPen(_color(p.text_tertiary))
             painter.drawText(4, y, self._time_col_width - 4, self._cell_height, Qt.AlignTop | Qt.AlignRight, f"{hour:02d}:00")
 
-            # 水平线
-            painter.setPen(QPen(_color(p.border_light), 1))
+            # 姘村钩绾?            painter.setPen(QPen(_color(p.border_light), 1))
             painter.drawLine(self._time_col_width, y, w, y)
 
-            # 当前时间线
-            now = QDateTime.currentDateTime()
+            # 褰撳墠鏃堕棿绾?            now = QDateTime.currentDateTime()
             if self._date == now.date() and hour == now.time().hour():
                 minute_y = y + now.time().minute() / 60.0 * self._cell_height
                 painter.setPen(QPen(_color(p.error_fg), 2))
                 painter.drawLine(self._time_col_width, int(minute_y), w, int(minute_y))
 
-        # 绘制事件
+        # 缁樺埗浜嬩欢
         for ev in self._events:
             start_hour = ev.get("start_hour", 0)
             end_hour = ev.get("end_hour", start_hour + 1)
@@ -499,7 +486,7 @@ class DayView(QWidget):
                 fg = _color(p.text_on_accent)
             else:
                 bg = _color(p.success_fg)
-                fg = _color("#ffffff")
+                fg = _color(p.text_on_accent)
 
             bar = QRectF(self._time_col_width + 4, ey + 2, w - self._time_col_width - 8, eh - 4)
             painter.setPen(Qt.NoPen)
@@ -524,18 +511,18 @@ class DayView(QWidget):
             if location:
                 detail_parts.append(location)
             if detail_parts:
-                painter.drawText(bar.adjusted(10, 24, -6, -6), Qt.AlignTop | Qt.AlignLeft, " · ".join(detail_parts))
+                painter.drawText(bar.adjusted(10, 24, -6, -6), Qt.AlignTop | Qt.AlignLeft, " 路 ".join(detail_parts))
 
         painter.end()
 
 
-# ─── 事件详情对话框 ──────────────────────────────────────────
+# 鈹€鈹€鈹€ 浜嬩欢璇︽儏瀵硅瘽妗?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class EventDetailDialog(QDialog):
     def __init__(self, event: dict, parent=None) -> None:
         super().__init__(parent)
         p = _p()
-        self.setWindowTitle("日程详情")
+        self.setWindowTitle("鏃ョ▼璇︽儏")
         self.setMinimumWidth(360)
         self.setStyleSheet(f"background: {p.bg_card}; border-radius: 16px;")
 
@@ -543,7 +530,7 @@ class EventDetailDialog(QDialog):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
 
-        title = event.get("title", "未知活动")
+        title = event.get("title", "鏈煡娲诲姩")
         title_label = QLabel(title)
         title_label.setObjectName("pageTitle")
         layout.addWidget(title_label)
@@ -554,22 +541,22 @@ class EventDetailDialog(QDialog):
         layout.addWidget(sep)
 
         fields = [
-            ("时间", event.get("time_range", event.get("time", "—"))),
-            ("地点", event.get("location", "—")),
-            ("类型", "活动报名" if event.get("type") == "activity" else "排班"),
+            ("鏃堕棿", event.get("time_range", event.get("time", "鈥?))),
+            ("鍦扮偣", event.get("location", "鈥?)),
+            ("绫诲瀷", "娲诲姩鎶ュ悕" if event.get("type") == "activity" else "鎺掔彮"),
         ]
         for label_text, value in fields:
             row = QHBoxLayout()
             lbl = QLabel(f"{label_text}:")
             lbl.setStyleSheet(f"color: {p.text_secondary}; font-weight: 600;")
             lbl.setFixedWidth(50)
-            val = QLabel(str(value) if value else "—")
+            val = QLabel(str(value) if value else "鈥?)
             val.setWordWrap(True)
             row.addWidget(lbl)
             row.addWidget(val, 1)
             layout.addLayout(row)
 
-        close_btn = QPushButton("关闭")
+        close_btn = QPushButton("鍏抽棴")
         close_btn.setObjectName("secondaryButton")
         close_btn.clicked.connect(self.accept)
         layout.addStretch()
@@ -578,7 +565,7 @@ class EventDetailDialog(QDialog):
         self.setLayout(layout)
 
 
-# ─── 日程面板 ────────────────────────────────────────────────
+# 鈹€鈹€鈹€ 鏃ョ▼闈㈡澘 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class CalendarPanel(QWidget):
     def __init__(
@@ -606,12 +593,11 @@ class CalendarPanel(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        # 顶部工具栏
-        header = QHBoxLayout()
+        # 椤堕儴宸ュ叿鏍?        header = QHBoxLayout()
         header.setSpacing(8)
 
         self._view_mode = QComboBox()
-        self._view_mode.addItems(["月视图", "周视图", "日视图"])
+        self._view_mode.addItems(["鏈堣鍥?, "鍛ㄨ鍥?, "鏃ヨ鍥?])
         self._view_mode.setFixedWidth(100)
         self._view_mode.currentIndexChanged.connect(self._on_view_changed)
 
@@ -621,24 +607,24 @@ class CalendarPanel(QWidget):
         self._jump_date.setFixedWidth(120)
         self._jump_date.dateChanged.connect(self._on_date_jump)
 
-        jump_btn = QPushButton("跳转")
+        jump_btn = QPushButton("璺宠浆")
         jump_btn.setObjectName("secondaryButton")
         jump_btn.clicked.connect(self._jump_to_date)
 
-        today_btn = QPushButton("今天")
+        today_btn = QPushButton("浠婂ぉ")
         today_btn.setObjectName("secondaryButton")
         today_btn.clicked.connect(self._go_to_today)
 
-        header.addWidget(QLabel("视图:"))
+        header.addWidget(QLabel("瑙嗗浘:"))
         header.addWidget(self._view_mode)
         header.addSpacing(16)
-        header.addWidget(QLabel("日期:"))
+        header.addWidget(QLabel("鏃ユ湡:"))
         header.addWidget(self._jump_date)
         header.addWidget(jump_btn)
         header.addWidget(today_btn)
         header.addStretch(1)
 
-        # 日历视图
+        # 鏃ュ巻瑙嗗浘
         self._calendar = ActivityCalendar()
         self._calendar.date_selected.connect(self._on_calendar_date_selected)
 
@@ -653,18 +639,18 @@ class CalendarPanel(QWidget):
         self._view_stack.addWidget(self._week_view)
         self._view_stack.addWidget(self._day_view)
 
-        # 右侧面板
+        # 鍙充晶闈㈡澘
         right_panel = QVBoxLayout()
         right_panel.setSpacing(8)
 
-        # 当日安排
-        self._date_info = QGroupBox("当日安排")
+        # 褰撴棩瀹夋帓
+        self._date_info = QGroupBox("褰撴棩瀹夋帓")
         self._date_info_layout = QVBoxLayout()
         self._date_info_layout.setSpacing(4)
         self._date_info.setLayout(self._date_info_layout)
 
-        # 我的日程
-        self._my_events = QGroupBox("我的日程")
+        # 鎴戠殑鏃ョ▼
+        self._my_events = QGroupBox("鎴戠殑鏃ョ▼")
         my_events_layout = QVBoxLayout()
         my_events_layout.setSpacing(4)
         self._my_events_list = QListWidget()
@@ -675,7 +661,7 @@ class CalendarPanel(QWidget):
         right_panel.addWidget(self._date_info, 1)
         right_panel.addWidget(self._my_events, 2)
 
-        # 主布局
+        # 涓诲竷灞€
         main_layout = QHBoxLayout()
         main_layout.setSpacing(12)
         main_layout.addWidget(self._view_stack, 3)
@@ -688,7 +674,7 @@ class CalendarPanel(QWidget):
         layout.addLayout(main_layout, 1)
         self.setLayout(layout)
 
-    # ─── 事件处理 ────────────────────────────────────────────
+    # 鈹€鈹€鈹€ 浜嬩欢澶勭悊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def _on_view_changed(self, index: int) -> None:
         self._view_stack.setCurrentIndex(index)
@@ -734,19 +720,19 @@ class CalendarPanel(QWidget):
             dlg = EventDetailDialog(data, self)
             dlg.exec()
 
-    # ─── 数据刷新 ────────────────────────────────────────────
+    # 鈹€鈹€鈹€ 鏁版嵁鍒锋柊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     def refresh(self) -> None:
         try:
             activities = self._activity_repo.list_all()
             schedules = self._schedule_repo.list_by_user(self._user.id)
 
-            # 构建活动 ID -> 活动信息映射
+            # 鏋勫缓娲诲姩 ID -> 娲诲姩淇℃伅鏄犲皠
             activity_map: dict[str, dict] = {}
             for a in activities:
                 activity_map[a["id"]] = a
 
-            # 预加载所有需要的 slot
+            # 棰勫姞杞芥墍鏈夐渶瑕佺殑 slot
             needed_activity_ids = {s["activity_id"] for s in schedules}
             slot_cache: dict[str, list[dict]] = {}
             for aid in needed_activity_ids:
@@ -755,7 +741,7 @@ class CalendarPanel(QWidget):
             events_by_date: dict[QDate, list[dict]] = {}
             all_events: list[dict] = []
 
-            # 活动报名事件
+            # 娲诲姩鎶ュ悕浜嬩欢
             for activity in activities:
                 start_time_str = activity.get("signup_start")
                 if start_time_str:
@@ -764,9 +750,9 @@ class CalendarPanel(QWidget):
                         if dt:
                             qdate = QDate(dt.year, dt.month, dt.day)
                             event = {
-                                "title": activity.get("name", "未知活动"),
+                                "title": activity.get("name", "鏈煡娲诲姩"),
                                 "time": start_time_str[:16],
-                                "time_range": dt.strftime("%H:%M") + " 开始报名",
+                                "time_range": dt.strftime("%H:%M") + " 寮€濮嬫姤鍚?,
                                 "location": activity.get("location", ""),
                                 "type": "activity",
                                 "start_hour": dt.hour,
@@ -777,12 +763,12 @@ class CalendarPanel(QWidget):
                     except Exception:
                         pass
 
-            # 排班事件
+            # 鎺掔彮浜嬩欢
             for schedule in schedules:
                 slot_id = schedule.get("slot_id")
                 activity_id = schedule.get("activity_id")
                 activity = activity_map.get(activity_id)
-                activity_name = activity.get("name", "未知活动") if activity else "未知活动"
+                activity_name = activity.get("name", "鏈煡娲诲姩") if activity else "鏈煡娲诲姩"
                 activity_location = activity.get("location", "") if activity else ""
 
                 slots = slot_cache.get(activity_id, [])
@@ -813,30 +799,30 @@ class CalendarPanel(QWidget):
                                     all_events.append(event)
                             except Exception:
                                 pass
-                        break  # 找到匹配的 slot 即可
+                        break  # 鎵惧埌鍖归厤鐨?slot 鍗冲彲
 
             self._events_by_date = events_by_date
             self._all_events = all_events
-
-            self._apply_events_to_views()
-            self._update_my_events()
-            self._update_date_info()
         except Exception:
-            pass
+            self._events_by_date = {}
+            self._all_events = []
+
+        self._apply_events_to_views()
+        self._update_my_events()
+        self._update_date_info()
 
     def _apply_events_to_views(self) -> None:
         self._calendar.set_events(self._events_by_date)
         self._week_view.set_events(self._events_by_date)
 
-        # 日视图只显示选中日期的事件
-        day_events = self._events_by_date.get(self._selected_date, [])
+        # 鏃ヨ鍥惧彧鏄剧ず閫変腑鏃ユ湡鐨勪簨浠?        day_events = self._events_by_date.get(self._selected_date, [])
         self._day_view.set_events(day_events)
         self._day_view.set_date(self._selected_date)
 
     def _update_my_events(self) -> None:
         self._my_events_list.clear()
         for event in sorted(self._all_events, key=lambda e: e.get("time", "")):
-            title = event.get("title", "未知活动")
+            title = event.get("title", "鏈煡娲诲姩")
             time_range = event.get("time_range", "")
             location = event.get("location", "")
             parts = [title]
@@ -850,29 +836,29 @@ class CalendarPanel(QWidget):
             self._my_events_list.addItem(item)
 
     def _update_date_info(self) -> None:
-        # 清空
+        # 娓呯┖
         while self._date_info_layout.count() > 0:
             child = self._date_info_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
         p = _p()
-        date_str = self._selected_date.toString("yyyy年MM月dd日")
-        weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][self._selected_date.dayOfWeek() - 1]
+        date_str = self._selected_date.toString("yyyy骞碝M鏈坉d鏃?)
+        weekday = ["鍛ㄤ竴", "鍛ㄤ簩", "鍛ㄤ笁", "鍛ㄥ洓", "鍛ㄤ簲", "鍛ㄥ叚", "鍛ㄦ棩"][self._selected_date.dayOfWeek() - 1]
 
         header_label = QLabel(f"<b>{date_str} {weekday}</b>")
         self._date_info_layout.addWidget(header_label)
 
         day_events = self._events_by_date.get(self._selected_date, [])
         if not day_events:
-            empty = QLabel("当日暂无安排")
+            empty = QLabel("褰撴棩鏆傛棤瀹夋帓")
             empty.setStyleSheet(f"color: {p.text_tertiary};")
             self._date_info_layout.addWidget(empty)
         else:
             for event in sorted(day_events, key=lambda e: e.get("start_hour", 0)):
                 etype = event.get("type", "schedule")
                 color = p.accent if etype == "activity" else p.success_fg
-                title = event.get("title", "未知活动")
+                title = event.get("title", "鏈煡娲诲姩")
                 time_range = event.get("time_range", "")
                 location = event.get("location", "")
 
@@ -899,7 +885,7 @@ class CalendarPanel(QWidget):
                 if location:
                     detail_parts.append(location)
                 if detail_parts:
-                    detail_label = QLabel(" · ".join(detail_parts))
+                    detail_label = QLabel(" 路 ".join(detail_parts))
                     detail_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px; border: none;")
                     card_layout.addWidget(detail_label)
 
@@ -916,12 +902,12 @@ class CalendarPanel(QWidget):
             return None
 
 
-# ─── 添加日程对话框 ──────────────────────────────────────────
+# 鈹€鈹€鈹€ 娣诲姞鏃ョ▼瀵硅瘽妗?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class AddEventDialog(QDialog):
     def __init__(self, date: QDate, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("添加日程")
+        self.setWindowTitle("娣诲姞鏃ョ▼")
         self._selected_date = date
         self._init_ui()
 
@@ -930,27 +916,27 @@ class AddEventDialog(QDialog):
 
         form = QFormLayout()
         self._title = QLineEdit()
-        self._title.setPlaceholderText("日程名称")
+        self._title.setPlaceholderText("鏃ョ▼鍚嶇О")
         self._location = QLineEdit()
-        self._location.setPlaceholderText("地点")
+        self._location.setPlaceholderText("鍦扮偣")
         self._start_time = QDateTimeEdit(QDateTime(self._selected_date, QTime(9, 0)))
         self._start_time.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._end_time = QDateTimeEdit(QDateTime(self._selected_date, QTime(10, 0)))
         self._end_time.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._description = QLineEdit()
-        self._description.setPlaceholderText("备注")
+        self._description.setPlaceholderText("澶囨敞")
 
-        form.addRow("日程名称", self._title)
-        form.addRow("地点", self._location)
-        form.addRow("开始时间", self._start_time)
-        form.addRow("结束时间", self._end_time)
-        form.addRow("备注", self._description)
+        form.addRow("鏃ョ▼鍚嶇О", self._title)
+        form.addRow("鍦扮偣", self._location)
+        form.addRow("寮€濮嬫椂闂?, self._start_time)
+        form.addRow("缁撴潫鏃堕棿", self._end_time)
+        form.addRow("澶囨敞", self._description)
 
         btn_layout = QHBoxLayout()
-        ok_btn = QPushButton("确定")
+        ok_btn = QPushButton("纭畾")
         ok_btn.setObjectName("primaryButton")
         ok_btn.clicked.connect(self.accept)
-        cancel_btn = QPushButton("取消")
+        cancel_btn = QPushButton("鍙栨秷")
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addStretch(1)
         btn_layout.addWidget(ok_btn)
