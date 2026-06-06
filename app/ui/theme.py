@@ -310,7 +310,7 @@ QComboBox QAbstractItemView {{
 }}
 QComboBox QAbstractItemView::item {{
     padding: 8px 12px;
-    border-radius: 8px;
+    border-radius: 0px;
     min-height: 24px;
 }}
 QComboBox QAbstractItemView::item:hover {{
@@ -333,7 +333,7 @@ QComboBox QListView {{
 }}
 QComboBox QListView::item {{
     padding: 8px 12px;
-    border-radius: 8px;
+    border-radius: 0px;
     min-height: 24px;
 }}
 QComboBox QListView::item:hover {{
