@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
+from app.application.group_service import GroupService
 from app.application.registration_service import RegistrationService
 from app.application.scheduling_service import SchedulingService
 from app.application.user_service import UserService
@@ -22,6 +23,7 @@ from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
+    GroupRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -83,11 +85,13 @@ def main() -> int:
         reg_repo = RegistrationRepository()
         schedule_repo = ScheduleRepository()
         checkin_repo = CheckInRepository()
+        group_repo = GroupRepository()
 
         activity_service = ActivityService(activity_repo, slot_repo)
-        registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
+        registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
         scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
         checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
+        group_service = GroupService(group_repo, activity_repo)
 
     if login.user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
         window = AdminWindow(
@@ -102,6 +106,8 @@ def main() -> int:
             user_repo=user_repo,
             checkin_service=checkin_service,
             checkin_repo=checkin_repo,
+            group_service=group_service,
+            group_repo=group_repo,
         )
     else:
         window = ClientWindow(
@@ -113,6 +119,9 @@ def main() -> int:
             slot_repo=slot_repo,
             reg_repo=reg_repo,
             checkin_service=checkin_service,
+            group_service=group_service,
+            group_repo=group_repo,
+            checkin_repo=checkin_repo,
         )
     window.resize(1100, 700)
     window.setMinimumSize(960, 640)

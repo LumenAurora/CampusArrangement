@@ -63,8 +63,8 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS slots (
                 id TEXT PRIMARY KEY,
                 activity_id TEXT NOT NULL,
-                start_time TEXT NOT NULL,
-                end_time TEXT NOT NULL,
+                start_time TEXT,
+                end_time TEXT,
                 capacity INTEGER NOT NULL,
                 used_count INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
@@ -109,6 +109,26 @@ def init_db() -> None:
                 FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE,
                 UNIQUE (user_id, slot_id)
             );
+
+            CREATE TABLE IF NOT EXISTS groups (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                owner_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                status TEXT NOT NULL DEFAULT 'pending',
+                joined_at TEXT NOT NULL,
+                PRIMARY KEY (group_id, user_id),
+                FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_column(conn, "activities", "signup_mode", "signup_mode TEXT NOT NULL DEFAULT 'realtime'")
@@ -132,6 +152,8 @@ def init_db() -> None:
         _ensure_column(conn, "users", "status", "status TEXT NOT NULL DEFAULT 'approved'")
         # 新增：岗位层级（子岗位的 parent_slot_id）
         _ensure_column(conn, "slots", "parent_slot_id", "parent_slot_id TEXT")
+        # 新增：活动小组限制
+        _ensure_column(conn, "activities", "group_id", "group_id TEXT")
         # 迁移旧 activity_type 到新模式：scheduling/topic_selection/course_selection/seat_reservation/custom → time_slot/non_time_slot
         _migrate_activity_type(conn)
         conn.commit()
@@ -141,7 +163,7 @@ def init_db() -> None:
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     # 使用白名单验证表名，防止SQL注入
-    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results", "checkins"}
+    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results", "checkins", "groups", "group_members"}
     if table not in allowed_tables:
         raise ValueError(f"不允许的表名: {table}")
     columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
