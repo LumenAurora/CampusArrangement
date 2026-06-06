@@ -64,6 +64,23 @@ def format_datetime(value: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+def format_slot_name(slot: dict) -> str:
+    """Format a slot dict into a human-readable label."""
+    name = slot.get("name")
+    if name:
+        return name
+    start = slot.get("start_time")
+    end = slot.get("end_time")
+    if start and end:
+        try:
+            s = datetime.fromisoformat(str(start))
+            e = datetime.fromisoformat(str(end))
+            return f"{s.strftime('%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+        except ValueError:
+            pass
+    return str(slot.get("id", "—"))
+
+
 def format_status(status_str: str) -> str:
     mapping = {
         "open": "报名中",

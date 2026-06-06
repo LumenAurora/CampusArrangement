@@ -27,6 +27,7 @@ from app.ui.style import get_palette
 from app.ui.ui_utils import (
     configure_table,
     format_datetime,
+    format_slot_name,
     format_status,
     make_page_header,
     set_banner,
@@ -139,6 +140,7 @@ class _StatusComboBox(QComboBox):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumWidth(280)
+        self._activities: dict[str, dict] = {}
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
@@ -303,62 +305,61 @@ class SchedulingPanel(QWidget):
         self._load_results()
 
     def _load_results(self) -> None:
-        activity_id = self._activity_selector.currentData()
-        if not activity_id:
-            set_table_empty(self._result_table, 5, "请选择活动")
-            self._update_stats(0, 0, 0)
-            self._activity_info.update_info(None)
-            return
+        try:
+            activity_id = self._activity_selector.currentData()
+            if not activity_id:
+                set_table_empty(self._result_table, 5, "请选择活动")
+                self._update_stats(0, 0, 0)
+                self._activity_info.update_info(None)
+                return
 
-        # Update activity info card
-        activity = self._activity_service.get_activity(activity_id)
-        self._activity_info.update_info(activity)
+            # Update activity info card
+            activity = self._activity_service.get_activity(activity_id)
+            self._activity_info.update_info(activity)
 
-        results = self._schedule_repo.list_by_activity(activity_id)
-        if not results:
-            set_table_empty(self._result_table, 5, "暂无排班结果（报名结束后自动生成）")
+            results = self._schedule_repo.list_by_activity(activity_id)
+            if not results:
+                set_table_empty(self._result_table, 5, "暂无排班结果（报名结束后自动生成）")
+                slots = self._activity_service.list_slots(activity_id)
+                total_capacity = sum(int(s.get("capacity", 0)) for s in slots)
+                self._update_stats(0, len(slots), total_capacity)
+                return
+
+            users = {user["id"]: user["username"] for user in self._user_repo.list_all()}
             slots = self._activity_service.list_slots(activity_id)
+            slot_map = {}
+            slot_type_map = {}
+            for slot in slots:
+                slot_map[slot["id"]] = format_slot_name(slot)
+                slot_type_raw = slot.get("slot_type", "time_slot")
+                slot_type_map[slot["id"]] = {
+                    "time_slot": "时段",
+                    "topic": "选题",
+                    "course": "课程",
+                    "custom_option": "自定义",
+                }.get(slot_type_raw, "其他")
+
+            location = activity.get("location", "") if activity else ""
+
+            self._result_table.clearSpans()
+            self._result_table.setRowCount(len(results))
+            for row_index, row in enumerate(results):
+                user_label = users.get(row["user_id"], row["user_id"])
+                slot_label = slot_map.get(row["slot_id"], row["slot_id"])
+                type_label = slot_type_map.get(row["slot_id"], "-")
+                self._result_table.setItem(row_index, 0, QTableWidgetItem(user_label))
+                self._result_table.setItem(row_index, 1, QTableWidgetItem(slot_label))
+                self._result_table.setItem(row_index, 2, QTableWidgetItem(location or "-"))
+                self._result_table.setItem(row_index, 3, QTableWidgetItem(type_label))
+                self._result_table.setItem(row_index, 4, QTableWidgetItem(format_datetime(row["created_at"])))
+
+            # Update statistics
             total_capacity = sum(int(s.get("capacity", 0)) for s in slots)
-            self._update_stats(0, len(slots), total_capacity)
-            return
-
-        users = {user["id"]: user["username"] for user in self._user_repo.list_all()}
-        slots = self._activity_service.list_slots(activity_id)
-        slot_map = {}
-        slot_type_map = {}
-        for slot in slots:
-            if slot.get("name"):
-                slot_map[slot["id"]] = slot["name"]
-            elif slot.get("start_time"):
-                slot_map[slot["id"]] = f"{format_datetime(slot['start_time'])} - {format_datetime(slot['end_time'])}"
-            else:
-                slot_map[slot["id"]] = slot["id"]
-            slot_type_raw = slot.get("slot_type", "time_slot")
-            slot_type_map[slot["id"]] = {
-                "time_slot": "时段",
-                "topic": "选题",
-                "course": "课程",
-                "custom_option": "自定义",
-            }.get(slot_type_raw, "其他")
-
-        location = activity.get("location", "") if activity else ""
-
-        self._result_table.clearSpans()
-        self._result_table.setRowCount(len(results))
-        for row_index, row in enumerate(results):
-            user_label = users.get(row["user_id"], row["user_id"])
-            slot_label = slot_map.get(row["slot_id"], row["slot_id"])
-            type_label = slot_type_map.get(row["slot_id"], "-")
-            self._result_table.setItem(row_index, 0, QTableWidgetItem(user_label))
-            self._result_table.setItem(row_index, 1, QTableWidgetItem(slot_label))
-            self._result_table.setItem(row_index, 2, QTableWidgetItem(location or "-"))
-            self._result_table.setItem(row_index, 3, QTableWidgetItem(type_label))
-            self._result_table.setItem(row_index, 4, QTableWidgetItem(format_datetime(row["created_at"])))
-
-        # Update statistics
-        total_capacity = sum(int(s.get("capacity", 0)) for s in slots)
-        assigned_count = len(results)
-        self._update_stats(assigned_count, len(slots), total_capacity)
+            assigned_count = len(results)
+            self._update_stats(assigned_count, len(slots), total_capacity)
+        except Exception as exc:
+            set_table_empty(self._result_table, 5, "加载失败")
+            set_banner(self._message, "error", f"加载排班结果失败：{exc}")
 
     def _update_stats(self, assigned: int, slot_count: int, total_capacity: int) -> None:
         self._stat_assigned = self._replace_stat_card(self._stat_assigned, "已分配人数", str(assigned), "success_fg")
@@ -418,5 +419,9 @@ class SchedulingPanel(QWidget):
             return
         set_banner(self._message, "info", "")
         rows = self._schedule_repo.list_by_activity(activity_id)
-        export_to_excel(rows, path)
+        try:
+            export_to_excel(rows, path)
+        except Exception as exc:
+            set_banner(self._message, "error", f"导出失败：{exc}")
+            return
         set_banner(self._message, "success", f"导出完成：{path}")
