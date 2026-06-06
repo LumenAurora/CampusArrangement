@@ -37,7 +37,7 @@ from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, S
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, make_status_item, set_banner, set_table_empty, SearchBox, format_status
+from app.ui.ui_utils import configure_table, format_activity_status, format_datetime, format_slot_name, make_page_header, make_status_item, set_banner, set_table_empty, SearchBox, format_status
 
 
 class _CapacityBar(QWidget):
@@ -247,8 +247,8 @@ class ActivityPanel(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setMinimumWidth(320)
-        left_scroll.setMaximumWidth(420)
+        left_scroll.setMinimumWidth(280)
+        left_scroll.setMaximumWidth(500)
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         right_col = QVBoxLayout()
@@ -574,7 +574,7 @@ class ActivityPanel(QWidget):
             )
             location_label.setAlignment(Qt.AlignCenter)
             self._activity_table.setCellWidget(row_index, 6, location_label)
-            status_text = format_status(activity.get("status", "draft"))
+            status_text = format_activity_status(activity)
             self._activity_table.setItem(row_index, 7, make_status_item(status_text))
 
             copy_btn = QPushButton("复制")
@@ -868,10 +868,15 @@ class ActivityPanel(QWidget):
         signup_end = format_datetime(activity["signup_end"]) if activity.get("signup_end") else "-"
         self._detail_signup_label.setText(f"{signup_start} ~ {signup_end}")
 
-        status_text = format_status(activity.get("status", "draft"))
+        status_text = format_activity_status(activity)
         status_color_map = {
             "报名中": p.success_fg,
+            "报名未开始": p.accent,
+            "报名已截止": p.error_fg,
             "报名已结束": p.error_fg,
+            "签到未开始": p.accent,
+            "签到中": p.success_fg,
+            "签到已结束": p.error_fg,
             "已归档": p.text_tertiary,
             "草稿": p.warning_fg,
             "待审核": p.accent,

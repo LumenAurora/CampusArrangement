@@ -30,7 +30,7 @@ from app.domain.models import ActivityStatus, ActivityType, RegistrationStatus, 
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import RegistrationRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty, CountdownLabel, format_status
+from app.ui.ui_utils import configure_table, format_activity_status, format_datetime, format_slot_name, make_page_header, set_banner, set_table_empty, CountdownLabel, format_status
 
 
 def _p():
@@ -386,7 +386,7 @@ class RegistrationPanel(QWidget):
         if other_activities:
             self._activity_selector.insertSeparator(self._activity_selector.count())
             for activity in other_activities:
-                status_text = format_status(activity.get("status", "draft"))
+                status_text = format_activity_status(activity)
                 self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
         self._activity_selector.blockSignals(False)
         self._load_slots()

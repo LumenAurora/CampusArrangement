@@ -12,6 +12,7 @@ from app.infrastructure.repositories import (
     TimeSlotRepository,
 )
 from app.ui.style import get_palette
+from app.ui.ui_utils import format_activity_status
 
 
 class DashboardPanel(QWidget):
@@ -71,13 +72,13 @@ class DashboardPanel(QWidget):
                 ("活动总数", self._activity_repo.count_all(), "accent"),
                 ("时段总数", self._slot_repo.count_all(), "success_fg"),
                 ("报名总数", self._reg_repo.count_all(), "warning_fg"),
-                ("排班结果", self._schedule_repo.count_all(), "accent"),
+                ("排班结果", self._schedule_repo.count_all(), "error_fg"),
             ]
         return [
             ("可报名活动", self._activity_repo.count_by_status(ActivityStatus.OPEN), "accent"),
             ("我的报名", self._reg_repo.count_by_user(self._user.id), "success_fg"),
             ("我的排班", self._schedule_repo.count_by_user(self._user.id), "warning_fg"),
-            ("已发布时段", self._slot_repo.count_by_activity_status(ActivityStatus.OPEN.value), "accent"),
+            ("已发布时段", self._slot_repo.count_by_activity_status(ActivityStatus.OPEN.value), "error_fg"),
         ]
 
     def _recent_activities(self) -> list[dict]:
@@ -175,19 +176,18 @@ class DashboardPanel(QWidget):
             "pending_review": p.warning_fg,
             "closed": p.text_secondary,
             "archived": p.text_tertiary,
-        }
-        status_labels = {
-            "open": "报名中",
-            "draft": "草稿",
-            "pending_review": "待审核",
-            "closed": "已结束",
-            "archived": "已归档",
+            "签到未开始": p.accent,
+            "签到中": p.success_fg,
+            "签到已结束": p.error_fg,
+            "报名未开始": p.accent,
+            "报名已截止": p.error_fg,
         }
 
         for act in activities:
             row_frame = QFrame()
             status_val = act.get("status", "draft")
-            color = status_colors.get(status_val, p.text_tertiary)
+            status_text = format_activity_status(act)
+            color = status_colors.get(status_text, status_colors.get(status_val, p.text_tertiary))
             row_frame.setStyleSheet(f"""
                 QFrame {{
                     background: {p.bg_input};
@@ -206,7 +206,7 @@ class DashboardPanel(QWidget):
 
             row_lay.addStretch(1)
 
-            status_text = status_labels.get(status_val, status_val)
+            status_text = format_activity_status(act)
             badge = QLabel(status_text)
             badge.setStyleSheet(f"""
                 color: {color};
