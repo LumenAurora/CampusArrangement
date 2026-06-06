@@ -114,8 +114,8 @@ def main() -> int:
             reg_repo=reg_repo,
             checkin_service=checkin_service,
         )
-    window.resize(980, 640)
-    window.setMinimumSize(900, 600)
+    window.resize(1100, 700)
+    window.setMinimumSize(960, 640)
     window.show()
     return app.exec()
 

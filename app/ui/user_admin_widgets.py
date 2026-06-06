@@ -151,12 +151,20 @@ class UserAdminPanel(QWidget):
 
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(16)
+        body_layout.setSpacing(0)
         left_widget = QWidget()
         left_widget.setLayout(left_layout)
-        left_widget.setFixedWidth(320)
-        body_layout.addWidget(left_widget)
-        body_layout.addWidget(list_group, 2)
+        left_widget.setMinimumWidth(260)
+        left_widget.setMaximumWidth(400)
+
+        from PySide6.QtWidgets import QSplitter
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(left_widget)
+        splitter.addWidget(list_group)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([300, 700])
+        body_layout.addWidget(splitter)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
