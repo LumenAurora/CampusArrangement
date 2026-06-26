@@ -311,6 +311,7 @@ class ActivityService:
             checkin_mode=CheckInMode(activity["checkin_mode"]),
             checkin_start=new_checkin_start,
             checkin_end=new_checkin_end,
+            group_id=activity.get("group_id"),
         )
         self._activity_repo.create(new_activity)
 
