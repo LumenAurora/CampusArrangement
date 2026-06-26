@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QApplication
-
 from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
 from app.application.group_service import GroupService
@@ -36,7 +34,7 @@ class AdminWindow(NavigationWindow):
         group_service: GroupService | None = None,
         group_repo: GroupRepository | None = None,
     ) -> None:
-        super().__init__("校园报名与排班系统 - 管理端", f"{user.username} · {user.role.value}")
+        super().__init__("校园报名与排班系统 - 管理端", user)
 
         pages = [
             ("dashboard", "概览", DashboardPanel(user, activity_repo, slot_repo, reg_repo, schedule_repo), load_icon("dashboard")),
@@ -48,4 +46,3 @@ class AdminWindow(NavigationWindow):
         if group_service is not None and group_repo is not None:
             pages.append(("groups", "小组管理", GroupAdminPanel(group_service, group_repo, user), load_icon("users")))
         self.set_pages(pages)
-        self.attach_menus(QApplication.instance())
