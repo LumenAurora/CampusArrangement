@@ -359,36 +359,106 @@ class ActivityPanel(QWidget):
         self._checkin_end.setCalendarPopup(True)
         self._checkin_end.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._checkin_end.setSpecialValueText("不限制")
+
+        # 字段级实时错误提示（默认隐藏）
+        p = get_palette()
+        err_style = f"color: {p.error_fg}; font-size: 11px; border: none; padding: 0 4px;"
+        self._signup_err = QLabel("")
+        self._signup_err.setStyleSheet(err_style)
+        self._signup_err.setVisible(False)
+        self._checkin_err = QLabel("")
+        self._checkin_err.setStyleSheet(err_style)
+        self._checkin_err.setVisible(False)
+        # 时间变化即触发实时校验，无需等待点击「创建活动」
+        for w in (self._signup_start, self._signup_end, self._checkin_start, self._checkin_end):
+            w.dateTimeChanged.connect(self._validate_activity_form)
+
         self._activity_message = QLabel("")
         set_banner(self._activity_message, "info", "")
         create_btn = QPushButton("创建活动")
         create_btn.setObjectName("primaryButton")
+        create_btn.setMinimumHeight(40)
         create_btn.clicked.connect(self._create_activity)
 
-        form = QFormLayout()
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(10)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.addRow("模式", self._activity_type)
-        form.addRow("名称", self._activity_name)
-        form.addRow("报名开始", self._signup_start)
-        form.addRow("报名截止", self._signup_end)
-        form.addRow("详情", self._details)
-        form.addRow("地点", self._location)
-        form.addRow("名额显示", self._signup_mode)
-        form.addRow("分配策略", self._allocation_mode)
-        form.addRow("签到模式", self._checkin_mode)
-        form.addRow("签到开始", self._checkin_start)
-        form.addRow("签到截止", self._checkin_end)
-        # 小组限制
+        # —— 表单分组：基本信息 / 报名时间 / 规则配置 ——
+        basic_group = QGroupBox("基本信息")
+        basic_form = QFormLayout()
+        basic_form.setHorizontalSpacing(12)
+        basic_form.setVerticalSpacing(10)
+        basic_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        basic_form.addRow("模式", self._activity_type)
+        basic_form.addRow("名称", self._activity_name)
+        basic_form.addRow("详情", self._details)
+        basic_form.addRow("地点", self._location)
+        basic_group.setLayout(basic_form)
+
+        signup_group = QGroupBox("报名时间")
+        signup_form = QFormLayout()
+        signup_form.setHorizontalSpacing(12)
+        signup_form.setVerticalSpacing(10)
+        signup_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        signup_form.addRow("开始", self._signup_start)
+        signup_form.addRow("截止", self._signup_end)
+        signup_form.addRow(self._signup_err)
+        signup_group.setLayout(signup_form)
+
+        rule_group = QGroupBox("规则配置")
+        rule_form = QFormLayout()
+        rule_form.setHorizontalSpacing(12)
+        rule_form.setVerticalSpacing(10)
+        rule_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        rule_form.addRow("名额显示", self._signup_mode)
+        rule_form.addRow("分配策略", self._allocation_mode)
+        rule_form.addRow("签到模式", self._checkin_mode)
+        rule_form.addRow("签到开始", self._checkin_start)
+        rule_form.addRow("签到截止", self._checkin_end)
+        rule_form.addRow(self._checkin_err)
         self._group_selector = StyledComboBox()
         self._group_selector.addItem("公开（全体用户）", None)
-        form.addRow("报名范围", self._group_selector)
-        form.addRow(create_btn)
-        form.addRow(self._activity_message)
+        rule_form.addRow("报名范围", self._group_selector)
+        rule_group.setLayout(rule_form)
 
-        self._activity_group = QGroupBox("创建活动")
-        self._activity_group.setLayout(form)
+        # 组装：用 QWidget 替代外层 QGroupBox（tab 已提供「创建活动」标题，避免标题与框不对齐）
+        container = QVBoxLayout()
+        container.setContentsMargins(0, 0, 0, 0)
+        container.setSpacing(12)
+        container.addWidget(basic_group)
+        container.addWidget(signup_group)
+        container.addWidget(rule_group)
+        container.addStretch(1)
+        # 底部固定操作区：消息提示 + 创建按钮，始终可见
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 6, 0, 0)
+        footer.addWidget(self._activity_message, 1)
+        footer.addWidget(create_btn)
+        container.addLayout(footer)
+
+        self._activity_group = QWidget()
+        self._activity_group.setLayout(container)
+
+    def _validate_activity_form(self, *args) -> bool:
+        """实时校验活动表单的时间字段，更新字段级错误提示并返回是否全部有效。"""
+        signup_start = self._signup_start.dateTime().toPython()
+        signup_end = self._signup_end.dateTime().toPython()
+        signup_ok = signup_end > signup_start
+        self._signup_err.setVisible(not signup_ok)
+        if not signup_ok:
+            self._signup_err.setText("⚠ 报名截止必须晚于报名开始")
+
+        checkin_start = self._checkin_start.dateTime().toPython()
+        checkin_end = self._checkin_end.dateTime().toPython()
+        checkin_ok = True
+        checkin_msg = ""
+        if checkin_end <= checkin_start:
+            checkin_ok = False
+            checkin_msg = "⚠ 签到截止必须晚于签到开始"
+        elif checkin_start < signup_start:
+            checkin_ok = False
+            checkin_msg = "⚠ 签到开始不应早于报名开始"
+        self._checkin_err.setVisible(not checkin_ok)
+        if not checkin_ok:
+            self._checkin_err.setText(checkin_msg)
+        return signup_ok and checkin_ok
 
     def _init_slot_form(self) -> None:
         # 根据活动模式动态切换的表单
@@ -476,7 +546,16 @@ class ActivityPanel(QWidget):
 
         self._batch_interval.currentIndexChanged.connect(self._on_batch_interval_changed)
 
-        # 主表单
+        # 时段时间字段级实时校验
+        p = get_palette()
+        err_style = f"color: {p.error_fg}; font-size: 11px; border: none; padding: 0 4px;"
+        self._slot_time_err = QLabel("")
+        self._slot_time_err.setStyleSheet(err_style)
+        self._slot_time_err.setVisible(False)
+        for w in (self._slot_start, self._slot_end):
+            w.dateTimeChanged.connect(self._validate_slot_form)
+
+        # —— 分组 1：时段基础信息 ——
         self._slot_form = QFormLayout()
         self._slot_form.setHorizontalSpacing(12)
         self._slot_form.setVerticalSpacing(10)
@@ -486,16 +565,18 @@ class ActivityPanel(QWidget):
         # 时段模式字段
         self._slot_form.addRow("开始时间", self._slot_start)
         self._slot_form.addRow("结束时间", self._slot_end)
+        self._slot_form.addRow(self._slot_time_err)
         # 非时段模式字段
         self._slot_form.addRow("选项类型", self._slot_option_type)
         self._slot_form.addRow("说明", self._slot_description)
         self._slot_form.addRow("容量", self._slot_capacity)
-        self._slot_form.addRow("岗位模式", self._auto_create_position)
         self._slot_form.addRow(self._add_slot_btn)
         self._slot_form.addRow(self._slot_message)
+        basic_slot_group = QGroupBox("时段基础信息")
+        basic_slot_group.setLayout(self._slot_form)
 
-        # 岗位管理区域（时段模式）—— 整体控制可见性
-        p = get_palette()
+        # —— 分组 2：岗位设置（仅时段模式可见）——
+        # 岗位管理子区域
         self._position_section = QWidget()
         position_layout = QFormLayout()
         position_layout.setContentsMargins(0, 0, 0, 0)
@@ -514,14 +595,14 @@ class ActivityPanel(QWidget):
         )
         position_hint.setWordWrap(True)
         position_layout.addRow(position_hint)
+        position_layout.addRow("岗位模式", self._auto_create_position)
         position_layout.addRow("岗位名称", self._position_name)
         position_layout.addRow("岗位容量", self._position_capacity)
         position_layout.addRow(self._add_position_btn)
         position_layout.addRow(self._add_default_position_btn)
         self._position_section.setLayout(position_layout)
-        self._slot_form.addRow(self._position_section)
 
-        # 批量添加区域（时段模式）—— 整体控制可见性
+        # 批量添加子区域
         self._batch_section = QWidget()
         batch_layout = QFormLayout()
         batch_layout.setContentsMargins(0, 0, 0, 0)
@@ -544,13 +625,39 @@ class ActivityPanel(QWidget):
         batch_layout.addRow("岗位容量", self._batch_position_capacity)
         batch_layout.addRow(batch_add_btn)
         self._batch_section.setLayout(batch_layout)
-        self._slot_form.addRow(self._batch_section)
 
-        self._slot_group = QGroupBox("添加选项")
-        self._slot_group.setLayout(self._slot_form)
+        # 岗位设置分组容器
+        self._position_group = QGroupBox("岗位设置")
+        position_group_layout = QVBoxLayout()
+        position_group_layout.setContentsMargins(12, 12, 12, 12)
+        position_group_layout.setSpacing(10)
+        position_group_layout.addWidget(self._position_section)
+        position_group_layout.addWidget(self._batch_section)
+        self._position_group.setLayout(position_group_layout)
+
+        # 组装：QWidget 替代外层 QGroupBox（tab 已提供标题，避免标题与框不对齐）
+        container = QVBoxLayout()
+        container.setContentsMargins(0, 0, 0, 0)
+        container.setSpacing(12)
+        container.addWidget(basic_slot_group)
+        container.addWidget(self._position_group)
+        container.addStretch(1)
+
+        self._slot_group = QWidget()
+        self._slot_group.setLayout(container)
 
         # 初始状态：根据选中活动的模式动态调整
         self._update_slot_form_mode()
+
+    def _validate_slot_form(self, *args) -> bool:
+        """实时校验时段表单的时间字段，返回是否有效。"""
+        start = self._slot_start.dateTime().toPython()
+        end = self._slot_end.dateTime().toPython()
+        ok = end > start
+        self._slot_time_err.setVisible(not ok)
+        if not ok:
+            self._slot_time_err.setText("⚠ 结束时间不能早于开始时间")
+        return ok
 
     def _update_slot_form_mode(self) -> None:
         """根据选中活动的模式，动态切换表单显示"""
@@ -565,26 +672,33 @@ class ActivityPanel(QWidget):
         # 时段模式字段
         self._slot_start.setVisible(is_time_slot_mode)
         self._slot_end.setVisible(is_time_slot_mode)
-        self._auto_create_position.setVisible(is_time_slot_mode)
-        auto_pos_label = self._slot_form.labelForField(self._auto_create_position)
-        if auto_pos_label:
-            auto_pos_label.setVisible(is_time_slot_mode)
+        start_label = self._slot_form.labelForField(self._slot_start)
+        if start_label:
+            start_label.setVisible(is_time_slot_mode)
+        end_label = self._slot_form.labelForField(self._slot_end)
+        if end_label:
+            end_label.setVisible(is_time_slot_mode)
+        # 时段模式下显示时间校验提示
+        self._slot_time_err.setVisible(is_time_slot_mode and not self._validate_slot_form())
         # 非时段模式字段
         self._slot_option_type.setVisible(not is_time_slot_mode)
         self._slot_description.setVisible(not is_time_slot_mode)
-        # 岗位管理和批量添加区域整体控制
-        self._position_section.setVisible(is_time_slot_mode)
-        self._batch_section.setVisible(is_time_slot_mode)
+        opt_label = self._slot_form.labelForField(self._slot_option_type)
+        if opt_label:
+            opt_label.setVisible(not is_time_slot_mode)
+        desc_label = self._slot_form.labelForField(self._slot_description)
+        if desc_label:
+            desc_label.setVisible(not is_time_slot_mode)
+        # 岗位设置分组整体控制（含岗位模式/岗位管理/批量添加）
+        self._position_group.setVisible(is_time_slot_mode)
 
         # 更新按钮文字和表单标签
         if is_time_slot_mode:
             self._add_slot_btn.setText("添加时段")
-            self._slot_group.setTitle("添加时段")
             self._slot_name.setPlaceholderText("例如：周二下午3-6点")
             self._slot_form.labelForField(self._slot_name).setText("名称")
         else:
             self._add_slot_btn.setText("添加选项")
-            self._slot_group.setTitle("添加选项")
             self._slot_name.setPlaceholderText("例如：机器学习选题A / 高等数学")
             self._slot_form.labelForField(self._slot_name).setText("选项名称")
 
@@ -793,6 +907,9 @@ class ActivityPanel(QWidget):
     def _create_activity(self) -> None:
         try:
             set_banner(self._activity_message, "info", "")
+            if not self._validate_activity_form():
+                set_banner(self._activity_message, "error", "请修正表单中的时间错误后再提交")
+                return
             activity = self._service.create_activity(
                 user=self._user,
                 name=self._activity_name.text().strip(),
@@ -1015,6 +1132,8 @@ class ActivityPanel(QWidget):
             auto_position = self._auto_create_position.currentData() == "default"
 
             if is_time_slot_mode:
+                if not self._validate_slot_form():
+                    raise ValidationError("结束时间不能早于开始时间")
                 slot = self._service.add_slot(
                     user=self._user,
                     activity_id=activity_id,
