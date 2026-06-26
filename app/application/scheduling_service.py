@@ -35,7 +35,9 @@ class SchedulingService:
             registrations = self._reg_repo.list_pending(activity_id, conn=conn)
             slots = self._slot_repo.list_by_activity(activity_id, conn=conn)
             if not registrations:
-                # 没有报名记录时直接返回0，不抛异常，允许零报名活动正常关闭
+                # 没有报名记录时也要清空旧排班结果和名额统计，防止数据不一致
+                self._slot_repo.reset_used_counts_for_activity(activity_id, conn=conn)
+                self._schedule_repo.clear_for_activity(activity_id, conn=conn)
                 return 0
             if not slots:
                 raise ValidationError("没有可用的时段")
