@@ -636,6 +636,11 @@ class CheckInRepository:
                 ),
             )
             conn.commit()
+        except sqlite3.IntegrityError:
+            # 并发场景下 check_in 与 self_check_in 都可能先通过 get_by_user_slot 检查
+            # 但 UNIQUE(user_id, slot_id) 约束会拦截重复插入，转换为业务冲突
+            conn.rollback()
+            raise ConflictError("该用户已签到此时段")
         except Exception:
             conn.rollback()
             raise

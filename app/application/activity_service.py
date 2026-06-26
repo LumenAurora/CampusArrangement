@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.domain.exceptions import PermissionDenied, ValidationError
@@ -319,11 +319,10 @@ class ActivityService:
         self._activity_repo.create(new_activity)
 
         slots = self._slot_repo.list_by_activity(activity_id)
-        # 计算时间偏移：统一去除时区信息后再相减，只关心挂钟时间的差值
-        old_start = datetime.fromisoformat(activity["signup_start"])
-        if old_start.tzinfo is not None:
-            old_start = old_start.replace(tzinfo=None)
-        new_start = new_signup_start.replace(tzinfo=None) if new_signup_start.tzinfo is not None else new_signup_start
+        # 计算时间偏移：统一转为 UTC-aware 后相减，得到正确的挂钟时间差
+        # naive datetime 视为本地时间，aware datetime 统一到 UTC
+        old_start = datetime.fromisoformat(activity["signup_start"]).astimezone(timezone.utc)
+        new_start = new_signup_start.astimezone(timezone.utc)
         signup_diff = new_start - old_start
 
         # 先复制父级 slot，建立 ID 映射
@@ -337,13 +336,9 @@ class ActivityService:
             capacity = slot["capacity"]
 
             if slot_type == SlotType.TIME_SLOT and slot.get("start_time") and slot.get("end_time"):
-                slot_start = datetime.fromisoformat(slot["start_time"])
-                slot_end = datetime.fromisoformat(slot["end_time"])
-                # 去除时区信息以进行挂钟时间偏移
-                if slot_start.tzinfo is not None:
-                    slot_start = slot_start.replace(tzinfo=None)
-                if slot_end.tzinfo is not None:
-                    slot_end = slot_end.replace(tzinfo=None)
+                # 统一转 UTC-aware，保证存储格式与其它路径一致（带 +00:00 后缀）
+                slot_start = datetime.fromisoformat(slot["start_time"]).astimezone(timezone.utc)
+                slot_end = datetime.fromisoformat(slot["end_time"]).astimezone(timezone.utc)
                 new_slot_start = slot_start + signup_diff
                 new_slot_end = slot_end + signup_diff
                 new_slot = TimeSlot.create_time_slot(

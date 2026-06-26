@@ -93,7 +93,8 @@ class CheckInService:
         if existing:
             if existing["status"] == CheckInStatus.ABSENT.value:
                 raise ValidationError("该用户已被标记缺勤")
-            self._checkin_repo.update_status(existing["id"], CheckInStatus.ABSENT)
+            # 保留原始 checked_at，避免覆盖用户实际签到时间
+            self._checkin_repo.update_status(existing["id"], CheckInStatus.ABSENT, keep_checked_at=True)
             return CheckIn(
                 id=existing["id"], activity_id=activity_id, user_id=user_id,
                 slot_id=slot_id, status=CheckInStatus.ABSENT,
@@ -127,6 +128,9 @@ class CheckInService:
         if activity.get("checkin_mode") not in (CheckInMode.SELF_CODE.value, CheckInMode.QRCODE.value):
             raise ValidationError("该活动不支持自助签到码签到")
         self._validate_checkin_allowed(activity)
+        # 拦截空签到码：避免活动未生成签到码或用户传入空值时被 "" != "" 误判绕过
+        if not activity.get("checkin_code") or not checkin_code:
+            raise ValidationError("签到码未生成或无效，请联系管理员生成签到码")
         if activity.get("checkin_code") != checkin_code:
             raise ValidationError("签到码无效")
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
@@ -165,7 +169,8 @@ class CheckInService:
                 if distance * 1000 > _DEFAULT_MAX_DISTANCE_M:
                     raise ValidationError(f"您距离活动地点过远（{distance * 1000:.0f}米），无法签到")
             except (ValueError, IndexError):
-                pass  # 如果location格式不是坐标，跳过距离校验
+                # 位置签到要求 location 必须是有效坐标，格式异常时不应静默放行
+                raise ValidationError("活动地点坐标格式异常，无法进行位置签到")
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if existing:
             raise ConflictError("您已签到此时段")
