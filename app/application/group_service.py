@@ -117,7 +117,6 @@ class GroupService:
 
     def get_user_pending_applications(self, user_id: str) -> list[dict]:
         """获取用户的所有待审批/已拒绝申请状态"""
-        conn = self._repo  # type: ignore
         # 返回所有有申请记录的小组状态
         result = []
         all_groups = self._repo.list_all()

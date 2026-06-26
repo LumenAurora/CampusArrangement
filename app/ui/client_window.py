@@ -29,9 +29,9 @@ class ClientWindow(NavigationWindow):
         slot_repo: TimeSlotRepository,
         reg_repo: RegistrationRepository,
         checkin_service: CheckInService,
-        group_service: GroupService,
-        group_repo: GroupRepository,
         checkin_repo: CheckInRepository,
+        group_service: GroupService | None = None,
+        group_repo: GroupRepository | None = None,
     ) -> None:
         super().__init__("校园报名与排班系统 - 客户端", f"{user.username}")
 
@@ -40,8 +40,9 @@ class ClientWindow(NavigationWindow):
             ("signup", "报名", RegistrationPanel(activity_service, registration_service, user, reg_repo, group_repo), load_icon("signup")),
             ("results", "我的结果", MyResultsPanel(schedule_repo, activity_service, user), load_icon("results")),
             ("checkin", "签到", SelfCheckInPanel(checkin_service, activity_service, schedule_repo, user), load_icon("checkin")),
-            ("groups", "小组", GroupClientPanel(group_service, group_repo, user), load_icon("users")),
             ("calendar", "日程表", CalendarPanel(schedule_repo, activity_repo, slot_repo, user, checkin_repo), load_icon("scheduling")),
         ]
+        if group_service is not None and group_repo is not None:
+            pages.insert(-1, ("groups", "小组", GroupClientPanel(group_service, group_repo, user), load_icon("users")))
         self.set_pages(pages)
         self.attach_menus(QApplication.instance())

@@ -33,8 +33,8 @@ class AdminWindow(NavigationWindow):
         user_repo: UserRepository,
         checkin_service: CheckInService,
         checkin_repo: CheckInRepository,
-        group_service: GroupService,
-        group_repo: GroupRepository,
+        group_service: GroupService | None = None,
+        group_repo: GroupRepository | None = None,
     ) -> None:
         super().__init__("校园报名与排班系统 - 管理端", f"{user.username} · {user.role.value}")
 
@@ -44,7 +44,8 @@ class AdminWindow(NavigationWindow):
             ("scheduling", "排班管理", SchedulingPanel(activity_service, scheduling_service, schedule_repo, user_repo), load_icon("scheduling")),
             ("checkin", "签到管理", CheckInPanel(checkin_service, activity_service, schedule_repo, user_repo, user), load_icon("checkin")),
             ("users", "用户管理", UserAdminPanel(user_service, user_repo, user), load_icon("users")),
-            ("groups", "小组管理", GroupAdminPanel(group_service, group_repo, user), load_icon("users")),
         ]
+        if group_service is not None and group_repo is not None:
+            pages.append(("groups", "小组管理", GroupAdminPanel(group_service, group_repo, user), load_icon("users")))
         self.set_pages(pages)
         self.attach_menus(QApplication.instance())

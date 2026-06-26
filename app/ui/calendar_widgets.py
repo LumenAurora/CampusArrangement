@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, QTimer, Signal
@@ -119,6 +119,29 @@ class _CustomEventStore:
             data = {}
         reminders = data.get(user_id, {}).get("reminders", {})
         reminders.pop(event_id, None)
+        cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @classmethod
+    def load_fired_reminders(cls, user_id: str) -> set[str]:
+        """加载已触发的提醒ID集合"""
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        return set(data.get(user_id, {}).get("fired_reminders", []))
+
+    @classmethod
+    def save_fired_reminder(cls, user_id: str, event_id: str) -> None:
+        """持久化一个已触发的提醒ID"""
+        cls._ensure_file()
+        try:
+            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        fired = data.setdefault(user_id, {}).setdefault("fired_reminders", [])
+        if event_id not in fired:
+            fired.append(event_id)
         cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -770,7 +793,7 @@ class CalendarPanel(QWidget):
         self._selected_date = QDate.currentDate()
         self._events_by_date: dict[QDate, list[dict]] = {}
         self._all_events: list[dict] = []
-        self._fired_reminders: set[str] = set()  # 已触发的提醒事件ID
+        self._fired_reminders: set[str] = _CustomEventStore.load_fired_reminders(user.id)  # 已触发的提醒事件ID（持久化）
 
         self._init_ui()
         self.refresh()
@@ -1223,7 +1246,7 @@ class CalendarPanel(QWidget):
             reminders = _CustomEventStore.load_reminders(self._user.id)
             if not reminders:
                 return
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             for event_id, minutes_before in reminders.items():
                 if event_id in self._fired_reminders:
                     continue
@@ -1235,10 +1258,11 @@ class CalendarPanel(QWidget):
                             try:
                                 event_dt = self._parse_dt(time_str)
                                 if event_dt:
-                                    delta = (event_dt - now.astimezone(event_dt.tzinfo) if event_dt.tzinfo else event_dt - now).total_seconds()
+                                    delta = (event_dt - now).total_seconds()
                                     if 0 <= delta <= minutes_before * 60:
                                         self._show_reminder(event)
                                         self._fired_reminders.add(event_id)
+                                        _CustomEventStore.save_fired_reminder(self._user.id, event_id)
                             except Exception:
                                 pass
                         break
