@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QDate, QDateTime, Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QDateTimeEdit,
     QDialog,
@@ -12,8 +12,10 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -54,49 +57,6 @@ from app.ui.ui_utils import (
 )
 
 
-class _CapacityBar(QWidget):
-    """A compact visual capacity bar colored by usage ratio."""
-
-    def __init__(self, used: int, capacity: int, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._used = used
-        self._capacity = capacity
-        self.setFixedHeight(22)
-        self.setMinimumWidth(90)
-
-    def paintEvent(self, event):  # noqa: N802
-        p = get_palette()
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # Background track
-        painter.setBrush(QColor(p.bg_input))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(self.rect(), 4, 4)
-
-        ratio = self._used / self._capacity if self._capacity > 0 else 0
-        ratio = min(ratio, 1.0)
-
-        # Fill color based on usage
-        if ratio < 0.5:
-            fill_color = QColor(p.success_fg)
-        elif ratio < 0.8:
-            fill_color = QColor(p.warning_fg)
-        else:
-            fill_color = QColor(p.error_fg)
-
-        fill_width = int((self.width() - 2) * ratio)
-        if fill_width > 0:
-            painter.setBrush(fill_color)
-            painter.drawRoundedRect(1, 1, fill_width, self.height() - 2, 3, 3)
-
-        # Text label
-        text_color = QColor(p.text_on_accent) if ratio > 0.35 else QColor(p.text_primary)
-        painter.setPen(text_color)
-        painter.drawText(self.rect(), Qt.AlignCenter, f"{self._used}/{self._capacity}")
-        painter.end()
-
-
 class ActivityPanel(QWidget):
     def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None, group_repo=None) -> None:
         super().__init__()
@@ -106,24 +66,29 @@ class ActivityPanel(QWidget):
         self._activity_repo = activity_repo
         self._group_repo = group_repo
 
-        self._activity_table = QTableWidget(0, 9)
-        self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "地点", "状态", "操作"])
+        self._activity_table = QTableWidget(0, 6)
+        self._activity_table.setHorizontalHeaderLabels(["ID", "活动名称", "报名周期", "地点", "状态", "操作"])
         configure_table(self._activity_table)
+        # 列宽配置：名称充足、报名周期适中、地点/状态紧凑、操作固定
+        header = self._activity_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # ID 隐藏
+        header.setSectionResizeMode(1, QHeaderView.Stretch)            # 名称弹性
+        header.setSectionResizeMode(2, QHeaderView.Stretch)            # 报名周期弹性
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)   # 地点自适应
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)   # 状态自适应
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)   # 操作自适应
 
         # 选项列表改用 TreeWidget 以支持层级展示
         self._slot_tree = QTreeWidget()
-        self._slot_tree.setHeaderLabels(["名称", "类型", "开始", "结束", "容量", "已用", "剩余", "使用率"])
+        self._slot_tree.setHeaderLabels(["名称", "类型", "开始", "结束", "已用 / 容量"])
         self._slot_tree.setAlternatingRowColors(True)
         self._slot_tree.setAnimated(True)
         self._slot_tree.setExpandsOnDoubleClick(True)
-        self._slot_tree.setColumnWidth(0, 200)
-        self._slot_tree.setColumnWidth(1, 60)
-        self._slot_tree.setColumnWidth(2, 145)
-        self._slot_tree.setColumnWidth(3, 145)
-        self._slot_tree.setColumnWidth(4, 50)
-        self._slot_tree.setColumnWidth(5, 50)
-        self._slot_tree.setColumnWidth(6, 50)
-        self._slot_tree.setColumnWidth(7, 110)
+        self._slot_tree.setColumnWidth(0, 220)
+        self._slot_tree.setColumnWidth(1, 70)
+        self._slot_tree.setColumnWidth(2, 150)
+        self._slot_tree.setColumnWidth(3, 150)
+        self._slot_tree.setColumnWidth(4, 110)
 
         self._activity_selector = StyledComboBox()
         self._activity_selector.setMinimumWidth(240)
@@ -155,7 +120,7 @@ class ActivityPanel(QWidget):
         self._publish_btn.setObjectName("primaryButton")
         self._publish_btn.clicked.connect(lambda: self._change_status("publish"))
         self._reject_btn = QPushButton("退回修改")
-        self._reject_btn.setObjectName("dangerButton")
+        self._reject_btn.setObjectName("secondaryButton")
         self._reject_btn.clicked.connect(lambda: self._change_status("reject"))
         self._close_btn = QPushButton("结束报名")
         self._close_btn.setObjectName("secondaryButton")
@@ -196,6 +161,16 @@ class ActivityPanel(QWidget):
         self._activity_list_group.setLayout(activity_list_layout)
 
         self._slot_list_group = QGroupBox("选项列表")
+        # 时段详情为从属卡片：浅灰底色 + 更淡边框，视觉弱化以体现主从关系
+        self._slot_list_group.setObjectName("subordinateCard")
+        self._slot_list_group.setStyleSheet(
+            f"QGroupBox#subordinateCard {{ background: {p.bg_sidebar}; "
+            f"border: 1px solid {p.border_light}; border-radius: 12px; "
+            f"margin-top: 14px; padding-top: 16px; }}"
+            f"QGroupBox#subordinateCard::title {{ "
+            f"subcontrol-origin: margin; left: 14px; padding: 0 8px; "
+            f"color: {p.text_secondary}; font-weight: 600; font-size: 12px; }}"
+        )
         slot_list_layout = QVBoxLayout()
         slot_list_layout.setContentsMargins(12, 12, 12, 12)
 
@@ -757,7 +732,7 @@ class ActivityPanel(QWidget):
             activities = self._all_activities
 
         if not activities:
-            set_table_empty(self._activity_table, 9, "暂无活动，请先创建活动")
+            set_table_empty(self._activity_table, 6, "暂无活动，请先创建活动")
             self._activity_selector.blockSignals(True)
             self._activity_selector.clear()
             self._activity_selector.blockSignals(False)
@@ -767,38 +742,35 @@ class ActivityPanel(QWidget):
         self._activity_table.setRowCount(len(activities))
         self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
+        p = get_palette()
         for row_index, activity in enumerate(activities):
+            # 列 0：ID（隐藏）
             self._activity_table.setItem(row_index, 0, QTableWidgetItem(str(activity["id"])))
-            self._activity_table.setItem(row_index, 1, QTableWidgetItem(str(activity["name"])))
-            self._activity_table.setItem(row_index, 2, QTableWidgetItem(format_datetime(activity["signup_start"])))
-            self._activity_table.setItem(row_index, 3, QTableWidgetItem(format_datetime(activity["signup_end"])))
-            signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
-            allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value)
-            allocation_text = {
-                AllocationMode.GREEDY.value: "志愿优先",
-                AllocationMode.FIRST_COME.value: "先到先得",
-                AllocationMode.LOTTERY.value: "抽签",
-            }.get(allocation_mode, "志愿优先")
-            self._activity_table.setItem(row_index, 4, QTableWidgetItem(signup_mode_text))
-            self._activity_table.setItem(row_index, 5, QTableWidgetItem(allocation_text))
-            # Location with prominent styling
+            # 列 1：活动名称
+            name_item = QTableWidgetItem(str(activity["name"]))
+            name_item.setToolTip(str(activity.get("details") or ""))
+            self._activity_table.setItem(row_index, 1, name_item)
+            # 列 2：报名周期（开始~截止合并显示，hover 显示完整年月日时分）
+            signup_start_full = format_datetime(activity["signup_start"]) if activity.get("signup_start") else "—"
+            signup_end_full = format_datetime(activity["signup_end"]) if activity.get("signup_end") else "—"
+            period_text = f"{signup_start_full} ~ {signup_end_full}"
+            period_item = QTableWidgetItem(period_text)
+            period_item.setToolTip(f"报名开始：{signup_start_full}\n报名截止：{signup_end_full}")
+            self._activity_table.setItem(row_index, 2, period_item)
+            # 列 3：地点
             location_text = activity.get("location") or "-"
             location_label = QLabel(f"📍 {location_text}")
-            p = get_palette()
             location_label.setStyleSheet(
                 f"color: {p.accent}; font-weight: 500; padding: 2px 6px; "
                 f"background: {p.accent_soft}; border-radius: 4px;"
             )
             location_label.setAlignment(Qt.AlignCenter)
-            self._activity_table.setCellWidget(row_index, 6, location_label)
+            self._activity_table.setCellWidget(row_index, 3, location_label)
+            # 列 4：状态
             status_text = format_activity_status(activity)
-            self._activity_table.setItem(row_index, 7, make_status_item(status_text))
-
-            copy_btn = QPushButton("复制")
-            copy_btn.setObjectName("secondaryButton")
-            copy_btn.setProperty("activity_id", activity["id"])
-            copy_btn.clicked.connect(self._on_copy_activity)
-            self._activity_table.setCellWidget(row_index, 8, copy_btn)
+            self._activity_table.setItem(row_index, 4, make_status_item(status_text))
+            # 列 5：操作（复制 + 更多下拉）
+            self._activity_table.setCellWidget(row_index, 5, self._make_row_actions(activity, p))
 
             # 活动选择器显示模式标签
             at = activity.get("activity_type", "time_slot")
@@ -810,6 +782,109 @@ class ActivityPanel(QWidget):
         self._update_status_buttons()
         self._load_slots()
 
+    def _make_row_actions(self, activity: dict, p) -> QWidget:
+        """构建行内操作区：复制 + 更多下拉（详情/删除/归档）。"""
+        container = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(6)
+
+        copy_btn = QPushButton("复制")
+        copy_btn.setObjectName("secondaryButton")
+        copy_btn.setProperty("activity_id", activity["id"])
+        copy_btn.clicked.connect(self._on_copy_activity)
+        layout.addWidget(copy_btn)
+
+        more_btn = QToolButton()
+        more_btn.setObjectName("secondaryButton")
+        more_btn.setText("更多")
+        more_btn.setPopupMode(QToolButton.InstantPopup)
+        more_btn.setStyleSheet(
+            f"QToolButton#secondaryButton::menu-indicator {{ image: none; }}"
+        )
+        more_menu = QMenu(more_btn)
+        more_menu.setStyleSheet(
+            f"QMenu {{ background: {p.bg_card}; color: {p.text_primary}; "
+            f"border: 1px solid {p.border_light}; border-radius: 8px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 24px 6px 16px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background: {p.accent_soft}; }}"
+        )
+        detail_action = QAction("查看详情", more_menu)
+        detail_action.triggered.connect(lambda _=False, aid=activity["id"]: self._open_detail_by_id(aid))
+        more_menu.addAction(detail_action)
+        more_menu.addSeparator()
+        archive_action = QAction("归档", more_menu)
+        archive_action.triggered.connect(lambda _=False, aid=activity["id"]: self._archive_activity_by_id(aid))
+        more_menu.addAction(archive_action)
+        delete_action = QAction("删除", more_menu)
+        delete_action.triggered.connect(lambda _=False, aid=activity["id"]: self._delete_activity_by_id(aid))
+        more_menu.addAction(delete_action)
+        more_btn.setMenu(more_menu)
+        layout.addWidget(more_btn)
+
+        container.setLayout(layout)
+        return container
+
+    def _open_detail_by_id(self, activity_id: str) -> None:
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if not activity:
+            return
+        signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
+        allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value)
+        allocation_text = {
+            AllocationMode.GREEDY.value: "志愿优先",
+            AllocationMode.FIRST_COME.value: "先到先得",
+            AllocationMode.LOTTERY.value: "抽签",
+        }.get(allocation_mode, "志愿优先")
+        data = {
+            "ID": str(activity.get("id", "")),
+            "名称": activity.get("name", ""),
+            "报名开始": format_datetime(activity["signup_start"]) if activity.get("signup_start") else "—",
+            "报名截止": format_datetime(activity["signup_end"]) if activity.get("signup_end") else "—",
+            "名额显示": signup_mode_text,
+            "分配策略": allocation_text,
+            "地点": activity.get("location") or "—",
+            "状态": format_activity_status(activity),
+            "详情": activity.get("details") or "—",
+        }
+        ItemDetailDialog("活动详情", data, self).exec()
+
+    def _archive_activity_by_id(self, activity_id: str) -> None:
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if not activity:
+            return
+        reply = QMessageBox.question(
+            self, "确认操作",
+            f"确定要归档活动「{activity.get('name', '')}」吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            self._service.archive_activity(user=self._user, activity_id=activity_id)
+            self.refresh()
+            set_banner(self._activity_message, "success", f"活动「{activity.get('name', '')}」已归档")
+        except (PermissionDenied, ValidationError) as exc:
+            QMessageBox.warning(self, "操作失败", str(exc))
+
+    def _delete_activity_by_id(self, activity_id: str) -> None:
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if not activity:
+            return
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除活动「{activity.get('name', '')}」吗？\n删除后无法恢复。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            self._service.delete_activity(user=self._user, activity_id=activity_id)
+            self.refresh()
+            set_banner(self._activity_message, "success", f"已删除活动：{activity.get('name', '')}")
+        except (PermissionDenied, ValidationError) as exc:
+            QMessageBox.warning(self, "操作失败", str(exc))
+
     def _load_slots(self) -> None:
         self._update_slot_form_mode()
         activity_id = self._activity_selector.currentData()
@@ -819,7 +894,7 @@ class ActivityPanel(QWidget):
             return
         slots = self._service.list_slots(activity_id)
         if not slots:
-            item = QTreeWidgetItem(["暂无选项，请添加", "", "", "", "", "", "", ""])
+            item = QTreeWidgetItem(["暂无选项，请添加", "", "", "", ""])
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
             self._slot_tree.addTopLevelItem(item)
             self._update_activity_detail_card()
@@ -833,6 +908,7 @@ class ActivityPanel(QWidget):
             if pid:
                 child_map.setdefault(pid, []).append(s)
 
+        p = get_palette()
         for slot in parent_slots:
             slot_type = slot.get("slot_type", "time_slot")
             type_text = {
@@ -846,12 +922,20 @@ class ActivityPanel(QWidget):
             end_text = format_datetime(slot["end_time"]) if slot.get("end_time") else "-"
             capacity = int(slot["capacity"])
             used = int(slot["used_count"])
-            remaining = capacity - used
+            # 用「已用 / 容量」文字格式替代进度条，节省横向空间
+            usage_text = f"{used} / {capacity}"
+            usage_item_text = usage_text if used < capacity else f"{used} / {capacity}（满）"
 
-            parent_item = QTreeWidgetItem([name, type_text, start_text, end_text, str(capacity), str(used), str(remaining), ""])
+            parent_item = QTreeWidgetItem([name, type_text, start_text, end_text, usage_item_text])
             parent_item.setData(0, Qt.UserRole, slot)
+            parent_item.setTextAlignment(4, Qt.AlignCenter)
+            # 已满标红，接近满标橙，其余正常
+            ratio = used / capacity if capacity > 0 else 0
+            if ratio >= 1.0:
+                parent_item.setForeground(4, QColor(p.error_fg))
+            elif ratio >= 0.8:
+                parent_item.setForeground(4, QColor(p.warning_fg))
             self._slot_tree.addTopLevelItem(parent_item)
-            self._slot_tree.setItemWidget(parent_item, 7, _CapacityBar(used, capacity))
 
             # 添加子岗位
             children = child_map.get(slot["id"], [])
@@ -859,17 +943,22 @@ class ActivityPanel(QWidget):
                 child_name = format_slot_name(child)
                 child_capacity = int(child["capacity"])
                 child_used = int(child["used_count"])
-                child_remaining = child_capacity - child_used
-                child_item = QTreeWidgetItem([f"  └ {child_name}", "岗位", "", "", str(child_capacity), str(child_used), str(child_remaining), ""])
+                child_usage = f"{child_used} / {child_capacity}"
+                child_item = QTreeWidgetItem([f"  └ {child_name}", "岗位", "", "", child_usage])
                 child_item.setData(0, Qt.UserRole, child)
+                child_item.setTextAlignment(4, Qt.AlignCenter)
+                child_ratio = child_used / child_capacity if child_capacity > 0 else 0
+                if child_ratio >= 1.0:
+                    child_item.setForeground(4, QColor(p.error_fg))
+                elif child_ratio >= 0.8:
+                    child_item.setForeground(4, QColor(p.warning_fg))
                 parent_item.addChild(child_item)
-                self._slot_tree.setItemWidget(child_item, 7, _CapacityBar(child_used, child_capacity))
 
             if children:
                 parent_item.setExpanded(True)
             elif slot_type == "time_slot":
                 # 时段模式下，没有子岗位时显示提示
-                hint_item = QTreeWidgetItem(["  └ 未划分岗位（报名直接分配到时段）", "", "", "", "", "", "", ""])
+                hint_item = QTreeWidgetItem(["  └ 未划分岗位（报名直接分配到时段）", "", "", "", ""])
                 hint_item.setFlags(hint_item.flags() & ~Qt.ItemIsSelectable & ~Qt.ItemIsEditable)
                 p_hint = get_palette()
                 hint_item.setForeground(0, QColor(p_hint.text_tertiary))
@@ -1093,11 +1182,11 @@ class ActivityPanel(QWidget):
         status_color_map = {
             "报名中": p.success_fg,
             "报名未开始": p.accent,
-            "报名已截止": p.error_fg,
-            "报名已结束": p.error_fg,
+            "报名已截止": p.text_tertiary,
+            "报名已结束": p.text_tertiary,
             "签到未开始": p.accent,
             "签到中": p.success_fg,
-            "签到已结束": p.error_fg,
+            "签到已结束": p.text_tertiary,
             "已归档": p.text_tertiary,
             "草稿": p.warning_fg,
             "待审核": p.accent,
