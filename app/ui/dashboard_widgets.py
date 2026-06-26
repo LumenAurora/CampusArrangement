@@ -75,11 +75,100 @@ class DashboardPanel(QWidget):
                 ("排班结果", self._schedule_repo.count_all(), "error_fg"),
             ]
         return [
-            ("可报名活动", self._activity_repo.count_by_status(ActivityStatus.OPEN), "accent"),
+            ("可报名活动", self._count_open_active_activities(), "accent"),
             ("我的报名", self._reg_repo.count_by_user(self._user.id), "success_fg"),
-            ("我的排班", self._schedule_repo.count_by_user(self._user.id), "warning_fg"),
-            ("已发布时段", self._slot_repo.count_by_activity_status(ActivityStatus.OPEN.value), "error_fg"),
+            ("待签到排班", self._count_upcoming_schedules(), "warning_fg"),
+            ("待签到时段", self._count_upcoming_open_slots(), "error_fg"),
         ]
+
+    # ── 学生端统计：仅统计当前有效（未过期）的项 ──────────────
+
+    def _count_open_active_activities(self) -> int:
+        """统计当前可报名（status=open 且 signup_end 未过期）的活动数。
+
+        修复 bug：原 count_by_status(OPEN) 把报名已截止但状态未变更的活动也算进去了。
+        """
+        try:
+            rows = self._activity_repo.list_by_status(ActivityStatus.OPEN)
+        except Exception:
+            return 0
+        now = datetime.now(timezone.utc)
+        count = 0
+        for row in rows:
+            signup_end = row.get("signup_end", "")
+            if not signup_end:
+                continue
+            try:
+                end_dt = to_utc(signup_end)
+                if end_dt >= now:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count
+
+    def _count_upcoming_schedules(self) -> int:
+        """统计尚未结束的排班数（slot.end_time > now）。
+
+        修复 bug：原 count_by_user 把历史排班也算进去了，作为待办提醒应只算未结束的。
+        """
+        try:
+            rows = self._schedule_repo.list_by_user(self._user.id)
+        except Exception:
+            return 0
+        now = datetime.now(timezone.utc)
+        count = 0
+        for row in rows:
+            slot = self._slot_repo.get(row.get("slot_id", ""))
+            if not slot:
+                continue
+            end = slot.get("end_time", "")
+            if not end:
+                continue
+            try:
+                end_dt = to_utc(end)
+                if end_dt >= now:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count
+
+    def _count_upcoming_open_slots(self) -> int:
+        """统计报名中活动里尚未结束的时段数（slot.end_time > now）。
+
+        修复 bug：原 count_by_activity_status(OPEN) 把历史时段也算进去了。
+        """
+        try:
+            activities = self._activity_repo.list_by_status(ActivityStatus.OPEN)
+        except Exception:
+            return 0
+        now = datetime.now(timezone.utc)
+        # 限定为当前可报名的活动（避免把已截止的活动时段算进去）
+        active_ids: list[str] = []
+        for act in activities:
+            signup_end = act.get("signup_end", "")
+            if not signup_end:
+                continue
+            try:
+                if to_utc(signup_end) >= now:
+                    active_ids.append(act.get("id", ""))
+            except (ValueError, TypeError):
+                continue
+        count = 0
+        for aid in active_ids:
+            try:
+                slots = self._slot_repo.list_by_activity(aid)
+            except Exception:
+                continue
+            for slot in slots:
+                end = slot.get("end_time", "")
+                if not end:
+                    continue
+                try:
+                    if to_utc(end) >= now:
+                        count += 1
+                except (ValueError, TypeError):
+                    continue
+        return count
 
     def _recent_activities(self) -> list[dict]:
         """Latest 5 activities with status info."""

@@ -59,7 +59,10 @@ def format_datetime(value: str) -> str:
 
 
 def format_slot_name(slot: dict) -> str:
-    """Format a slot dict into a human-readable label."""
+    """Format a slot dict into a human-readable label.
+
+    时间格式与 format_datetime 保持一致（含年份），避免年份显示不一致。
+    """
     name = slot.get("name")
     if name:
         return name
@@ -69,7 +72,10 @@ def format_slot_name(slot: dict) -> str:
         try:
             s = datetime.fromisoformat(str(start))
             e = datetime.fromisoformat(str(end))
-            return f"{s.strftime('%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+            # 同日只显示一次日期，跨日显示完整起止
+            if s.date() == e.date():
+                return f"{s.strftime('%Y-%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+            return f"{s.strftime('%Y-%m-%d %H:%M')} ~ {e.strftime('%Y-%m-%d %H:%M')}"
         except ValueError:
             pass
     return str(slot.get("id", "—"))

@@ -35,6 +35,9 @@ class ActivityService:
             raise ValidationError("活动名称不能为空")
         if signup_end <= signup_start:
             raise ValidationError("报名截止时间必须晚于开始时间")
+        # 签到时间合法性校验：若同时设置起止，则截止必须晚于开始
+        if checkin_start is not None and checkin_end is not None and checkin_end <= checkin_start:
+            raise ValidationError("签到截止时间必须晚于开始时间")
         # 校验签到模式
         try:
             checkin_mode_enum = CheckInMode(checkin_mode)

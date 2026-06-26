@@ -118,8 +118,8 @@ class ActivityPanel(QWidget):
         self._slot_tree.setExpandsOnDoubleClick(True)
         self._slot_tree.setColumnWidth(0, 200)
         self._slot_tree.setColumnWidth(1, 60)
-        self._slot_tree.setColumnWidth(2, 130)
-        self._slot_tree.setColumnWidth(3, 130)
+        self._slot_tree.setColumnWidth(2, 145)
+        self._slot_tree.setColumnWidth(3, 145)
         self._slot_tree.setColumnWidth(4, 50)
         self._slot_tree.setColumnWidth(5, 50)
         self._slot_tree.setColumnWidth(6, 50)
@@ -414,9 +414,15 @@ class ActivityPanel(QWidget):
         self._slot_capacity = QSpinBox()
         self._slot_capacity.setRange(1, 1000)
         self._auto_create_position = ModeSelector()
-        self._auto_create_position.addItem("不划分岗位", "none")
-        self._auto_create_position.addItem("自动创建默认岗位", "default")
+        # 标签更明确：说明此选项控制新建时段时是否自动添加岗位
+        # 不影响后续在「岗位管理」中手动为时段追加岗位
+        self._auto_create_position.addItem("不创建岗位（仅时段，可稍后手动添加）", "none")
+        self._auto_create_position.addItem("创建时同步生成默认岗位（与时段同名）", "default")
         self._auto_create_position.setCurrentIndex(0)
+        self._auto_create_position.setToolTip(
+            "控制新建时段时是否自动附带一个默认岗位。\n"
+            "若选「不创建岗位」，时段创建后仍可在下方「岗位管理」区手动添加岗位。"
+        )
         self._slot_message = QLabel("")
         set_banner(self._slot_message, "info", "")
         self._add_slot_btn = QPushButton("添加时段")
@@ -448,7 +454,7 @@ class ActivityPanel(QWidget):
         self._batch_day_of_week = ModeSelector()
         self._batch_day_of_week.addItems(["周一", "周二", "周三", "周四", "周五", "周六", "周日"])
         self._batch_day_of_week.setEnabled(False)
-        self._batch_start_time = QDateTimeEdit(QDateTime.currentDateTime().time())
+        self._batch_start_time = QDateTimeEdit(QDateTime.currentDateTime())
         self._batch_start_time.setCalendarPopup(False)
         self._batch_start_time.setDisplayFormat("HH:mm")
         self._batch_duration = QSpinBox()
@@ -496,11 +502,18 @@ class ActivityPanel(QWidget):
         position_layout.setHorizontalSpacing(12)
         position_layout.setVerticalSpacing(10)
         position_layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        position_title = QLabel("岗位管理（时段模式）")
+        position_title = QLabel("岗位管理（为选中时段追加岗位）")
         position_title.setStyleSheet(
             f"font-weight: bold; font-size: 13px; margin-top: 6px; color: {p.text_secondary};"
         )
         position_layout.addRow(position_title)
+        # 操作提示：先在右侧「选项列表」选中一个时段，再填写岗位名称并点击下方按钮
+        position_hint = QLabel("提示：先在右侧「选项列表」点击选中一个时段，再填写岗位名称与容量后点击按钮。")
+        position_hint.setStyleSheet(
+            f"color: {p.text_tertiary}; font-size: 11px; font-style: italic; border: none;"
+        )
+        position_hint.setWordWrap(True)
+        position_layout.addRow(position_hint)
         position_layout.addRow("岗位名称", self._position_name)
         position_layout.addRow("岗位容量", self._position_capacity)
         position_layout.addRow(self._add_position_btn)
@@ -1140,7 +1153,8 @@ class ActivityPanel(QWidget):
             batch_end = self._batch_end_date.dateTime().toPython()
             interval_text = self._batch_interval.currentText()
             day_of_week_idx = self._batch_day_of_week.currentIndex()
-            daily_start_time = self._batch_start_time.time()
+            # 注意：QTime 需通过 toPython() 转为 datetime.time，否则 datetime.combine 会报错
+            daily_start_time = self._batch_start_time.time().toPython()
             duration_hours = self._batch_duration.value()
             capacity = self._batch_capacity.value()
             position_name = self._batch_position_name.text().strip()
