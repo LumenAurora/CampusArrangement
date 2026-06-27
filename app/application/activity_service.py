@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, Activity, ActivityStatus, ActivityType, CheckInMode, Role, SignupMode, SlotType, TimeSlot, User
+from app.infrastructure.db import transaction
 from app.infrastructure.repositories import ActivityRepository, TimeSlotRepository
 
 
@@ -28,6 +29,7 @@ class ActivityService:
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
         group_id: str | None = None,
+        allow_multiple_slots: bool = False,
     ) -> Activity:
         if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise PermissionDenied("仅组织者或管理员可创建活动")
@@ -35,6 +37,9 @@ class ActivityService:
             raise ValidationError("活动名称不能为空")
         if signup_end <= signup_start:
             raise ValidationError("报名截止时间必须晚于开始时间")
+        # 签到时间合法性校验：若同时设置起止，则截止必须晚于开始
+        if checkin_start is not None and checkin_end is not None and checkin_end <= checkin_start:
+            raise ValidationError("签到截止时间必须晚于开始时间")
         # 校验签到模式
         try:
             checkin_mode_enum = CheckInMode(checkin_mode)
@@ -67,6 +72,7 @@ class ActivityService:
             checkin_start=checkin_start,
             checkin_end=checkin_end,
             group_id=group_id,
+            allow_multiple_slots=allow_multiple_slots,
         )
         self._activity_repo.create(activity)
         return activity
@@ -297,6 +303,13 @@ class ActivityService:
         
         if new_signup_end <= new_signup_start:
             raise ValidationError("新报名截止时间必须晚于开始时间")
+        # 签到时间合法性校验：与 create_activity 保持一致
+        if (
+            new_checkin_start is not None
+            and new_checkin_end is not None
+            and new_checkin_end <= new_checkin_start
+        ):
+            raise ValidationError("签到截止时间必须晚于开始时间")
         
         new_activity = Activity.create(
             name=activity["name"],
@@ -312,20 +325,23 @@ class ActivityService:
             checkin_start=new_checkin_start,
             checkin_end=new_checkin_end,
             group_id=activity.get("group_id"),
+            allow_multiple_slots=bool(activity.get("allow_multiple_slots", 0)),
         )
-        self._activity_repo.create(new_activity)
 
-        slots = self._slot_repo.list_by_activity(activity_id)
-        # 计算时间偏移：统一去除时区信息后再相减，只关心挂钟时间的差值
-        old_start = datetime.fromisoformat(activity["signup_start"])
-        if old_start.tzinfo is not None:
-            old_start = old_start.replace(tzinfo=None)
-        new_start = new_signup_start.replace(tzinfo=None) if new_signup_start.tzinfo is not None else new_signup_start
+        # 读取源活动 slot 在事务外读取不影响一致性（只读），但创建活动+slot 必须原子
+        source_slots = self._slot_repo.list_by_activity(activity_id)
+        # 计算时间偏移：统一转为 UTC-aware 后相减，得到正确的挂钟时间差
+        # naive datetime 视为本地时间，aware datetime 统一到 UTC
+        old_start = datetime.fromisoformat(activity["signup_start"]).astimezone(timezone.utc)
+        new_start = new_signup_start.astimezone(timezone.utc)
         signup_diff = new_start - old_start
 
+        # 预构建所有新 slot（不涉及 DB 写入），随后在单一事务内统一落库
         # 先复制父级 slot，建立 ID 映射
         old_to_new_slot_id: dict[str, str] = {}
-        for slot in slots:
+        new_parent_slots: list[TimeSlot] = []
+        new_child_slots: list[TimeSlot] = []
+        for slot in source_slots:
             if slot.get("parent_slot_id"):
                 continue  # 子岗位在第二轮处理
             slot_type = SlotType(slot.get("slot_type", "time_slot"))
@@ -334,13 +350,9 @@ class ActivityService:
             capacity = slot["capacity"]
 
             if slot_type == SlotType.TIME_SLOT and slot.get("start_time") and slot.get("end_time"):
-                slot_start = datetime.fromisoformat(slot["start_time"])
-                slot_end = datetime.fromisoformat(slot["end_time"])
-                # 去除时区信息以进行挂钟时间偏移
-                if slot_start.tzinfo is not None:
-                    slot_start = slot_start.replace(tzinfo=None)
-                if slot_end.tzinfo is not None:
-                    slot_end = slot_end.replace(tzinfo=None)
+                # 统一转 UTC-aware，保证存储格式与其它路径一致（带 +00:00 后缀）
+                slot_start = datetime.fromisoformat(slot["start_time"]).astimezone(timezone.utc)
+                slot_end = datetime.fromisoformat(slot["end_time"]).astimezone(timezone.utc)
                 new_slot_start = slot_start + signup_diff
                 new_slot_end = slot_end + signup_diff
                 new_slot = TimeSlot.create_time_slot(
@@ -370,11 +382,11 @@ class ActivityService:
                     parent_slot_id=None,
                     metadata=metadata,
                 )
-            self._slot_repo.create(new_slot)
+            new_parent_slots.append(new_slot)
             old_to_new_slot_id[slot["id"]] = new_slot.id
 
         # 复制子岗位
-        for slot in slots:
+        for slot in source_slots:
             if not slot.get("parent_slot_id"):
                 continue
             new_parent_id = old_to_new_slot_id.get(slot["parent_slot_id"])
@@ -383,8 +395,16 @@ class ActivityService:
             new_slot = TimeSlot.create_position(
                 new_activity.id, new_parent_id, slot.get("name", ""), slot["capacity"],
             )
-            self._slot_repo.create(new_slot)
-        
+            new_child_slots.append(new_slot)
+
+        # 单一事务：活动创建与所有 slot 创建原子化，避免中途失败导致数据残缺
+        with transaction() as conn:
+            self._activity_repo.create(new_activity, conn=conn)
+            for new_slot in new_parent_slots:
+                self._slot_repo.create(new_slot, conn=conn)
+            for new_slot in new_child_slots:
+                self._slot_repo.create(new_slot, conn=conn)
+
         return new_activity
 
     def reject_activity(self, user: User, activity_id: str) -> None:
