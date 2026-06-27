@@ -154,6 +154,8 @@ def init_db() -> None:
         _ensure_column(conn, "slots", "parent_slot_id", "parent_slot_id TEXT")
         # 新增：活动小组限制
         _ensure_column(conn, "activities", "group_id", "group_id TEXT")
+        # 新增：小组申请理由，方便管理端审批时参考
+        _ensure_column(conn, "group_members", "reason", "reason TEXT NOT NULL DEFAULT ''")
         # 迁移旧 activity_type 到新模式：scheduling/topic_selection/course_selection/seat_reservation/custom → time_slot/non_time_slot
         _migrate_activity_type(conn)
         conn.commit()

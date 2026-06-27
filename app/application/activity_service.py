@@ -40,8 +40,16 @@ class ActivityService:
             checkin_mode_enum = CheckInMode(checkin_mode)
         except ValueError:
             raise ValidationError(f"无效的签到模式: {checkin_mode}")
+        # 选题模式（NON_TIME_SLOT）语义上无物理到场，禁用位置签到，并清空地点/签到时间，
+        # 避免脏数据落库。前端已联动隐藏相关字段，这里作为后端兜底。
+        if activity_type == ActivityType.NON_TIME_SLOT:
+            if checkin_mode_enum == CheckInMode.LOCATION:
+                raise ValidationError("选题模式不支持位置签到")
+            location = ""
+            checkin_start = None
+            checkin_end = None
         # 位置签到模式必须提供坐标格式的地点
-        if checkin_mode_enum == CheckInMode.LOCATION:
+        elif checkin_mode_enum == CheckInMode.LOCATION:
             location_stripped = location.strip()
             if not location_stripped:
                 raise ValidationError("位置签到模式必须填写活动地点坐标")
