@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -43,6 +44,7 @@ from app.ui.ui_utils import (
     SearchBox,
     StyledComboBox,
     configure_table,
+    configure_tree,
     format_activity_status,
     format_datetime,
     format_slot_name,
@@ -62,7 +64,9 @@ class _CapacityBar(QWidget):
         self._used = used
         self._capacity = capacity
         self.setFixedHeight(22)
-        self.setMinimumWidth(90)
+        # 移除 setMinimumWidth(90)：原值会阻止 _slot_tree 第 7 列在窄窗口下收缩，
+        # 配合 configure_tree 的 Stretch 模式，让 widget 完全自适应容器宽度。
+        self.setMinimumWidth(0)
 
     def paintEvent(self, event):  # noqa: N802
         p = get_palette()
@@ -113,20 +117,17 @@ class ActivityPanel(QWidget):
         # 选项列表改用 TreeWidget 以支持层级展示
         self._slot_tree = QTreeWidget()
         self._slot_tree.setHeaderLabels(["名称", "类型", "开始", "结束", "容量", "已用", "剩余", "使用率"])
-        self._slot_tree.setAlternatingRowColors(True)
         self._slot_tree.setAnimated(True)
         self._slot_tree.setExpandsOnDoubleClick(True)
-        self._slot_tree.setColumnWidth(0, 200)
-        self._slot_tree.setColumnWidth(1, 60)
-        self._slot_tree.setColumnWidth(2, 130)
-        self._slot_tree.setColumnWidth(3, 130)
-        self._slot_tree.setColumnWidth(4, 50)
-        self._slot_tree.setColumnWidth(5, 50)
-        self._slot_tree.setColumnWidth(6, 50)
-        self._slot_tree.setColumnWidth(7, 110)
+        # 关键修复：原代码硬编码 8 列共 780px，窄窗口下必然横向溢出。
+        # 改用 configure_tree 统一配置 Stretch + 禁用横向滚动条，列宽随容器自适应。
+        configure_tree(self._slot_tree)
+        # 名称列稍宽，其余列等比拉伸
+        self._slot_tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
+        self._slot_tree.header().resizeSection(0, 180)
 
         self._activity_selector = StyledComboBox()
-        self._activity_selector.setMinimumWidth(240)
+        self._activity_selector.setMinimumWidth(180)
 
         self._search_box = SearchBox()
         self._search_box.textChanged.connect(self._filter_activities)
@@ -289,7 +290,9 @@ class ActivityPanel(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setMinimumWidth(280)
+        # 降低最小宽度：原 280px 与右侧 tree 软下限 780px 叠加，窗口 <1200px 必然溢出。
+        # 改为 220px，配合 configure_tree 的 Stretch 模式，整体可压缩到 ~700px。
+        left_scroll.setMinimumWidth(220)
         left_scroll.setMaximumWidth(520)
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
@@ -318,9 +321,31 @@ class ActivityPanel(QWidget):
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_slots)
-        self._activity_table.itemSelectionChanged.connect(self._update_status_buttons)
+        # 修复：活动列表选中后自动同步「添加选项」子页面的 _activity_selector，
+        # 原代码仅更新按钮状态，用户需手动到下拉框里再选一次，体验割裂。
+        self._activity_table.itemSelectionChanged.connect(self._on_activity_selection_changed)
         self._activity_table.cellDoubleClicked.connect(self._on_activity_double_clicked)
         self.refresh()
+
+    def _on_activity_selection_changed(self) -> None:
+        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector。
+
+        关键修复：原代码 itemSelectionChanged 只连 _update_status_buttons，
+        导致「添加选项」子页面的活动下拉框不会跟随列表选中变化，
+        用户必须在下拉框里手动再选一次。现在自动同步。
+        """
+        self._update_status_buttons()
+        activity_id, _ = self._get_selected_activity()
+        if not activity_id:
+            return
+        # 避免重复 setCurrentIndex 触发不必要刷新
+        current_id = self._activity_selector.currentData()
+        if current_id == activity_id:
+            return
+        for i in range(self._activity_selector.count()):
+            if self._activity_selector.itemData(i) == activity_id:
+                self._activity_selector.setCurrentIndex(i)
+                break
 
     def _init_activity_form(self) -> None:
         self._activity_name = QLineEdit()
@@ -389,6 +414,37 @@ class ActivityPanel(QWidget):
 
         self._activity_group = QGroupBox("创建活动")
         self._activity_group.setLayout(form)
+
+        # 模式切换联动：选题模式（NON_TIME_SLOT）下隐藏地点/签到相关字段，
+        # 因为选题无需物理到场，签到与坐标无意义。
+        self._activity_type.currentIndexChanged.connect(self._update_activity_form_mode)
+        self._update_activity_form_mode()
+
+    def _update_activity_form_mode(self) -> None:
+        """根据活动模式动态联动创建活动表单字段。
+
+        时段模式：显示全部字段（含地点、签到模式、签到开始/截止）
+        选题模式：隐藏地点与签到相关字段，避免用户填写无效信息。
+        """
+        is_time_slot = self._activity_type.currentData() == ActivityType.TIME_SLOT
+        # 需要联动的字段：(widget, label_row_widget)
+        # QFormLayout 的 label 通过 labelForField 获取
+        form = self._activity_group.layout()
+        fields_to_toggle = [
+            self._location,
+            self._checkin_mode,
+            self._checkin_start,
+            self._checkin_end,
+        ]
+        for widget in fields_to_toggle:
+            label = form.labelForField(widget)
+            if label is not None:
+                label.setVisible(is_time_slot)
+            widget.setVisible(is_time_slot)
+        # 切换到选题模式时清空无关字段，避免脏数据残留
+        if not is_time_slot:
+            self._location.clear()
+            self._checkin_mode.setCurrentIndex(0)  # 重置为手动签到
 
     def _init_slot_form(self) -> None:
         # 根据活动模式动态切换的表单
@@ -964,7 +1020,22 @@ class ActivityPanel(QWidget):
             self._publish_btn.setEnabled(is_super_admin or not is_owner)
             self._reject_btn.setEnabled(not is_owner)
         elif status == "open":
-            self._close_btn.setEnabled(True)
+            # 修复活动状态管理 bug：原代码只要 status==open 就启用「结束报名」，
+            # 但「报名已截止」（signup_end 过期）派生状态下点击结束报名会触发
+            # OPEN→CLOSED 跃迁 + 排班，UI 状态从「报名已截止」直接跳到「签到已结束」，
+            # 语义割裂。改为：报名已截止时禁用「结束报名」（报名已自然截止，无需手动关闭）。
+            activity_id, _ = self._get_selected_activity()
+            derived_status = ""
+            if activity_id:
+                activity = self._service.get_activity(activity_id)
+                if activity:
+                    derived_status = format_activity_status(activity)
+            if derived_status == "报名已截止":
+                self._close_btn.setEnabled(False)
+                self._close_btn.setToolTip("报名已自然截止，无需手动结束报名")
+            else:
+                self._close_btn.setEnabled(True)
+                self._close_btn.setToolTip("")
         elif status == "closed":
             self._archive_btn.setEnabled(True)
 

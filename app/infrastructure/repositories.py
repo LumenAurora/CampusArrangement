@@ -772,7 +772,7 @@ class GroupRepository:
 
     # ── 成员管理 ────────────────────────────────────────────
 
-    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending") -> None:
+    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending", reason: str = "") -> None:
         conn = get_connection()
         try:
             # Use INSERT ... ON CONFLICT to avoid silently demoting approved members.
@@ -786,8 +786,8 @@ class GroupRepository:
                 # Don't demote an approved member via add_member
                 return
             conn.execute(
-                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, ?, ?)",
-                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat()),
+                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat(), reason),
             )
             conn.commit()
         finally:

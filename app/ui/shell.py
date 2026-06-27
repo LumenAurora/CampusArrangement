@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -78,11 +79,19 @@ class NavigationWindow(QMainWindow):
         separator.setFixedHeight(1)
         separator.setStyleSheet(f"background: {p.border_light}; border: none;")
 
-        body_layout = QHBoxLayout()
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(12)
-        body_layout.addWidget(self._nav)
-        body_layout.addWidget(self._stack, 1)
+        # 关键修复：原 body_layout 用 QHBoxLayout，nav 收起只改自身宽度，
+        # 不通知右侧 stack 内页面重排，导致页面内表格仍按原宽度渲染、横向溢出。
+        # 改用 QSplitter，nav 可拖拽收起，且 stack 自动获得释放的空间；
+        # 同时设置 nav 可折叠、stack 不可折叠，避免 stack 被压缩到不可用。
+        body_splitter = QSplitter(Qt.Horizontal)
+        body_splitter.setContentsMargins(0, 0, 0, 0)
+        body_splitter.addWidget(self._nav)
+        body_splitter.addWidget(self._stack)
+        body_splitter.setCollapsible(0, True)
+        body_splitter.setCollapsible(1, False)
+        body_splitter.setStretchFactor(0, 0)
+        body_splitter.setStretchFactor(1, 1)
+        body_splitter.setHandleWidth(6)
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(16, 12, 16, 16)
@@ -90,7 +99,7 @@ class NavigationWindow(QMainWindow):
         root_layout.addWidget(top_bar)
         root_layout.addWidget(separator)
         root_layout.addSpacing(12)
-        root_layout.addLayout(body_layout)
+        root_layout.addWidget(body_splitter)
 
         root = QWidget()
         root.setLayout(root_layout)
@@ -156,8 +165,21 @@ class NavigationWindow(QMainWindow):
         self._anim2.setEndValue(target)
         self._anim2.start()
 
+        # 关键修复：动画结束后触发当前页面重排，让其内的表格/QSplitter
+        # 按 nav 收起后释放的宽度重新计算几何，避免横向溢出/滚动条残留。
+        self._anim2.finished.connect(self._on_sidebar_anim_finished)
+
         # 更新按钮箭头
         self._toggle_btn.setText("☰" if self._nav_expanded else "≫")
+
+    def _on_sidebar_anim_finished(self) -> None:
+        """侧边栏收起/展开动画结束后，通知当前页面重排几何。"""
+        current = self._stack.currentWidget()
+        if current is not None:
+            current.updateGeometry()
+            # 强制触发 layout 重算，确保内部 QSplitter/QTableWidget 重新分配空间
+            if current.layout() is not None:
+                current.layout().activate()
 
     def attach_menus(self, app: QApplication) -> None:
         menu_bar = self.menuBar()
@@ -204,8 +226,22 @@ class NavigationWindow(QMainWindow):
         view_menu.addAction(compact_action)
 
         about_action = QAction("关于", self)
-        about_action.triggered.connect(lambda: self.statusBar().showMessage("Campus Scheduler · 校园报名与排班系统"))
+        about_action.triggered.connect(self._show_about_dialog)
         help_menu.addAction(about_action)
+
+    def _show_about_dialog(self) -> None:
+        """显示关于对话框，介绍应用来源与开源属性。"""
+        from PySide6.QtWidgets import QMessageBox
+        msg = QMessageBox(self)
+        msg.setWindowTitle("关于")
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Campus Scheduler · 校园报名与排班系统")
+        msg.setInformativeText(
+            "Developed by GoF Group\n"
+            "Open Source Application\n\n"
+            "面向校园场景的活动报名、时段排班与签到管理系统。"
+        )
+        msg.exec()
 
     def _apply_default_page(self) -> None:
         if not self._page_keys:

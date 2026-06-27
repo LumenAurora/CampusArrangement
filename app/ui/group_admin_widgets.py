@@ -10,6 +10,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -95,7 +98,9 @@ class GroupAdminPanel(QWidget):
         configure_table(self._group_table)
         self._group_table.setColumnHidden(0, True)
         self._group_table.itemSelectionChanged.connect(self._on_group_selected)
-        layout.addWidget(self._group_table)
+        # 修复「小组列表显示不全」：原 addWidget 无 stretch，表格拿不到垂直空间。
+        # 改为 stretch=1，让表格占据剩余高度。
+        layout.addWidget(self._group_table, 1)
 
         # ── 成员管理 ──────────────────────────────────────
         member_group = QGroupBox("成员管理")
@@ -109,14 +114,18 @@ class GroupAdminPanel(QWidget):
         self._member_label = QLabel("请先选择一个小组")
         self._member_label.setStyleSheet(f"color: {p.text_tertiary};")
         member_layout.addWidget(self._member_label)
-        member_layout.addWidget(self._member_table)
+        # 同样补 stretch=1，让成员表占满成员管理区剩余空间
+        member_layout.addWidget(self._member_table, 1)
 
         # 待审批申请
         pending_group = QGroupBox("待审批申请")
         pending_layout = QVBoxLayout()
-        self._pending_table = QTableWidget(0, 5)
-        self._pending_table.setHorizontalHeaderLabels(["小组", "用户名", "角色", "申请时间", "操作"])
+        # 列数 5 → 6，新增「申请理由」列，方便审批人参考
+        self._pending_table = QTableWidget(0, 6)
+        self._pending_table.setHorizontalHeaderLabels(["小组", "用户名", "角色", "申请时间", "申请理由", "操作"])
         configure_table(self._pending_table)
+        # 限制待审批表最大高度，避免抢走成员表空间
+        self._pending_table.setMaximumHeight(220)
         pending_layout.addWidget(self._pending_table)
         pending_group.setLayout(pending_layout)
 
@@ -176,7 +185,7 @@ class GroupAdminPanel(QWidget):
         pending = self._service.list_pending_applications(self._user)
         self._pending_table.clearSpans()
         if not pending:
-            set_table_empty(self._pending_table, 5, "暂无待审批申请")
+            set_table_empty(self._pending_table, 6, "暂无待审批申请")
             return
         self._pending_table.setRowCount(len(pending))
         for i, app in enumerate(pending):
@@ -184,6 +193,11 @@ class GroupAdminPanel(QWidget):
             self._pending_table.setItem(i, 1, QTableWidgetItem(app.get("username", "-")))
             self._pending_table.setItem(i, 2, QTableWidgetItem(app.get("role", "member")))
             self._pending_table.setItem(i, 3, QTableWidgetItem(app.get("joined_at", "")[:16]))
+            # 新增：申请理由列，空时显示"—"
+            reason = app.get("reason", "") or "—"
+            reason_item = QTableWidgetItem(reason)
+            reason_item.setToolTip(reason)
+            self._pending_table.setItem(i, 4, reason_item)
             btn_widget = QWidget()
             btn_layout = QHBoxLayout()
             btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -196,7 +210,7 @@ class GroupAdminPanel(QWidget):
             btn_layout.addWidget(approve_btn)
             btn_layout.addWidget(reject_btn)
             btn_widget.setLayout(btn_layout)
-            self._pending_table.setCellWidget(i, 4, btn_widget)
+            self._pending_table.setCellWidget(i, 5, btn_widget)
 
     def _create_group(self) -> None:
         try:

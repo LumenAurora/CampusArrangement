@@ -68,8 +68,8 @@ class GroupService:
 
     # ── 成员管理 ──────────────────────────────────────────
 
-    def join_group(self, user_id: str, group_id: str) -> None:
-        """用户申请加入小组"""
+    def join_group(self, user_id: str, group_id: str, reason: str = "") -> None:
+        """用户申请加入小组，可附申请理由供管理端审批参考"""
         group = self._repo.get(group_id)
         if not group:
             raise ValidationError("小组不存在")
@@ -80,10 +80,10 @@ class GroupService:
             if existing["status"] == MemberStatus.PENDING.value:
                 raise ValidationError("您的加入申请正在审核中")
             if existing["status"] == MemberStatus.REJECTED.value:
-                # 允许重新申请
-                self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value)
+                # 允许重新申请，更新理由
+                self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value, reason=reason)
                 return
-        self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value)
+        self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value, reason=reason)
 
     def approve_member(self, user: User, group_id: str, member_user_id: str) -> None:
         """审批通过小组成员申请"""
