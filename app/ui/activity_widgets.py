@@ -822,6 +822,8 @@ class ActivityPanel(QWidget):
             return
         self._activity_table.clearSpans()
         self._activity_table.setRowCount(len(activities))
+        # 保留当前选中的活动 ID，refresh 后恢复选择，避免跳回列表第一个
+        preserved_activity_id = self._activity_selector.currentData()
         self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
         p = get_palette()
@@ -858,10 +860,30 @@ class ActivityPanel(QWidget):
             at = activity.get("activity_type", "time_slot")
             mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
             self._activity_selector.addItem(f"{activity['name']} [{mode_tag}]", activity["id"])
+        # 恢复之前选中的活动，refresh 后用户仍停在原活动上
+        if preserved_activity_id:
+            for i in range(self._activity_selector.count()):
+                if self._activity_selector.itemData(i) == preserved_activity_id:
+                    self._activity_selector.setCurrentIndex(i)
+                    break
         self._activity_selector.blockSignals(False)
+        # 显式触发一次 _load_slots，因为重建期间信号被阻塞，未自动加载
+        self._load_slots()
 
         self._activity_table.setColumnHidden(0, True)
         self._update_status_buttons()
+
+    def _select_activity_by_id(self, activity_id: str) -> None:
+        """在活动选择器中选中指定 ID 的活动并加载其时段。
+
+        用于「创建活动 → 自动聚焦新活动 → 引导添加时段」的分步流程。
+        若选择器中找不到（如被筛选条件排除），则不改动当前选择。
+        """
+        for i in range(self._activity_selector.count()):
+            if self._activity_selector.itemData(i) == activity_id:
+                # setCurrentIndex 会触发 currentIndexChanged → _load_slots
+                self._activity_selector.setCurrentIndex(i)
+                return
 
     def _make_row_actions(self, activity: dict, p) -> QWidget:
         """构建行内操作区：复制 + 更多下拉（详情/删除/归档）。"""
@@ -1097,7 +1119,11 @@ class ActivityPanel(QWidget):
                 allow_multiple_slots=self._allow_multiple_slots.isChecked(),
             )
             self.refresh()
-            set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
+            # 自动聚焦新活动，引导用户继续添加时段/选项
+            self._select_activity_by_id(activity.id)
+            is_time_slot = activity.activity_type == ActivityType.TIME_SLOT
+            next_step = "请在下方继续添加时段" if is_time_slot else "请在下方继续添加选项"
+            set_banner(self._activity_message, "success", f"已创建活动：{activity.name}，{next_step}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._activity_message, "error", str(exc))
 
@@ -1338,7 +1364,19 @@ class ActivityPanel(QWidget):
                     metadata=metadata,
                 )
             self.refresh()
-            set_banner(self._slot_message, "success", "已添加" + ("（含默认岗位）" if auto_position and is_time_slot_mode else ""))
+            # 时段模式下未自动创建岗位时，引导用户继续设置岗位
+            if is_time_slot_mode and not auto_position:
+                set_banner(
+                    self._slot_message,
+                    "success",
+                    "已添加时段，可在列表中选中后于下方「添加岗位」为其设置子岗位",
+                )
+            else:
+                set_banner(
+                    self._slot_message,
+                    "success",
+                    "已添加" + ("（含默认岗位）" if auto_position and is_time_slot_mode else ""),
+                )
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._slot_message, "error", str(exc))
 
