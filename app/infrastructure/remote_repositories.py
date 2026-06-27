@@ -85,6 +85,11 @@ class RemoteActivityRepository:
         # because the API endpoint generates its own code
         self._api.post(f"/activities/{activity_id}/generate_checkin_code", json={})
 
+    def update_checkin_closed(self, activity_id: str, closed: bool) -> None:
+        # 远程模式：通过 close/reopen 端点切换签到关闭状态
+        action = "close" if closed else "reopen"
+        self._api.post(f"/checkin/{activity_id}/{action}", json={})
+
 
 class RemoteTimeSlotRepository:
     def __init__(self, api_client: ApiClient, metrics_cache: MetricsCache) -> None:
@@ -256,3 +261,14 @@ class RemoteUserRepository:
             return self._api.get(f"/users/{user_id}")
         except Exception:
             return None
+
+    def update_avatar(self, user_id: str, avatar_path: str) -> None:
+        # 远程模式头像应通过 POST /users/me/avatar (multipart) 上传；
+        # 此方法保留为占位，避免远程模式下 AttributeError。
+        # 远程头像上传的完整实现在 api_server 的专用端点处理。
+        pass
+
+    def update_notification_mode(self, user_id: str, mode) -> None:
+        # 远程模式：调用 PUT /users/me/settings 更新通知偏好
+        mode_val = mode.value if hasattr(mode, "value") else str(mode)
+        self._api.put("/users/me/settings", json={"notification_mode": mode_val})

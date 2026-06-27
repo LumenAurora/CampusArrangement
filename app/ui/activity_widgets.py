@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -370,6 +371,7 @@ class ActivityPanel(QWidget):
         self._allocation_mode.addItem("志愿优先(贪心)", AllocationMode.GREEDY)
         self._allocation_mode.addItem("先到先得", AllocationMode.FIRST_COME)
         self._allocation_mode.addItem("抽签随机", AllocationMode.LOTTERY)
+        self._allocation_mode.addItem("意愿点（99点高者优先）", AllocationMode.POINTS)
         self._checkin_mode = ModeSelector()
         self._checkin_mode.addItem("手动签到", CheckInMode.MANUAL)
         self._checkin_mode.addItem("二维码签到", CheckInMode.QRCODE)
@@ -389,6 +391,14 @@ class ActivityPanel(QWidget):
         create_btn = QPushButton("创建活动")
         create_btn.setObjectName("primaryButton")
         create_btn.clicked.connect(self._create_activity)
+        # 向导模式入口：保留平铺布局为默认，另提供分步向导作为可选布局
+        wizard_btn = QPushButton("向导模式创建")
+        wizard_btn.setObjectName("secondaryButton")
+        wizard_btn.clicked.connect(self._open_wizard)
+        form_buttons = QHBoxLayout()
+        form_buttons.setSpacing(8)
+        form_buttons.addWidget(create_btn)
+        form_buttons.addWidget(wizard_btn)
 
         form = QFormLayout()
         form.setHorizontalSpacing(12)
@@ -409,7 +419,7 @@ class ActivityPanel(QWidget):
         self._group_selector = StyledComboBox()
         self._group_selector.addItem("公开（全体用户）", None)
         form.addRow("报名范围", self._group_selector)
-        form.addRow(create_btn)
+        form.addRow(form_buttons)
         form.addRow(self._activity_message)
 
         self._activity_group = QGroupBox("创建活动")
@@ -664,6 +674,7 @@ class ActivityPanel(QWidget):
             AllocationMode.GREEDY.value: "志愿优先",
             AllocationMode.FIRST_COME.value: "先到先得",
             AllocationMode.LOTTERY.value: "抽签",
+            AllocationMode.POINTS.value: "意愿点",
         }.get(allocation_mode, "志愿优先")
         data = {
             "ID": str(activity.get("id", "")),
@@ -707,6 +718,7 @@ class ActivityPanel(QWidget):
                 AllocationMode.GREEDY.value: "志愿优先",
                 AllocationMode.FIRST_COME.value: "先到先得",
                 AllocationMode.LOTTERY.value: "抽签",
+                AllocationMode.POINTS.value: "意愿点",
             }.get(allocation_mode, "志愿优先")
             self._activity_table.setItem(row_index, 4, QTableWidgetItem(signup_mode_text))
             self._activity_table.setItem(row_index, 5, QTableWidgetItem(allocation_text))
@@ -855,6 +867,19 @@ class ActivityPanel(QWidget):
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._activity_message, "error", str(exc))
+
+    def _open_wizard(self) -> None:
+        """打开向导式创建活动对话框。
+
+        向导将表单字段分步收集：基本信息 → 报名设置 → 签到设置(可选) → 确认创建。
+        选题模式自动跳过签到设置步骤。
+        """
+        dialog = ActivityWizardDialog(self._service, self._user, self._group_repo, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.refresh()
+            activity = dialog.created_activity
+            if activity:
+                set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
 
     def _delete_activity(self) -> None:
         activity_id, activity_name = self._get_selected_activity()
@@ -1052,6 +1077,7 @@ class ActivityPanel(QWidget):
             AllocationMode.GREEDY.value: "志愿优先",
             AllocationMode.FIRST_COME.value: "先到先得",
             AllocationMode.LOTTERY.value: "抽签",
+            AllocationMode.POINTS.value: "意愿点",
         }.get(allocation_mode, "志愿优先")
         self._detail_allocation_label.setText(allocation_text)
 
@@ -1367,3 +1393,297 @@ class CopyActivityDialog(QDialog):
 
     def get_checkin_end(self) -> datetime | None:
         return self._new_checkin_end.dateTime().toPython()
+
+
+class ActivityWizardDialog(QDialog):
+    """向导式创建活动对话框。
+
+    分步收集活动信息，降低表单视觉密度：
+    Step 1: 基本信息（模式、名称、详情）
+    Step 2: 报名设置（报名开始/截止、名额显示、分配策略、报名范围）
+    Step 3: 签到设置（地点、签到模式、签到开始/截止）— 仅时段模式，选题模式自动跳过
+    Step 4: 确认并创建（汇总信息 + 创建按钮）
+
+    与平铺模式共享同一个 ActivityService.create_activity 调用，
+    两种布局收集的数据完全等价。
+    """
+
+    def __init__(self, activity_service: ActivityService, user: User, group_repo=None, parent=None) -> None:
+        super().__init__(parent)
+        self._service = activity_service
+        self._user = user
+        self._group_repo = group_repo
+        self.created_activity = None
+        self.setWindowTitle("向导式创建活动")
+        self.setMinimumWidth(540)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 20, 24, 20)
+
+        # 步骤指示器
+        self._step_label = QLabel()
+        self._step_label.setObjectName("pageTitle")
+        layout.addWidget(self._step_label)
+
+        # 步骤容器
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._build_step1())
+        self._stack.addWidget(self._build_step2())
+        self._stack.addWidget(self._build_step3())
+        self._stack.addWidget(self._build_step4())
+        layout.addWidget(self._stack, 1)
+
+        # 错误提示
+        self._message = QLabel("")
+        set_banner(self._message, "info", "")
+        layout.addWidget(self._message)
+
+        # 导航按钮
+        nav = QHBoxLayout()
+        nav.addStretch()
+        self._prev_btn = QPushButton("上一步")
+        self._prev_btn.setObjectName("secondaryButton")
+        self._prev_btn.clicked.connect(self._go_prev)
+        self._next_btn = QPushButton("下一步")
+        self._next_btn.setObjectName("primaryButton")
+        self._next_btn.clicked.connect(self._go_next)
+        nav.addWidget(self._prev_btn)
+        nav.addWidget(self._next_btn)
+        layout.addLayout(nav)
+
+        self.setLayout(layout)
+        self._activity_type.currentIndexChanged.connect(self._on_type_changed)
+        self._stack.currentChanged.connect(self._on_step_changed)
+        self._go_step(0)
+
+    def _build_step1(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(12)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        self._activity_type = ModeSelector()
+        self._activity_type.addItem("活动报名（时段模式）", ActivityType.TIME_SLOT)
+        self._activity_type.addItem("选课/选题（非时段模式）", ActivityType.NON_TIME_SLOT)
+
+        self._name = QLineEdit()
+        self._name.setPlaceholderText("例如：志愿服务（图书馆）")
+
+        self._details = QLineEdit()
+        self._details.setPlaceholderText("简要说明活动内容与要求")
+
+        form.addRow("活动模式", self._activity_type)
+        form.addRow("活动名称", self._name)
+        form.addRow("活动详情", self._details)
+        page.setLayout(form)
+        return page
+
+    def _build_step2(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(12)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        self._signup_start = QDateTimeEdit(QDateTime.currentDateTime())
+        self._signup_start.setCalendarPopup(True)
+        self._signup_start.setDisplayFormat("yyyy-MM-dd HH:mm")
+
+        self._signup_end = QDateTimeEdit(QDateTime.currentDateTime().addDays(1))
+        self._signup_end.setCalendarPopup(True)
+        self._signup_end.setDisplayFormat("yyyy-MM-dd HH:mm")
+
+        self._signup_mode = ModeSelector()
+        self._signup_mode.addItem("实时显示名额", SignupMode.REALTIME)
+        self._signup_mode.addItem("非实时显示名额", SignupMode.BLIND)
+
+        self._allocation_mode = ModeSelector()
+        self._allocation_mode.addItem("志愿优先(贪心)", AllocationMode.GREEDY)
+        self._allocation_mode.addItem("先到先得", AllocationMode.FIRST_COME)
+        self._allocation_mode.addItem("抽签随机", AllocationMode.LOTTERY)
+        self._allocation_mode.addItem("意愿点（99点高者优先）", AllocationMode.POINTS)
+
+        self._group_selector = StyledComboBox()
+        self._group_selector.addItem("公开（全体用户）", None)
+        if self._group_repo:
+            for g in self._group_repo.list_all():
+                self._group_selector.addItem(g["name"], g["id"])
+
+        form.addRow("报名开始", self._signup_start)
+        form.addRow("报名截止", self._signup_end)
+        form.addRow("名额显示", self._signup_mode)
+        form.addRow("分配策略", self._allocation_mode)
+        form.addRow("报名范围", self._group_selector)
+        page.setLayout(form)
+        return page
+
+    def _build_step3(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout()
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(12)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        self._location = QLineEdit()
+        self._location.setPlaceholderText("例如：图书馆一楼大厅")
+
+        self._checkin_mode = ModeSelector()
+        self._checkin_mode.addItem("手动签到", CheckInMode.MANUAL)
+        self._checkin_mode.addItem("二维码签到", CheckInMode.QRCODE)
+        self._checkin_mode.addItem("自助签到码", CheckInMode.SELF_CODE)
+        self._checkin_mode.addItem("位置签到", CheckInMode.LOCATION)
+        self._checkin_mode.addItem("拍照签到", CheckInMode.PHOTO)
+
+        self._checkin_start = QDateTimeEdit(QDateTime.currentDateTime())
+        self._checkin_start.setCalendarPopup(True)
+        self._checkin_start.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._checkin_start.setSpecialValueText("不限制")
+
+        self._checkin_end = QDateTimeEdit(QDateTime.currentDateTime().addDays(1))
+        self._checkin_end.setCalendarPopup(True)
+        self._checkin_end.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._checkin_end.setSpecialValueText("不限制")
+
+        form.addRow("地点", self._location)
+        form.addRow("签到模式", self._checkin_mode)
+        form.addRow("签到开始", self._checkin_start)
+        form.addRow("签到截止", self._checkin_end)
+        page.setLayout(form)
+        return page
+
+    def _build_step4(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(8)
+        title = QLabel("请确认以下信息：")
+        p = get_palette()
+        title.setStyleSheet(f"font-weight: 600; color: {p.text_primary}; margin-bottom: 8px;")
+        layout.addWidget(title)
+
+        self._summary_label = QLabel()
+        self._summary_label.setWordWrap(True)
+        self._summary_label.setStyleSheet(
+            f"background: {p.bg_input}; border: 1px solid {p.border_light}; "
+            f"border-radius: 8px; padding: 12px; color: {p.text_secondary};"
+        )
+        layout.addWidget(self._summary_label)
+        layout.addStretch()
+        page.setLayout(layout)
+        return page
+
+    def _is_time_slot(self) -> bool:
+        return self._activity_type.currentData() == ActivityType.TIME_SLOT
+
+    def _on_type_changed(self) -> None:
+        # 选题模式隐藏签到设置步骤的页面内容
+        is_ts = self._is_time_slot()
+        self._stack.widget(2).setVisible(is_ts)
+        # 如果当前停留在被隐藏的签到设置页，自动导航到下一步
+        if not is_ts and self._stack.currentIndex() == 2:
+            self._go_step(3)
+
+    def _on_step_changed(self, index: int) -> None:
+        is_ts = self._is_time_slot()
+        total = 4 if is_ts else 3
+        step_titles = ["基本信息", "报名设置", "签到设置", "确认创建"]
+        # 选题模式跳过签到设置页，步骤编号映射：0→1, 1→2, 3→3
+        if not is_ts and index == 3:
+            display_index = 3
+        elif not is_ts and index == 2:
+            display_index = 3  # 选题模式不应到达此页，设置兜底值
+        else:
+            display_index = index + 1
+        title = step_titles[index] if index < len(step_titles) else ""
+        if not is_ts and index == 3:
+            title = "确认创建"
+        self._step_label.setText(f"第 {display_index}/{total} 步：{title}")
+
+        self._prev_btn.setEnabled(index > 0)
+        if index == self._stack.count() - 1:
+            self._next_btn.setText("创建活动")
+        else:
+            self._next_btn.setText("下一步")
+
+        # 在确认页更新汇总信息
+        if index == self._stack.count() - 1:
+            self._update_summary()
+
+    def _update_summary(self) -> None:
+        is_ts = self._is_time_slot()
+        mode_text = "时段模式" if is_ts else "选题模式"
+        alloc_text = {
+            AllocationMode.GREEDY.value: "志愿优先",
+            AllocationMode.FIRST_COME.value: "先到先得",
+            AllocationMode.LOTTERY.value: "抽签",
+            AllocationMode.POINTS.value: "意愿点",
+        }.get(self._allocation_mode.currentData(), "—")
+        signup_text = "实时" if self._signup_mode.currentData() == SignupMode.REALTIME else "非实时"
+        lines = [
+            f"<b>模式：</b> {mode_text}",
+            f"<b>名称：</b> {self._name.text() or '—'}",
+            f"<b>详情：</b> {self._details.text() or '—'}",
+            f"<b>报名：</b> {self._signup_start.dateTime().toString('yyyy-MM-dd HH:mm')} ~ {self._signup_end.dateTime().toString('yyyy-MM-dd HH:mm')}",
+            f"<b>名额显示：</b> {signup_text}",
+            f"<b>分配策略：</b> {alloc_text}",
+        ]
+        if is_ts:
+            lines.extend([
+                f"<b>地点：</b> {self._location.text() or '—'}",
+                f"<b>签到模式：</b> {self._checkin_mode.currentText()}",
+                f"<b>签到时间：</b> {self._checkin_start.dateTime().toString('yyyy-MM-dd HH:mm')} ~ {self._checkin_end.dateTime().toString('yyyy-MM-dd HH:mm')}",
+            ])
+        self._summary_label.setText("<br>".join(lines))
+
+    def _go_step(self, index: int) -> None:
+        # 选题模式跳过签到设置页（index=2）
+        if not self._is_time_slot() and index == 2:
+            index = 3
+        self._stack.setCurrentIndex(index)
+
+    def _go_next(self) -> None:
+        current = self._stack.currentIndex()
+        if current == self._stack.count() - 1:
+            self._create_activity()
+            return
+        # 跳过选题模式下的签到设置页
+        next_index = current + 1
+        if not self._is_time_slot() and next_index == 2:
+            next_index = 3
+        self._go_step(next_index)
+
+    def _go_prev(self) -> None:
+        current = self._stack.currentIndex()
+        if current == 0:
+            return
+        prev_index = current - 1
+        # 跳过选题模式下的签到设置页
+        if not self._is_time_slot() and prev_index == 2:
+            prev_index = 1
+        self._go_step(prev_index)
+
+    def _create_activity(self) -> None:
+        try:
+            set_banner(self._message, "info", "")
+            is_time_slot = self._is_time_slot()
+            self.created_activity = self._service.create_activity(
+                user=self._user,
+                name=self._name.text().strip(),
+                signup_start=self._signup_start.dateTime().toPython(),
+                signup_end=self._signup_end.dateTime().toPython(),
+                details=self._details.text().strip(),
+                signup_mode=SignupMode(self._signup_mode.currentData()),
+                allocation_mode=AllocationMode(self._allocation_mode.currentData()),
+                location=self._location.text().strip() if is_time_slot else "",
+                activity_type=ActivityType(self._activity_type.currentData()),
+                checkin_mode=self._checkin_mode.currentData() if is_time_slot else CheckInMode.MANUAL.value,
+                checkin_start=self._checkin_start.dateTime().toPython() if is_time_slot else None,
+                checkin_end=self._checkin_end.dateTime().toPython() if is_time_slot else None,
+                group_id=self._group_selector.currentData(),
+            )
+            self.accept()
+        except (PermissionDenied, ValidationError) as exc:
+            set_banner(self._message, "error", str(exc))

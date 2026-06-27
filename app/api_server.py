@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import secrets
+import shutil
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -17,7 +19,7 @@ from app.application.registration_service import RegistrationService
 from app.application.scheduling_service import SchedulingService
 from app.application.user_service import UserService
 from app.domain.exceptions import CapacityExceeded, ConflictError, PermissionDenied, ValidationError
-from app.domain.models import ActivityStatus, ActivityType, AllocationMode, CheckInMode, CheckInStatus, RegistrationStatus, Role, SignupMode, SlotType, User, UserStatus
+from app.domain.models import MAX_POINTS, ActivityStatus, ActivityType, AllocationMode, CheckInMode, CheckInStatus, NotificationMode, RegistrationStatus, Role, SignupMode, SlotType, User, UserStatus
 from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
@@ -115,6 +117,7 @@ class RegistrationRequest(BaseModel):
     activity_id: str
     slot_id: str
     priority: int = Field(..., ge=1)
+    points: int = Field(0, ge=0, le=99)  # 意愿点模式：用户对该志愿分配的点数
 
 
 class ScheduleRunRequest(BaseModel):
@@ -176,7 +179,16 @@ class UnmarkAbsentRequest(BaseModel):
 
 def _to_user(record: dict) -> User:
     return User(id=record["id"], username=record["username"], role=Role(record["role"]),
-                status=UserStatus(record.get("status", "approved")))
+                status=UserStatus(record.get("status", "approved")),
+                avatar_path=record.get("avatar_path", ""),
+                notification_mode=NotificationMode(record.get("notification_mode", "in_app")))
+
+
+def _strip_secrets(record: dict | None) -> dict:
+    """剔除用户记录中的敏感字段（如 password_hash），返回可安全返回给前端的 dict。"""
+    if not record:
+        return {}
+    return {k: v for k, v in record.items() if k != "password_hash"}
 
 
 def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
@@ -231,9 +243,18 @@ def login(payload: LoginRequest) -> dict:
     token = secrets.token_hex(16)
     with _tokens_lock:
         _tokens[token] = (user.id, time.time())
+    # 读取完整用户记录以返回头像与通知偏好
+    record = user_repo.get_by_id(user.id) or {}
     return {
         "token": token,
-        "user": {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value},
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "role": user.role.value,
+            "status": user.status.value,
+            "avatar_path": record.get("avatar_path", ""),
+            "notification_mode": record.get("notification_mode", "in_app"),
+        },
     }
 
 
@@ -315,6 +336,93 @@ def reject_user(user_id: str, current_user: User = Depends(_get_current_user)) -
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     try:
         user_service.reject_user(current_user, user_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True}
+
+
+# 头像存储目录
+_AVATAR_DIR = Path(__file__).resolve().parent.parent / "resources" / "uploads" / "avatars"
+_AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+_ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
+
+
+@app.get("/users/me")
+def get_me(current_user: User = Depends(_get_current_user)) -> dict:
+    """获取当前登录用户的完整信息（含头像与通知偏好）。"""
+    record = user_repo.get_by_id(current_user.id)
+    if not record:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return _strip_secrets(record)
+
+
+class SettingsUpdateRequest(BaseModel):
+    notification_mode: NotificationMode = NotificationMode.IN_APP
+
+
+@app.put("/users/me/settings")
+def update_my_settings(payload: SettingsUpdateRequest, current_user: User = Depends(_get_current_user)) -> dict:
+    """更新当前用户的通知偏好。"""
+    try:
+        user_repo.update_notification_mode(current_user.id, payload.notification_mode.value)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True, "notification_mode": payload.notification_mode.value}
+
+
+@app.post("/users/me/avatar")
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    """上传当前用户头像。保存到 resources/uploads/avatars/{user_id}.{ext}。"""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_AVATAR_EXTS:
+        raise HTTPException(status_code=400, detail=f"不支持的头像格式，仅支持 {', '.join(_ALLOWED_AVATAR_EXTS)}")
+    content = await file.read()
+    if len(content) > _MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail=f"头像大小不能超过 {_MAX_AVATAR_BYTES // 1024}KB")
+    save_path = _AVATAR_DIR / f"{current_user.id}{ext}"
+    save_path.write_bytes(content)
+    # 存相对路径，便于本地/远程统一
+    rel_path = f"avatars/{current_user.id}{ext}"
+    try:
+        user_repo.update_avatar(current_user.id, rel_path)
+    except Exception as exc:
+        # 写库失败时清理已写入的孤儿文件，避免磁盘残留与 DB 不一致
+        try:
+            save_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        _handle_domain_error(exc)
+    # 清理同 user_id 的旧扩展名文件（用户可能从 .png 切换到 .jpg）
+    for old in _AVATAR_DIR.glob(f"{current_user.id}.*"):
+        if old != save_path:
+            try:
+                old.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return {"ok": True, "avatar_path": rel_path}
+
+
+@app.post("/checkin/{activity_id}/close")
+def close_checkin(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    """人工提前结束签到。"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        checkin_service.close_checkin(current_user, activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True}
+
+
+@app.post("/checkin/{activity_id}/reopen")
+def reopen_checkin(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    """恢复签到（撤销人工提前结束）。"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        checkin_service.reopen_checkin(current_user, activity_id)
     except Exception as exc:
         _handle_domain_error(exc)
     return {"ok": True}
@@ -599,6 +707,7 @@ def create_registration(
             activity_id=payload.activity_id,
             slot_id=payload.slot_id,
             priority=payload.priority,
+            points=payload.points,
         )
     except Exception as exc:
         _handle_domain_error(exc)
@@ -608,6 +717,7 @@ def create_registration(
         "activity_id": registration.activity_id,
         "slot_id": registration.slot_id,
         "priority": registration.priority,
+        "points": registration.points,
         "status": registration.status.value,
         "created_at": registration.created_at.isoformat(),
     }

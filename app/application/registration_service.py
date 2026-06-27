@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
-from app.domain.models import ActivityStatus, Registration, RegistrationStatus, SignupMode
+from app.domain.models import AllocationMode, MAX_POINTS, ActivityStatus, Registration, RegistrationStatus, SignupMode
 from app.infrastructure.db import transaction
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, TimeSlotRepository
 
@@ -25,7 +25,7 @@ class RegistrationService:
         self._activity_repo = activity_repo
         self._group_repo = group_repo
 
-    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int) -> Registration:
+    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int, points: int = 0) -> Registration:
         if priority < 1:
             raise ValidationError("志愿优先级必须大于等于1")
         activity = self._activity_repo.get(activity_id)
@@ -33,6 +33,11 @@ class RegistrationService:
             raise ValidationError("活动不存在")
         if activity["status"] != ActivityStatus.OPEN.value:
             raise ValidationError("该活动当前不在报名中")
+        # 意愿点模式：单志愿点数范围校验（不依赖 DB 状态，可放事务外）
+        allocation_mode = AllocationMode(activity.get("allocation_mode", AllocationMode.GREEDY.value))
+        if allocation_mode == AllocationMode.POINTS:
+            if points < 0 or points > MAX_POINTS:
+                raise ValidationError(f"意愿点数必须在 0~{MAX_POINTS} 之间")
         # 校验小组权限：如果活动有小组限制，检查用户是否是成员
         if self._group_repo and activity.get("group_id"):
             if not self._group_repo.is_member(activity["group_id"], user_id):
@@ -63,10 +68,14 @@ class RegistrationService:
             raise ValidationError("您已报名该活动，请勿重复报名")
 
         registration = Registration.create(
-            user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority,
+            user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority, points=points,
         )
         if activity.get("signup_mode") == SignupMode.REALTIME.value:
             with transaction() as conn:
+                # 事务内重新校验意愿点总数，防止 TOCTOU 竞态
+                # BEGIN IMMEDIATE 已串行化写，重新读取保证一致性
+                if allocation_mode == AllocationMode.POINTS:
+                    self._validate_points_total_in_txn(conn, user_id, activity_id, points)
                 # 先取消NOT_ASSIGNED记录
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
@@ -81,10 +90,21 @@ class RegistrationService:
         else:
             # BLIND模式也使用事务保证原子性
             with transaction() as conn:
+                # 事务内重新校验意愿点总数，防止 TOCTOU 竞态
+                if allocation_mode == AllocationMode.POINTS:
+                    self._validate_points_total_in_txn(conn, user_id, activity_id, points)
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
                 self._reg_repo.create(registration, conn=conn)
         return registration
+
+    def _validate_points_total_in_txn(self, conn, user_id: str, activity_id: str, points: int) -> None:
+        """事务内校验意愿点总数。必须在 BEGIN IMMEDIATE 事务内调用以防止竞态。"""
+        txn_existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
+        txn_active = [r for r in txn_existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+        total_used = sum(int(r.get("points", 0)) for r in txn_active) + points
+        if total_used > MAX_POINTS:
+            raise ValidationError(f"意愿点总数超过上限 {MAX_POINTS}（已用 {total_used - points}，本次 {points}）")
 
     def cancel(self, user_id: str, registration_id: str) -> None:
         reg = self._reg_repo.get(registration_id)

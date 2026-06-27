@@ -156,6 +156,13 @@ def init_db() -> None:
         _ensure_column(conn, "activities", "group_id", "group_id TEXT")
         # 新增：小组申请理由，方便管理端审批时参考
         _ensure_column(conn, "group_members", "reason", "reason TEXT NOT NULL DEFAULT ''")
+        # 新增：意愿点模式（用户对每个志愿分配的点数）
+        _ensure_column(conn, "registrations", "points", "points INTEGER NOT NULL DEFAULT 0")
+        # 新增：人工提前结束签到（与 checkin_end 时间独立，可逆）
+        _ensure_column(conn, "activities", "checkin_closed", "checkin_closed INTEGER NOT NULL DEFAULT 0")
+        # 新增：用户头像与通知偏好
+        _ensure_column(conn, "users", "avatar_path", "avatar_path TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "users", "notification_mode", "notification_mode TEXT NOT NULL DEFAULT 'in_app'")
         # 迁移旧 activity_type 到新模式：scheduling/topic_selection/course_selection/seat_reservation/custom → time_slot/non_time_slot
         _migrate_activity_type(conn)
         conn.commit()

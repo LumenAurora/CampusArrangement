@@ -170,6 +170,9 @@ def format_activity_status(activity: dict) -> str:
         return "报名中"
 
     if status == "closed":
+        # 人工提前结束签到：最高优先级，直接返回"签到已结束"
+        if activity.get("checkin_closed"):
+            return "签到已结束"
         now = datetime.now(timezone.utc)
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")

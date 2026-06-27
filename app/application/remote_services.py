@@ -350,6 +350,14 @@ class RemoteCheckInService:
     def list_by_user(self, user_id: str) -> list[dict]:
         return self._api.get("/checkins", params={"user_id": user_id})
 
+    def close_checkin(self, user: User, activity_id: str) -> None:
+        # 远程模式：调用 POST /checkin/{activity_id}/close 人工提前结束签到
+        self._api.post(f"/checkin/{activity_id}/close", json={})
+
+    def reopen_checkin(self, user: User, activity_id: str) -> None:
+        # 远程模式：调用 POST /checkin/{activity_id}/reopen 恢复签到
+        self._api.post(f"/checkin/{activity_id}/reopen", json={})
+
     def self_check_in(self, user_id: str, activity_id: str, slot_id: str, checkin_code: str) -> CheckIn:
         payload = self._api.post(
             "/checkins/self",

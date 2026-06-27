@@ -2,6 +2,8 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
@@ -22,11 +24,20 @@ from app.infrastructure.repositories import (
 
 
 class ScenarioTests(unittest.TestCase):
+    """端到端场景测试 — 每个测试使用独立 DB（通过 patch DB_PATH）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmpdir = tempfile.mkdtemp(prefix="campus_scenario_test_")
+
     def setUp(self) -> None:
-        self._db_path = os.path.join(tempfile.gettempdir(), "campus_scenario.db")
-        os.environ["CAMPUS_DB_PATH"] = self._db_path
+        self._db_path = os.path.join(self._tmpdir, f"{self._testMethodName}.db")
         if os.path.exists(self._db_path):
             os.remove(self._db_path)
+        # patch DB_PATH 避免模块导入时缓存导致的测试间 DB 共享
+        self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(self._db_path))
+        self._db_patcher.start()
+        self.addCleanup(self._db_patcher.stop)
         init_db()
 
         self.user_repo = UserRepository()

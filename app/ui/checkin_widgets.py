@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
 from app.domain.exceptions import ConflictError, PermissionDenied, ValidationError
-from app.domain.models import ActivityStatus, CheckInMode, User
+from app.domain.models import ActivityStatus, CheckInMode, Role, User
 from app.infrastructure.repositories import ScheduleRepository, UserRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
@@ -132,6 +133,17 @@ class CheckInPanel(QWidget):
         self._generate_code_btn.setObjectName("primaryButton")
         self._generate_code_btn.clicked.connect(self._generate_checkin_code)
 
+        # 提前结束签到按钮：仅在签到中显示，人工关闭后隐藏
+        self._close_checkin_btn = QPushButton("提前结束签到")
+        self._close_checkin_btn.setObjectName("dangerButton")
+        self._close_checkin_btn.clicked.connect(self._close_checkin)
+        self._close_checkin_btn.setVisible(False)
+
+        self._reopen_checkin_btn = QPushButton("恢复签到")
+        self._reopen_checkin_btn.setObjectName("secondaryButton")
+        self._reopen_checkin_btn.clicked.connect(self._reopen_checkin)
+        self._reopen_checkin_btn.setVisible(False)
+
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
         btn_layout.addWidget(checkin_btn)
@@ -141,6 +153,8 @@ class CheckInPanel(QWidget):
         btn_layout.addWidget(self._generate_code_btn)
         btn_layout.addWidget(refresh_btn)
         btn_layout.addStretch()
+        btn_layout.addWidget(self._close_checkin_btn)
+        btn_layout.addWidget(self._reopen_checkin_btn)
 
         selector_layout = QHBoxLayout()
         selector_layout.setSpacing(12)
@@ -374,6 +388,27 @@ class CheckInPanel(QWidget):
             self._activity_info_layout.addWidget(pair)
 
         self._activity_info_layout.addStretch()
+
+        # 根据签到状态控制「提前结束签到/恢复签到」按钮可见性
+        # 仅管理员/组织者可见，且仅在签到中/签到已结束时显示对应按钮
+        is_manager = self._user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}
+        if not is_manager:
+            self._close_checkin_btn.setVisible(False)
+            self._reopen_checkin_btn.setVisible(False)
+            return
+        status = activity.get("status", "")
+        checkin_closed = bool(activity.get("checkin_closed"))
+        # 仅在 CLOSED/ARCHIVED 状态（签到阶段）显示
+        in_checkin_phase = status in ("closed", "archived")
+        if not in_checkin_phase:
+            self._close_checkin_btn.setVisible(False)
+            self._reopen_checkin_btn.setVisible(False)
+        elif checkin_closed:
+            self._close_checkin_btn.setVisible(False)
+            self._reopen_checkin_btn.setVisible(True)
+        else:
+            self._close_checkin_btn.setVisible(True)
+            self._reopen_checkin_btn.setVisible(False)
 
     def _load_stats(self, activity_id: str) -> None:
         """Load and display check-in statistics with progress bars and percentages."""
@@ -614,10 +649,51 @@ class CheckInPanel(QWidget):
                 user_id=user_id_item.text(),
                 slot_id=slot_id_item.text(),
             )
-            set_banner(self._message, "success", "已标记缺勤")
-            self._load_results()
-        except (ConflictError, PermissionDenied, ValidationError) as exc:
+        except PermissionDenied as exc:
             set_banner(self._message, "error", str(exc))
+        except ValidationError as exc:
+            set_banner(self._message, "error", str(exc))
+
+    def _close_checkin(self) -> None:
+        """人工提前结束签到。"""
+        activity_id = self._activity_selector.currentData()
+        if not activity_id:
+            set_banner(self._message, "error", "请先选择活动")
+            return
+        reply = QMessageBox.question(
+            self, "提前结束签到",
+            "确定要提前结束签到吗？结束后用户将无法继续签到，可通过「恢复签到」撤销。",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            self._checkin_service.close_checkin(self._user, activity_id)
+            set_banner(self._message, "success", "签到已结束")
+            self._load_results()
+        except PermissionDenied as exc:
+            set_banner(self._message, "error", str(exc))
+        except ValidationError as exc:
+            set_banner(self._message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._message, "error", f"操作失败：{exc}")
+
+    def _reopen_checkin(self) -> None:
+        """恢复签到（撤销人工提前结束）。"""
+        activity_id = self._activity_selector.currentData()
+        if not activity_id:
+            set_banner(self._message, "error", "请先选择活动")
+            return
+        try:
+            self._checkin_service.reopen_checkin(self._user, activity_id)
+            set_banner(self._message, "success", "签到已恢复")
+            self._load_results()
+        except PermissionDenied as exc:
+            set_banner(self._message, "error", str(exc))
+        except ValidationError as exc:
+            set_banner(self._message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._message, "error", f"操作失败：{exc}")
 
     def _unmark_absent(self) -> None:
         try:
