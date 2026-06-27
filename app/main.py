@@ -128,6 +128,9 @@ def main() -> int:
         )
     window.resize(1100, 700)
     window.setMinimumSize(960, 640)
+    # 注入用户上下文：启用顶栏头像显示与账号设置入口
+    # admin_window/client_window 构造函数签名不变，由 main 在构造后注入 user_repo
+    window.set_user_context(login.user, user_repo)
     window.show()
     return app.exec()
 

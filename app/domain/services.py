@@ -31,6 +31,14 @@ def schedule_registrations(
         rng = rng or random.Random()
         sorted_regs = regs[:]
         rng.shuffle(sorted_regs)
+    elif mode == AllocationMode.POINTS:
+        # 意愿点模式：按 points 降序优先，同 points 级别随机抽签（公平）。
+        # 用一次性 shuffle 给每个 reg 一个随机 nonce，再按 (-points, nonce) 排序，
+        # 保证同级别内公平随机，且高 points 严格优先。
+        rng = rng or random.Random()
+        # 先生成随机 nonce，避免在 sort key 里反复调用 rng（不稳定）
+        nonces = {r.id: rng.random() for r in regs}
+        sorted_regs = sorted(regs, key=lambda r: (-r.points, nonces[r.id]))
     else:
         # Lower priority number = higher priority (priority 1 > priority 10)
         sorted_regs = sorted(regs, key=lambda r: (r.priority, r.created_at))

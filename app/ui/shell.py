@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QPropertyAnimation, QSize, Qt, QSettings
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -18,6 +20,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.domain.models import User
+from app.infrastructure.repositories import UserRepository
+from app.ui.account_settings import make_circular_pixmap, make_initial_pixmap
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.style import (
     DENSITY_COMFORTABLE,
@@ -36,12 +41,21 @@ from app.ui.style import (
 NAV_EXPANDED_WIDTH = 200
 NAV_COLLAPSED_WIDTH = 56
 
+# 头像存储根目录：app/resources/uploads/（与 account_settings.py 保持一致）
+_AVATAR_ROOT = Path(__file__).resolve().parent.parent / "resources" / "uploads"
+
 
 class NavigationWindow(QMainWindow):
     def __init__(self, title: str, user_label: str) -> None:
         super().__init__()
         self.setWindowTitle(title)
         self._nav_expanded = True
+
+        # 用户上下文：由 set_user_context 注入，用于顶栏头像与账号设置入口
+        # 初始为 None，避免修改 __init__ 签名破坏 admin_window/client_window 调用方
+        self._user: User | None = None
+        self._user_repo: UserRepository | None = None
+        self._user_label_text: str = user_label
 
         # 恢复窗口几何信息
         settings = QSettings("CampusScheduler", "CampusScheduler")
@@ -313,10 +327,25 @@ class NavigationWindow(QMainWindow):
         title_col.addWidget(subtitle)
         layout.addLayout(title_col, 1)
 
-        # 右侧：用户标签 + 登出按钮
+        # 右侧：头像 + 用户标签 + 登出按钮
         p = get_palette()
+        # 头像 QLabel（32x32，点击打开账号设置）
+        # 初始用 user_label 首字母做占位，set_user_context 注入后刷新为真实头像
+        self._avatar_label = QLabel()
+        self._avatar_label.setFixedSize(32, 32)
+        self._avatar_label.setCursor(Qt.PointingHandCursor)
+        self._avatar_label.setToolTip("点击打开账号设置")
+        initial = user_label[:1] if user_label else "?"
+        self._avatar_label.setPixmap(make_initial_pixmap(initial, 32, p.accent, p.text_on_accent))
+        # QLabel 默认不响应点击，通过重写 mousePressEvent 实现点击
+        self._avatar_label.mousePressEvent = lambda event: self._open_account_settings()
+        layout.addWidget(self._avatar_label)
+
         user = QLabel(user_label)
         user.setObjectName("userBadge")
+        user.setCursor(Qt.PointingHandCursor)
+        user.setToolTip("点击打开账号设置")
+        user.mousePressEvent = lambda event: self._open_account_settings()
         layout.addWidget(user)
 
         logout_btn = QPushButton("登出")
@@ -347,3 +376,45 @@ class NavigationWindow(QMainWindow):
 
         bar.setLayout(layout)
         return bar
+
+    def set_user_context(self, user: User, user_repo: UserRepository) -> None:
+        """注入用户上下文，启用顶栏头像与账号设置入口。
+
+        由于 __init__ 仅接收 user_label: str，无法直接获取 User/UserRepository，
+        由 admin_window/client_window 在构造后调用此方法注入上下文，
+        避免修改 __init__ 签名破坏调用方。
+        """
+        self._user = user
+        self._user_repo = user_repo
+        self._refresh_topbar_avatar()
+
+    def _refresh_topbar_avatar(self) -> None:
+        """根据当前用户上下文刷新顶栏头像显示。"""
+        if not self._user or not self._user_repo:
+            return
+        try:
+            record = self._user_repo.get_by_id(self._user.id)
+            avatar_path = record.get("avatar_path", "") if record else ""
+        except Exception:
+            avatar_path = ""
+        p = get_palette()
+        if avatar_path:
+            # 拼接 app/resources/uploads/ 前缀加载图片
+            full = _AVATAR_ROOT / avatar_path
+            pix = QPixmap(str(full))
+            if not pix.isNull():
+                self._avatar_label.setPixmap(make_circular_pixmap(pix, 32))
+                return
+        # 无头像或加载失败：用用户名首字母做圆形占位（背景色 accent）
+        initial = self._user.username[:1] if self._user.username else "?"
+        self._avatar_label.setPixmap(make_initial_pixmap(initial, 32, p.accent, p.text_on_accent))
+
+    def _open_account_settings(self) -> None:
+        """打开账号设置对话框。"""
+        if not self._user or not self._user_repo:
+            return
+        from app.ui.account_settings import AccountSettingsDialog
+        dialog = AccountSettingsDialog(self._user, self._user_repo, self)
+        dialog.exec()
+        # 对话框关闭后刷新顶栏头像（用户可能上传了新头像或修改了偏好）
+        self._refresh_topbar_avatar()
