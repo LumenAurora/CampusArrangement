@@ -101,12 +101,14 @@ class RegistrationService:
             raise ValidationError("报名已结束，如需取消请联系组织者请假")
         if activity and activity["status"] == ActivityStatus.ARCHIVED.value:
             raise ValidationError("已归档的活动无法取消报名")
-        # Only release the slot if the registration is PENDING in realtime mode.
-        # NOT_ASSIGNED registrations should NOT release the slot because
-        # SchedulingService.run already recalculated used_count based on
-        # actual assignments, and NOT_ASSIGNED users are not counted.
+        # Release the slot for REALTIME mode registrations that actually occupy capacity.
+        # PENDING registrations in REALTIME mode locked a slot on creation.
+        # CONFIRMED registrations also occupy a slot (they are excluded from rescheduling).
+        # NOT_ASSIGNED registrations do NOT occupy a slot — SchedulingService.run
+        # recalculates used_count based on actual assignments, so NOT_ASSIGNED users
+        # are not counted and must not trigger a release.
         if (activity and activity.get("signup_mode") == SignupMode.REALTIME.value
-                and reg["status"] == RegistrationStatus.PENDING.value):
+                and reg["status"] in (RegistrationStatus.PENDING.value, RegistrationStatus.CONFIRMED.value)):
             with transaction() as conn:
                 self._slot_repo.release_slot(reg["slot_id"], conn=conn)
                 self._reg_repo.update_status(registration_id, RegistrationStatus.CANCELLED, conn=conn)

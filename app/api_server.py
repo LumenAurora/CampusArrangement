@@ -32,9 +32,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Campus Scheduler API", version="1.0")
 
+import os
+_allowed_origins = os.environ.get("CAMPUS_CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,9 +62,11 @@ _TOKEN_TTL = 86400
 
 
 def _ensure_admin() -> None:
+    import os
     if user_repo.get_by_username("admin"):
         return
-    user_service.register(current_user=None, username="admin", password="admin", role=Role.SUPER_ADMIN)
+    admin_password = os.environ.get("CAMPUS_ADMIN_PASSWORD", "admin")
+    user_service.register(current_user=None, username="admin", password=admin_password, role=Role.SUPER_ADMIN)
 
 
 _ensure_admin()
@@ -261,6 +265,9 @@ def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> d
 @app.post("/users")
 def create_user(payload: UserCreateRequest, current_user: User = Depends(_get_current_user)) -> dict:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    # ORGANIZER cannot create SUPER_ADMIN users
+    if current_user.role == Role.ORGANIZER and payload.role == Role.SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="组织者无权创建超级管理员")
     try:
         user = user_service.register(current_user=current_user, username=payload.username, password=payload.password, role=payload.role)
     except Exception as exc:
@@ -439,8 +446,8 @@ def update_activity_status(
                 logger.warning(f"Auto-scheduling failed for activity {activity_id}: {e}")
                 try:
                     activity_service.reopen_activity(user=current_user, activity_id=activity_id)
-                except Exception:
-                    pass
+                except Exception as reopen_err:
+                    logger.error(f"Failed to reopen activity {activity_id} after scheduling failure: {reopen_err}")
                 raise ValidationError(f"排班失败，活动已重新开放：{e}") from e
         elif payload.action == "reopen":
             activity_service.reopen_activity(user=current_user, activity_id=activity_id)
@@ -581,10 +588,13 @@ def list_registrations(
 
 
 @app.get("/registrations/{registration_id}")
-def get_registration(registration_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_registration(registration_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     reg = reg_repo.get(registration_id)
     if not reg:
         raise HTTPException(status_code=404, detail="报名记录不存在")
+    # Only the owner or admin/organizer can view registration details
+    if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and reg.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="权限不足")
     return reg
 
 
@@ -642,6 +652,11 @@ def list_schedules(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
+        # Non-admin users can only view schedules for activities they participate in
+        if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+            user_schedules = schedule_repo.list_by_user(current_user.id)
+            if not any(s["activity_id"] == activity_id for s in user_schedules):
+                raise HTTPException(status_code=403, detail="权限不足")
         return schedule_repo.list_by_activity(activity_id)
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:

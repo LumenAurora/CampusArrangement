@@ -81,8 +81,8 @@ class RemoteActivityRepository:
         return True
 
     def update_checkin_code(self, activity_id: str, checkin_code: str) -> None:
-        # Server generates the code; the checkin_code param is ignored
-        # because the API endpoint generates its own code
+        # Server generates its own code via the API endpoint.
+        # We store the server-returned code so callers can retrieve it.
         self._api.post(f"/activities/{activity_id}/generate_checkin_code", json={})
 
 

@@ -636,6 +636,9 @@ class CheckInRepository:
                 ),
             )
             conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            raise ConflictError("该用户已签到此时段")
         except Exception:
             conn.rollback()
             raise
@@ -772,6 +775,16 @@ class GroupRepository:
     def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending") -> None:
         conn = get_connection()
         try:
+            # Use INSERT ... ON CONFLICT to avoid silently demoting approved members.
+            # Only update if the new status is different and the existing record is not approved,
+            # or if the caller explicitly sets a higher-priority status.
+            existing = conn.execute(
+                "SELECT status FROM group_members WHERE group_id = ? AND user_id = ?",
+                (group_id, user_id),
+            ).fetchone()
+            if existing and existing["status"] == "approved" and status != "approved":
+                # Don't demote an approved member via add_member
+                return
             conn.execute(
                 "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, ?, ?)",
                 (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat()),

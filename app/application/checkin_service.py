@@ -112,6 +112,9 @@ class CheckInService:
         """取消缺勤标记，恢复为已签到"""
         if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise ValidationError("仅管理员或组织者可取消缺勤标记")
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if not existing:
             raise ValidationError("该用户无签到记录")
@@ -156,16 +159,19 @@ class CheckInService:
         self._validate_checkin_allowed(activity)
         # 验证位置距离
         location_str = activity.get("location", "")
-        if location_str and "," in location_str:
-            try:
-                parts = location_str.split(",")
-                act_lat = float(parts[0].strip())
-                act_lon = float(parts[1].strip())
-                distance = _haversine_km(act_lat, act_lon, latitude, longitude)
-                if distance * 1000 > _DEFAULT_MAX_DISTANCE_M:
-                    raise ValidationError(f"您距离活动地点过远（{distance * 1000:.0f}米），无法签到")
-            except (ValueError, IndexError):
-                pass  # 如果location格式不是坐标，跳过距离校验
+        if not location_str:
+            raise ValidationError("活动未设置地点坐标，无法进行位置签到")
+        if "," not in location_str:
+            raise ValidationError("活动地点格式不是坐标，无法进行位置签到")
+        try:
+            parts = location_str.split(",")
+            act_lat = float(parts[0].strip())
+            act_lon = float(parts[1].strip())
+        except (ValueError, IndexError):
+            raise ValidationError("活动地点坐标格式无效，应为：纬度,经度")
+        distance = _haversine_km(act_lat, act_lon, latitude, longitude)
+        if distance * 1000 > _DEFAULT_MAX_DISTANCE_M:
+            raise ValidationError(f"您距离活动地点过远（{distance * 1000:.0f}米），无法签到")
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if existing:
             raise ConflictError("您已签到此时段")
@@ -219,6 +225,12 @@ class CheckInService:
             raise ValidationError("该活动签到模式不支持生成签到码")
         code = secrets.token_hex(4).upper()
         self._activity_repo.update_checkin_code(activity_id, code)
+        # Re-read the activity to get the actual stored code.
+        # In remote mode, the server generates its own code and ignores
+        # the one we passed in, so we must return the server's version.
+        updated = self._activity_repo.get(activity_id)
+        if updated and updated.get("checkin_code"):
+            return updated["checkin_code"]
         return code
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
@@ -237,7 +249,16 @@ class CheckInService:
         total_assigned = len(results)
         checked_in = sum(1 for c in checkins if c["status"] == CheckInStatus.CHECKED_IN.value)
         absent = sum(1 for c in checkins if c["status"] == CheckInStatus.ABSENT.value)
-        not_checked_in = max(0, total_assigned - checked_in - absent)
+        raw_not_checked_in = total_assigned - checked_in - absent
+        if raw_not_checked_in < 0:
+            # Data inconsistency: more checkins/absences than assignments
+            # Log the discrepancy but still report 0 to avoid negative UI values
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Checkin stats inconsistency for activity {activity_id}: "
+                f"total_assigned={total_assigned}, checked_in={checked_in}, absent={absent}"
+            )
+        not_checked_in = max(0, raw_not_checked_in)
         # 按时段统计
         slot_stats: dict[str, dict] = {}
         for r in results:

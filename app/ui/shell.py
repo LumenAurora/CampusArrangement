@@ -298,7 +298,15 @@ class NavigationWindow(QMainWindow):
             f" border-color: {p.error_fg};"
             f"}}"
         )
-        logout_btn.clicked.connect(self.close)
+        def _logout():
+            # Clear remote token if available
+            try:
+                if hasattr(self, '_api_client') and self._api_client:
+                    self._api_client.set_token("")
+            except Exception:
+                pass
+            self.close()
+        logout_btn.clicked.connect(_logout)
         layout.addWidget(logout_btn)
 
         bar.setLayout(layout)
