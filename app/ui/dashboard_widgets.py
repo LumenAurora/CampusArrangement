@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from app.domain.models import ActivityStatus, User
 from app.infrastructure.repositories import (
@@ -16,6 +26,11 @@ from app.ui.ui_utils import format_activity_status, to_utc
 
 
 class DashboardPanel(QWidget):
+    """概览面板：分为「当前信息」与「历史统计」两个选项卡。
+
+    当前信息 tab 聚焦当下研判（报名中/待排班/待签到等），历史统计 tab 收纳全量计数。
+    """
+
     def __init__(
         self,
         user: User,
@@ -31,41 +46,138 @@ class DashboardPanel(QWidget):
         self._reg_repo = reg_repo
         self._schedule_repo = schedule_repo
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        root = QVBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(12)
 
         header = QLabel("概览")
         header.setObjectName("pageTitle")
-        layout.addWidget(header)
+        root.addWidget(header)
 
-        desc = QLabel("关键指标与最新动态")
+        self._tabs = QTabWidget()
+        p = get_palette()
+        self._tabs.setStyleSheet(f"""
+            QTabWidget::pane {{ border: none; background: transparent; }}
+            QTabBar::tab {{
+                background: {p.btn_secondary_bg}; color: {p.btn_secondary_fg};
+                border: none; border-radius: 8px; padding: 8px 20px;
+                margin: 2px; font-weight: 600; font-size: 12px;
+            }}
+            QTabBar::tab:selected {{
+                background: {p.accent}; color: {p.text_on_accent};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: {p.btn_secondary_hover};
+            }}
+        """)
+
+        # —— Tab 1：当前信息 ——
+        self._current_page = self._build_current_page()
+        self._tabs.addTab(self._current_page, "当前信息")
+
+        # —— Tab 2：历史统计 ——
+        self._history_page = self._build_history_page()
+        self._tabs.addTab(self._history_page, "历史统计")
+
+        root.addWidget(self._tabs, 1)
+        self.setLayout(root)
+
+        self.refresh()
+
+    # ── 页面构建 ──────────────────────────────────────────────
+
+    def _build_current_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(16)
+
+        desc = QLabel("当前活动与待办研判")
         desc.setObjectName("pageSubtitle")
         layout.addWidget(desc)
 
-        layout.addSpacing(8)
+        self._current_grid = QGridLayout()
+        self._current_grid.setHorizontalSpacing(16)
+        self._current_grid.setVerticalSpacing(16)
+        layout.addLayout(self._current_grid)
 
-        self._grid = QGridLayout()
-        self._grid.setHorizontalSpacing(16)
-        self._grid.setVerticalSpacing(16)
-        layout.addLayout(self._grid)
-
-        self._section_container = QVBoxLayout()
-        self._section_container.setSpacing(24)
-        layout.addLayout(self._section_container)
-
+        self._current_section = QVBoxLayout()
+        self._current_section.setSpacing(24)
+        layout.addLayout(self._current_section)
         layout.addStretch(1)
-        self.setLayout(layout)
 
-        self.refresh()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        inner.setLayout(layout)
+        scroll.setWidget(inner)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        page.setLayout(outer)
+        return page
+
+    def _build_history_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(16)
+
+        desc = QLabel("历史全量统计")
+        desc.setObjectName("pageSubtitle")
+        layout.addWidget(desc)
+
+        self._history_grid = QGridLayout()
+        self._history_grid.setHorizontalSpacing(16)
+        self._history_grid.setVerticalSpacing(16)
+        layout.addLayout(self._history_grid)
+
+        self._history_section = QVBoxLayout()
+        self._history_section.setSpacing(24)
+        layout.addLayout(self._history_section)
+        layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        inner.setLayout(layout)
+        scroll.setWidget(inner)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        page.setLayout(outer)
+        return page
 
     # ── data helpers ──────────────────────────────────────────
 
     def _is_admin(self) -> bool:
         return self._user.role.value in {"super_admin", "organizer"}
 
-    def _stat_cards_data(self) -> list[tuple[str, int, str]]:
-        """Return (label, value, accent_color_key) tuples."""
+    def _current_stat_cards_data(self) -> list[tuple[str, int, str]]:
+        """当前信息 tab 的卡片数据，聚焦当下研判。"""
+        p = get_palette()
+        if self._is_admin():
+            # 管理端：活动生命周期分布
+            return [
+                ("报名中活动", self._count_open_active_activities(), "success_fg"),
+                ("待排班活动", self._count_by_status(ActivityStatus.CLOSED), "warning_fg"),
+                ("已归档活动", self._count_by_status(ActivityStatus.ARCHIVED), "text_tertiary"),
+                ("当前可报名时段", self._count_upcoming_open_slots(), "accent"),
+            ]
+        # 学生端：待办提醒
+        return [
+            ("可报名活动", self._count_open_active_activities(), "accent"),
+            ("我的待办报名", self._count_my_active_registrations(), "success_fg"),
+            ("待签到排班", self._count_upcoming_schedules(), "warning_fg"),
+            ("待签到时段", self._count_upcoming_open_slots(), "error_fg"),
+        ]
+
+    def _history_stat_cards_data(self) -> list[tuple[str, int, str]]:
+        """历史统计 tab 的卡片数据，全量计数。"""
         p = get_palette()
         if self._is_admin():
             return [
@@ -75,19 +187,21 @@ class DashboardPanel(QWidget):
                 ("排班结果", self._schedule_repo.count_all(), "error_fg"),
             ]
         return [
-            ("可报名活动", self._count_open_active_activities(), "accent"),
-            ("我的报名", self._reg_repo.count_by_user(self._user.id), "success_fg"),
-            ("待签到排班", self._count_upcoming_schedules(), "warning_fg"),
-            ("待签到时段", self._count_upcoming_open_slots(), "error_fg"),
+            ("我的历史报名", self._reg_repo.count_by_user(self._user.id), "accent"),
+            ("已结束排班", self._count_history_schedules(), "text_tertiary"),
         ]
 
-    # ── 学生端统计：仅统计当前有效（未过期）的项 ──────────────
+    # ── 统计计算 ──────────────────────────────────────────────
+
+    def _count_by_status(self, status: ActivityStatus) -> int:
+        """按活动状态计数（带异常兜底）。"""
+        try:
+            return self._activity_repo.count_by_status(status)
+        except Exception:
+            return 0
 
     def _count_open_active_activities(self) -> int:
-        """统计当前可报名（status=open 且 signup_end 未过期）的活动数。
-
-        修复 bug：原 count_by_status(OPEN) 把报名已截止但状态未变更的活动也算进去了。
-        """
+        """统计当前可报名（status=open 且 signup_end 未过期）的活动数。"""
         try:
             rows = self._activity_repo.list_by_status(ActivityStatus.OPEN)
         except Exception:
@@ -99,18 +213,14 @@ class DashboardPanel(QWidget):
             if not signup_end:
                 continue
             try:
-                end_dt = to_utc(signup_end)
-                if end_dt >= now:
+                if to_utc(signup_end) >= now:
                     count += 1
             except (ValueError, TypeError):
                 continue
         return count
 
     def _count_upcoming_schedules(self) -> int:
-        """统计尚未结束的排班数（slot.end_time > now）。
-
-        修复 bug：原 count_by_user 把历史排班也算进去了，作为待办提醒应只算未结束的。
-        """
+        """统计尚未结束的排班数（slot.end_time > now）。"""
         try:
             rows = self._schedule_repo.list_by_user(self._user.id)
         except Exception:
@@ -125,24 +235,41 @@ class DashboardPanel(QWidget):
             if not end:
                 continue
             try:
-                end_dt = to_utc(end)
-                if end_dt >= now:
+                if to_utc(end) >= now:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count
+
+    def _count_history_schedules(self) -> int:
+        """统计已结束的排班数（slot.end_time < now），用于历史统计。"""
+        try:
+            rows = self._schedule_repo.list_by_user(self._user.id)
+        except Exception:
+            return 0
+        now = datetime.now(timezone.utc)
+        count = 0
+        for row in rows:
+            slot = self._slot_repo.get(row.get("slot_id", ""))
+            if not slot:
+                continue
+            end = slot.get("end_time", "")
+            if not end:
+                continue
+            try:
+                if to_utc(end) < now:
                     count += 1
             except (ValueError, TypeError):
                 continue
         return count
 
     def _count_upcoming_open_slots(self) -> int:
-        """统计报名中活动里尚未结束的时段数（slot.end_time > now）。
-
-        修复 bug：原 count_by_activity_status(OPEN) 把历史时段也算进去了。
-        """
+        """统计报名中活动里尚未结束的时段数。"""
         try:
             activities = self._activity_repo.list_by_status(ActivityStatus.OPEN)
         except Exception:
             return 0
         now = datetime.now(timezone.utc)
-        # 限定为当前可报名的活动（避免把已截止的活动时段算进去）
         active_ids: list[str] = []
         for act in activities:
             signup_end = act.get("signup_end", "")
@@ -170,20 +297,38 @@ class DashboardPanel(QWidget):
                     continue
         return count
 
+    def _count_my_active_registrations(self) -> int:
+        """统计当前/未来活动下的非取消报名数（作为待办提醒）。
+
+        已归档活动的报名不计入待办。
+        """
+        try:
+            regs = self._reg_repo.list_by_user(self._user.id)
+        except Exception:
+            return 0
+        count = 0
+        for reg in regs:
+            if reg.get("status") == "cancelled":
+                continue
+            activity = self._activity_repo.get(reg.get("activity_id", ""))
+            if not activity:
+                continue
+            # 已归档活动视为历史，不计入待办
+            if activity.get("status") == ActivityStatus.ARCHIVED.value:
+                continue
+            count += 1
+        return count
+
     def _recent_activities(self) -> list[dict]:
-        """Latest 5 activities with status info."""
+        """最近活动：admin 看全部，student 仅看报名中。"""
         if self._is_admin():
             rows = self._activity_repo.list_all()
         else:
             rows = self._activity_repo.list_by_status(ActivityStatus.OPEN)
         return rows[:5]
 
-    def _recent_registrations_count(self) -> int:
-        """For admin/organizer: count of registrations in the last 7 days."""
-        return self._reg_repo.count_all()
-
     def _upcoming_schedules(self) -> list[dict]:
-        """For regular users: next 3 schedule results with slot info."""
+        """学生端：未来 3 条排班作为待办提醒。"""
         rows = self._schedule_repo.list_by_user(self._user.id)
         now = datetime.now(timezone.utc)
         upcoming = []
@@ -193,8 +338,7 @@ class DashboardPanel(QWidget):
                 end = slot.get("end_time", "")
                 if end:
                     try:
-                        end_dt = to_utc(end)
-                        if end_dt >= now:
+                        if to_utc(end) >= now:
                             upcoming.append({**row, "_slot": slot})
                     except (ValueError, TypeError):
                         pass
@@ -204,45 +348,48 @@ class DashboardPanel(QWidget):
     # ── build / refresh ───────────────────────────────────────
 
     def refresh(self) -> None:
-        self._refresh_stat_cards()
-        self._refresh_sections()
+        self._refresh_current_tab()
+        self._refresh_history_tab()
 
-    def _clear_layout(self, layout: QVBoxLayout | QGridLayout) -> None:
+    def _clear_layout(self, layout) -> None:
         for i in reversed(range(layout.count())):
             item = layout.itemAt(i)
             if item and item.widget():
                 item.widget().setParent(None)
 
-    def _refresh_stat_cards(self) -> None:
-        self._clear_layout(self._grid)
+    def _refresh_current_tab(self) -> None:
+        self._clear_layout(self._current_grid)
         p = get_palette()
-        for index, (label, value, color_key) in enumerate(self._stat_cards_data()):
+        for index, (label, value, color_key) in enumerate(self._current_stat_cards_data()):
             color = getattr(p, color_key, p.accent)
             card = _StatCard(label, value, color)
             row, col = divmod(index, 2)
-            self._grid.addWidget(card, row, col)
+            self._current_grid.addWidget(card, row, col)
 
-    def _refresh_sections(self) -> None:
-        self._clear_layout(self._section_container)
-        p = get_palette()
-
-        # ── Recent Activities ─────────────────────────────────
+        self._clear_layout(self._current_section)
+        # 最近活动
         recent = self._recent_activities()
         if recent:
-            section = self._build_recent_activities_section(recent, p)
-            self._section_container.addWidget(section)
-
-        # ── Admin: recent registrations count ─────────────────
-        if self._is_admin():
-            reg_count = self._recent_registrations_count()
-            reg_section = self._build_registrations_summary(reg_count, p)
-            self._section_container.addWidget(reg_section)
-
-        # ── Regular user: upcoming schedules ──────────────────
+            self._current_section.addWidget(self._build_recent_activities_section(recent, p))
+        # 学生端：即将到来的排班（待办提醒）
         if not self._is_admin():
             upcoming = self._upcoming_schedules()
-            sched_section = self._build_upcoming_schedules_section(upcoming, p)
-            self._section_container.addWidget(sched_section)
+            self._current_section.addWidget(self._build_upcoming_schedules_section(upcoming, p))
+
+    def _refresh_history_tab(self) -> None:
+        self._clear_layout(self._history_grid)
+        p = get_palette()
+        for index, (label, value, color_key) in enumerate(self._history_stat_cards_data()):
+            color = getattr(p, color_key, p.accent)
+            card = _StatCard(label, value, color)
+            row, col = divmod(index, 2)
+            self._history_grid.addWidget(card, row, col)
+
+        self._clear_layout(self._history_section)
+        # 管理端：历史报名总数概览
+        if self._is_admin():
+            count = self._reg_repo.count_all()
+            self._history_section.addWidget(self._build_registrations_summary(count, p))
 
     # ── section builders ──────────────────────────────────────
 
@@ -272,9 +419,9 @@ class DashboardPanel(QWidget):
             "archived": p.text_tertiary,
             "签到未开始": p.accent,
             "签到中": p.success_fg,
-            "签到已结束": p.error_fg,
+            "签到已结束": p.text_tertiary,
             "报名未开始": p.accent,
-            "报名已截止": p.error_fg,
+            "报名已截止": p.text_tertiary,
         }
 
         for act in activities:
@@ -304,7 +451,6 @@ class DashboardPanel(QWidget):
 
             row_lay.addStretch(1)
 
-            status_text = format_activity_status(act)
             badge = QLabel(status_text)
             badge.setStyleSheet(f"""
                 color: {color};
@@ -356,11 +502,11 @@ class DashboardPanel(QWidget):
         text_lay = QVBoxLayout()
         text_lay.setSpacing(2)
 
-        title = QLabel("报名统计")
+        title = QLabel("历史报名总数")
         title.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {p.text_primary}; border: none;")
         text_lay.addWidget(title)
 
-        detail = QLabel(f"当前有效报名共 {count} 条")
+        detail = QLabel(f"累计报名记录共 {count} 条（含历史活动）")
         detail.setStyleSheet(f"font-size: 12px; color: {p.text_secondary}; border: none;")
         text_lay.addWidget(detail)
 
