@@ -424,6 +424,8 @@ def duplicate_activity(
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
         "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+        "group_id": activity.group_id,
+        "allow_multiple_slots": activity.allow_multiple_slots,
     }
 
 

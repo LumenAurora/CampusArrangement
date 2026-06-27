@@ -159,7 +159,6 @@ class DashboardPanel(QWidget):
 
     def _current_stat_cards_data(self) -> list[tuple[str, int, str]]:
         """当前信息 tab 的卡片数据，聚焦当下研判。"""
-        p = get_palette()
         if self._is_admin():
             # 管理端：活动生命周期分布
             return [
@@ -173,23 +172,29 @@ class DashboardPanel(QWidget):
             ("可报名活动", self._count_open_active_activities(), "accent"),
             ("我的待办报名", self._count_my_active_registrations(), "success_fg"),
             ("待签到排班", self._count_upcoming_schedules(), "warning_fg"),
-            ("待签到时段", self._count_upcoming_open_slots(), "error_fg"),
+            ("可报名时段", self._count_upcoming_open_slots(), "error_fg"),
         ]
 
     def _history_stat_cards_data(self) -> list[tuple[str, int, str]]:
         """历史统计 tab 的卡片数据，全量计数。"""
-        p = get_palette()
         if self._is_admin():
             return [
-                ("活动总数", self._activity_repo.count_all(), "accent"),
-                ("时段总数", self._slot_repo.count_all(), "success_fg"),
-                ("报名总数", self._reg_repo.count_all(), "warning_fg"),
-                ("排班结果", self._schedule_repo.count_all(), "error_fg"),
+                ("活动总数", self._safe_count(self._activity_repo.count_all), "accent"),
+                ("时段总数", self._safe_count(self._slot_repo.count_all), "success_fg"),
+                ("报名总数", self._safe_count(self._reg_repo.count_all), "warning_fg"),
+                ("排班结果", self._safe_count(self._schedule_repo.count_all), "error_fg"),
             ]
         return [
-            ("我的历史报名", self._reg_repo.count_by_user(self._user.id), "accent"),
+            ("我的历史报名", self._safe_count(lambda: self._reg_repo.count_by_user(self._user.id)), "accent"),
             ("已结束排班", self._count_history_schedules(), "text_tertiary"),
         ]
+
+    def _safe_count(self, fn) -> int:
+        """安全调用仓库计数方法，异常时返回 0，避免单次计数失败拖垮整个面板。"""
+        try:
+            return int(fn())
+        except Exception:
+            return 0
 
     # ── 统计计算 ──────────────────────────────────────────────
 
@@ -228,16 +233,16 @@ class DashboardPanel(QWidget):
         now = datetime.now(timezone.utc)
         count = 0
         for row in rows:
-            slot = self._slot_repo.get(row.get("slot_id", ""))
-            if not slot:
-                continue
-            end = slot.get("end_time", "")
-            if not end:
-                continue
             try:
+                slot = self._slot_repo.get(row.get("slot_id", ""))
+                if not slot:
+                    continue
+                end = slot.get("end_time", "")
+                if not end:
+                    continue
                 if to_utc(end) >= now:
                     count += 1
-            except (ValueError, TypeError):
+            except Exception:
                 continue
         return count
 
@@ -250,16 +255,16 @@ class DashboardPanel(QWidget):
         now = datetime.now(timezone.utc)
         count = 0
         for row in rows:
-            slot = self._slot_repo.get(row.get("slot_id", ""))
-            if not slot:
-                continue
-            end = slot.get("end_time", "")
-            if not end:
-                continue
             try:
+                slot = self._slot_repo.get(row.get("slot_id", ""))
+                if not slot:
+                    continue
+                end = slot.get("end_time", "")
+                if not end:
+                    continue
                 if to_utc(end) < now:
                     count += 1
-            except (ValueError, TypeError):
+            except Exception:
                 continue
         return count
 
@@ -308,40 +313,49 @@ class DashboardPanel(QWidget):
             return 0
         count = 0
         for reg in regs:
-            if reg.get("status") == "cancelled":
+            try:
+                if reg.get("status") == "cancelled":
+                    continue
+                activity = self._activity_repo.get(reg.get("activity_id", ""))
+                if not activity:
+                    continue
+                # 已归档活动视为历史，不计入待办
+                if activity.get("status") == ActivityStatus.ARCHIVED.value:
+                    continue
+                count += 1
+            except Exception:
                 continue
-            activity = self._activity_repo.get(reg.get("activity_id", ""))
-            if not activity:
-                continue
-            # 已归档活动视为历史，不计入待办
-            if activity.get("status") == ActivityStatus.ARCHIVED.value:
-                continue
-            count += 1
         return count
 
     def _recent_activities(self) -> list[dict]:
         """最近活动：admin 看全部，student 仅看报名中。"""
-        if self._is_admin():
-            rows = self._activity_repo.list_all()
-        else:
-            rows = self._activity_repo.list_by_status(ActivityStatus.OPEN)
+        try:
+            if self._is_admin():
+                rows = self._activity_repo.list_all()
+            else:
+                rows = self._activity_repo.list_by_status(ActivityStatus.OPEN)
+        except Exception:
+            return []
         return rows[:5]
 
     def _upcoming_schedules(self) -> list[dict]:
         """学生端：未来 3 条排班作为待办提醒。"""
-        rows = self._schedule_repo.list_by_user(self._user.id)
+        try:
+            rows = self._schedule_repo.list_by_user(self._user.id)
+        except Exception:
+            return []
         now = datetime.now(timezone.utc)
         upcoming = []
         for row in rows:
-            slot = self._slot_repo.get(row.get("slot_id", ""))
-            if slot:
-                end = slot.get("end_time", "")
-                if end:
-                    try:
+            try:
+                slot = self._slot_repo.get(row.get("slot_id", ""))
+                if slot:
+                    end = slot.get("end_time", "")
+                    if end:
                         if to_utc(end) >= now:
                             upcoming.append({**row, "_slot": slot})
-                    except (ValueError, TypeError):
-                        pass
+            except Exception:
+                continue
         upcoming.sort(key=lambda r: r["_slot"].get("start_time", ""))
         return upcoming[:3]
 

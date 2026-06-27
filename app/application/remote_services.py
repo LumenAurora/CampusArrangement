@@ -286,6 +286,8 @@ class RemoteActivityService:
             checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
             checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
             checkin_end=datetime.fromisoformat(payload["checkin_end"]) if payload.get("checkin_end") else None,
+            group_id=payload.get("group_id"),
+            allow_multiple_slots=bool(payload.get("allow_multiple_slots", 0)),
         )
 
 

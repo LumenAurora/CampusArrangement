@@ -1474,6 +1474,8 @@ class ActivityPanel(QWidget):
             set_banner(self._slot_message, "error", str(exc))
 
     def _batch_add_slots(self) -> None:
+        slots_added = 0
+        positions_added = 0
         try:
             set_banner(self._slot_message, "info", "")
             activity_id = self._activity_selector.currentData()
@@ -1502,8 +1504,6 @@ class ActivityPanel(QWidget):
                 "每2周": 14,
             }
             step_days = interval_map.get(interval_text, 1)
-            slots_added = 0
-            positions_added = 0
             current_date = batch_start.date()
             end_date = batch_end.date()
 
@@ -1547,7 +1547,16 @@ class ActivityPanel(QWidget):
             else:
                 set_banner(self._slot_message, "info", "未找到符合条件的日期")
         except (PermissionDenied, ValidationError) as exc:
-            set_banner(self._slot_message, "error", str(exc))
+            # 部分成功也需刷新 UI，否则用户会误以为全部失败而重试，造成重复数据
+            if slots_added > 0:
+                self.refresh()
+                set_banner(
+                    self._slot_message,
+                    "error",
+                    f"{slots_added} 个时段已添加，但后续失败：{exc}",
+                )
+            else:
+                set_banner(self._slot_message, "error", str(exc))
 
 
 class CopyActivityDialog(QDialog):

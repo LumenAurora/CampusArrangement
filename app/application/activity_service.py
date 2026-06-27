@@ -302,6 +302,13 @@ class ActivityService:
         
         if new_signup_end <= new_signup_start:
             raise ValidationError("新报名截止时间必须晚于开始时间")
+        # 签到时间合法性校验：与 create_activity 保持一致
+        if (
+            new_checkin_start is not None
+            and new_checkin_end is not None
+            and new_checkin_end <= new_checkin_start
+        ):
+            raise ValidationError("签到截止时间必须晚于开始时间")
         
         new_activity = Activity.create(
             name=activity["name"],

@@ -166,6 +166,8 @@ def set_banner(label: QLabel, kind: str, text: str, auto_dismiss: bool | None = 
     显式传入 ``auto_dismiss`` 可覆盖默认行为。
 
     若 label 已有挂载的自动消失计时器，会先取消，避免旧计时器误清新文案。
+    计时器以 label 为父对象，label 销毁时计时器同步销毁；
+    此处对 stop() 做异常兜底，避免 label 销毁后 id 复用导致 RuntimeError。
     """
     mapping = {
         "success": "bannerSuccess",
@@ -179,9 +181,13 @@ def set_banner(label: QLabel, kind: str, text: str, auto_dismiss: bool | None = 
     label.style().polish(label)
 
     label_id = id(label)
-    if label_id in _banner_timers:
-        _banner_timers[label_id].stop()
-        del _banner_timers[label_id]
+    existing = _banner_timers.pop(label_id, None)
+    if existing is not None:
+        try:
+            existing.stop()
+        except RuntimeError:
+            # 旧 label 已销毁、计时器随之销毁，stop 失败可忽略
+            pass
 
     should_dismiss = auto_dismiss if auto_dismiss is not None else kind in ("success", "info")
     if text and should_dismiss:
@@ -194,14 +200,22 @@ def set_banner(label: QLabel, kind: str, text: str, auto_dismiss: bool | None = 
 
 def _clear_banner(label: QLabel) -> None:
     """清空 banner 文案与样式，并移除对应的自动消失计时器。"""
-    label.setObjectName("bannerInfo")
-    label.setText("")
-    label.setVisible(False)
-    label.style().unpolish(label)
-    label.style().polish(label)
     label_id = id(label)
-    if label_id in _banner_timers:
-        del _banner_timers[label_id]
+    existing = _banner_timers.pop(label_id, None)
+    if existing is not None:
+        try:
+            existing.stop()
+        except RuntimeError:
+            pass
+    try:
+        label.setObjectName("bannerInfo")
+        label.setText("")
+        label.setVisible(False)
+        label.style().unpolish(label)
+        label.style().polish(label)
+    except RuntimeError:
+        # label 已销毁（理论上不会发生，因计时器是 label 子对象），兜底保护
+        pass
 
 
 def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数据") -> None:
