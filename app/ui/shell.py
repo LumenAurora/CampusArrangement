@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QPropertyAnimation, QSize, Qt, QSettings
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -175,10 +177,15 @@ class NavigationWindow(QMainWindow):
         if 0 <= index < len(self._page_titles):
             self.statusBar().showMessage(self._page_titles[index])
         # Refresh the page data when switching tabs
+        # 单页面刷新异常不应阻塞页面切换，仅记录日志并在状态栏提示，避免拖垮主框架
         if 0 <= index < len(self._pages):
             page = self._pages[index]
             if hasattr(page, "refresh") and callable(page.refresh):
-                page.refresh()
+                try:
+                    page.refresh()
+                except Exception as exc:  # noqa: BLE001 - UI 层兜底，需保留异常细节用于排查
+                    logging.getLogger(__name__).exception("页面 %s 刷新失败: %s", type(page).__name__, exc)
+                    self.statusBar().showMessage(f"页面刷新失败：{exc}", 5000)
 
     def _switch_to_page(self, index: int) -> None:
         """通过快捷键切换到指定页面。"""
@@ -358,8 +365,8 @@ class NavigationWindow(QMainWindow):
         menu.addAction(logout_action)
 
         avatar_btn.setMenu(menu)
-        # 点击按钮即弹出菜单
-        avatar_btn.setPopupMode(QPushButton.ToolButtonPopupMode.InstantPopup)
+        # QPushButton.setMenu 已内置「点击即弹出菜单」行为，
+        # 无需 setPopupMode（该方法属 QToolButton，对 QPushButton 调用会抛 AttributeError）
 
         bar.setLayout(layout)
         return bar

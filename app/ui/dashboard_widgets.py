@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -21,8 +21,9 @@ from app.infrastructure.repositories import (
     ScheduleRepository,
     TimeSlotRepository,
 )
+from app.ui.calendar_widgets import ActivityCalendar
 from app.ui.style import get_palette
-from app.ui.ui_utils import format_activity_status, to_utc
+from app.ui.ui_utils import format_activity_status, to_local, to_utc
 
 
 class DashboardPanel(QWidget):
@@ -100,6 +101,11 @@ class DashboardPanel(QWidget):
         self._current_grid.setHorizontalSpacing(16)
         self._current_grid.setVerticalSpacing(16)
         layout.addLayout(self._current_grid)
+
+        # 持久日历区块：admin 模式下显示，由 _refresh_current_tab 控制可见性与数据
+        self._calendar_section = _CalendarSection(self._activity_repo, self._slot_repo, self._user)
+        self._calendar_section.setVisible(False)
+        layout.addWidget(self._calendar_section)
 
         self._current_section = QVBoxLayout()
         self._current_section.setSpacing(24)
@@ -385,8 +391,13 @@ class DashboardPanel(QWidget):
         recent = self._recent_activities()
         if recent:
             self._current_section.addWidget(self._build_recent_activities_section(recent, p))
+        # 管理端：可视化日历区块（展示活动报名与时段分布）
         # 学生端：即将到来的排班（待办提醒）
-        if not self._is_admin():
+        if self._is_admin():
+            self._calendar_section.refresh()
+            self._calendar_section.setVisible(True)
+        else:
+            self._calendar_section.setVisible(False)
             upcoming = self._upcoming_schedules()
             self._current_section.addWidget(self._build_upcoming_schedules_section(upcoming, p))
 
@@ -400,9 +411,9 @@ class DashboardPanel(QWidget):
             self._history_grid.addWidget(card, row, col)
 
         self._clear_layout(self._history_section)
-        # 管理端：历史报名总数概览
+        # 管理端：历史报名总数概览（与卡片一致采用 _safe_count 兜底，避免单次失败拖垮面板）
         if self._is_admin():
-            count = self._reg_repo.count_all()
+            count = self._safe_count(self._reg_repo.count_all)
             self._history_section.addWidget(self._build_registrations_summary(count, p))
 
     # ── section builders ──────────────────────────────────────
@@ -629,3 +640,169 @@ class _StatCard(QFrame):
 
         layout.addStretch(1)
         self.setLayout(layout)
+
+
+class _CalendarSection(QFrame):
+    """管理端概览日历：可视化展示所有活动的报名开始与时段分布。
+
+    数据来源：activity_repo.list_all() + slot_repo.list_by_activity(aid)。
+    事件类型沿用 ActivityCalendar 的配色约定：
+        - "activity"（报名开始）→ accent
+        - "schedule"（活动时段）  → success_fg
+    """
+
+    def __init__(
+        self,
+        activity_repo: ActivityRepository,
+        slot_repo: TimeSlotRepository,
+        user: User,
+    ) -> None:
+        super().__init__()
+        self._activity_repo = activity_repo
+        self._slot_repo = slot_repo
+        self._user = user
+        self._events_by_date: dict[QDate, list[dict]] = {}
+
+        p = get_palette()
+        self.setObjectName("calendarSectionFrame")
+        self.setStyleSheet(f"""
+            QFrame#calendarSectionFrame {{
+                background: {p.bg_card};
+                border: 1px solid {p.border_light};
+                border-radius: 16px;
+            }}
+        """)
+
+        lay = QVBoxLayout()
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(10)
+
+        # 头部：标题 + 图例
+        header_lay = QHBoxLayout()
+        title = QLabel("活动日历")
+        title.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {p.text_primary}; border: none;")
+        header_lay.addWidget(title)
+        header_lay.addStretch(1)
+        legend_lay = QHBoxLayout()
+        legend_lay.setSpacing(12)
+        for label, color_key in (("报名开始", "accent"), ("活动时段", "success_fg")):
+            dot = QFrame()
+            dot.setFixedSize(8, 8)
+            dot.setStyleSheet(f"background: {getattr(p, color_key)}; border-radius: 4px;")
+            legend_lay.addWidget(dot)
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px; border: none;")
+            legend_lay.addWidget(lbl)
+        header_lay.addLayout(legend_lay)
+        lay.addLayout(header_lay)
+
+        # 日历主体：复用已有 ActivityCalendar（自带 paintCell 着色）
+        self._calendar = ActivityCalendar()
+        lay.addWidget(self._calendar)
+
+        # 选中日期的详情区
+        self._info_label = QLabel("点击日期查看当日活动详情")
+        self._info_label.setWordWrap(True)
+        self._info_label.setStyleSheet(
+            f"color: {p.text_tertiary}; font-size: 12px; border: none; padding: 4px 0;"
+        )
+        lay.addWidget(self._info_label)
+
+        self._calendar.date_selected.connect(self._on_date_selected)
+
+        self.setLayout(lay)
+
+    def refresh(self) -> None:
+        try:
+            events_by_date = self._collect_events()
+        except Exception:
+            # 收集失败时清空事件，避免日历渲染异常
+            events_by_date = {}
+        self._events_by_date = events_by_date
+        try:
+            self._calendar.set_events(events_by_date)
+        except Exception:
+            pass
+        # 刷新后展示当日摘要
+        try:
+            self._on_date_selected(self._calendar.selectedDate())
+        except Exception:
+            self._info_label.setText("点击日期查看当日活动详情")
+
+    def _collect_events(self) -> dict[QDate, list[dict]]:
+        """收集活动报名开始事件 + 时段事件，按日期聚合。
+
+        所有仓库调用都做异常兜底，单条数据异常不影响整体日历。
+        所有时间统一用 to_local 转回本地时区，确保 QDate 与小时:分钟展示为
+        用户所在时区的「墙上时间」，而非 UTC（否则跨时区会落在错误日期）。
+        """
+        events_by_date: dict[QDate, list[dict]] = {}
+        try:
+            activities = self._activity_repo.list_all()
+        except Exception:
+            return events_by_date
+
+        for activity in activities:
+            activity_id = activity.get("id", "")
+            activity_name = activity.get("name", "未知活动")
+            activity_location = activity.get("location", "")
+
+            # 1) 报名开始事件
+            signup_start = activity.get("signup_start", "")
+            if signup_start:
+                try:
+                    dt = to_local(signup_start)
+                    qdate = QDate(dt.year, dt.month, dt.day)
+                    events_by_date.setdefault(qdate, []).append({
+                        "id": f"activity:{activity_id}",
+                        "title": activity_name,
+                        "type": "activity",
+                        "time_range": dt.strftime("%H:%M") + " 开始报名",
+                        "location": activity_location,
+                    })
+                except Exception:
+                    pass
+
+            # 2) 时段事件
+            try:
+                slots = self._slot_repo.list_by_activity(activity_id)
+            except Exception:
+                slots = []
+            for slot in slots:
+                try:
+                    start_str = slot.get("start_time", "")
+                    if not start_str:
+                        continue
+                    dt = to_local(start_str)
+                    qdate = QDate(dt.year, dt.month, dt.day)
+                    end_str = slot.get("end_time", "")
+                    end_dt = to_local(end_str) if end_str else None
+                    time_range = dt.strftime("%H:%M")
+                    if end_dt:
+                        time_range += f" - {end_dt.strftime('%H:%M')}"
+                    events_by_date.setdefault(qdate, []).append({
+                        "id": f"slot:{slot.get('id', '')}",
+                        "title": activity_name,
+                        "type": "schedule",
+                        "time_range": time_range,
+                        "location": activity_location,
+                    })
+                except Exception:
+                    continue
+
+        return events_by_date
+
+    def _on_date_selected(self, date: QDate) -> None:
+        events = self._events_by_date.get(date, [])
+        if not events:
+            self._info_label.setText(f"{date.toString('yyyy-MM-dd')} 当日无活动安排")
+            return
+        # 按时间排序，最多展示 5 条
+        sorted_events = sorted(events, key=lambda e: e.get("time_range", ""))
+        lines = [f"{date.toString('yyyy-MM-dd')} 共 {len(events)} 项安排："]
+        for ev in sorted_events[:5]:
+            prefix = "报名" if ev.get("type") == "activity" else "时段"
+            lines.append(f"  • [{prefix}] {ev.get('title', '—')}  {ev.get('time_range', '')}")
+        if len(events) > 5:
+            lines.append(f"  …其余 {len(events) - 5} 项")
+        self._info_label.setText("\n".join(lines))

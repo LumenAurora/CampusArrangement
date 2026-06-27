@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from app.config import DATA_DIR, DB_PATH
+from app.config import DATA_DIR
 
 
 def ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def get_db_path() -> str:
+    """懒读取 DB_PATH：每次调用都从环境变量获取，便于测试通过 monkeypatch.setenv 切换数据库。
+
+    保留与 app.config 一致的默认值（DATA_DIR/app.db），生产行为不变。
+    """
+    return os.environ.get("CAMPUS_DB_PATH", str(DATA_DIR / "app.db"))
+
+
 def get_connection() -> sqlite3.Connection:
     ensure_data_dir()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

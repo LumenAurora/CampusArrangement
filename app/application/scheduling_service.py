@@ -51,17 +51,18 @@ class SchedulingService:
             self._slot_repo.reset_used_counts_for_activity(activity_id, conn=conn)
             self._schedule_repo.clear_for_activity(activity_id, conn=conn)
             slot_assign_count: dict[str, int] = {}
-            # 兼报模式下按 (user_id, slot_id) 判断单条报名是否被分配
-            assigned_reg_keys: set[tuple[str, str]] = set()
-            for assignment in assignments:
+            # 通过 registration_id 追踪分配结果，避免调剂场景下 (user_id, slot_id)
+            # 不匹配（调剂 slot ≠ 原始 reg.slot_id）导致用户被误标为 NOT_ASSIGNED
+            assigned_reg_ids: set[str] = set()
+            for reg_id, assignment in assignments:
                 self._schedule_repo.create(assignment, conn=conn)
-                assigned_reg_keys.add((assignment.user_id, assignment.slot_id))
+                assigned_reg_ids.add(reg_id)
                 slot_assign_count[assignment.slot_id] = slot_assign_count.get(assignment.slot_id, 0) + 1
             for slot_id, count in slot_assign_count.items():
                 self._slot_repo.increment_used_count(slot_id, count, conn=conn)
             for reg in registrations:
-                # 兼报模式下同一用户的多条报名独立判定 ASSIGNED/NOT_ASSIGNED
-                if (reg["user_id"], reg["slot_id"]) in assigned_reg_keys:
+                # 调剂场景下 reg["id"] 仍能匹配 assigned_reg_ids，标记为 ASSIGNED
+                if reg["id"] in assigned_reg_ids:
                     self._reg_repo.update_status(reg["id"], RegistrationStatus.ASSIGNED, conn=conn)
                 else:
                     self._reg_repo.update_status(reg["id"], RegistrationStatus.NOT_ASSIGNED, conn=conn)

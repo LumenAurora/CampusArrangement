@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 from app.application.activity_service import ActivityService
 from app.application.remote_services import RemoteSchedulingService
 from app.application.scheduling_service import SchedulingService
-from app.domain.exceptions import PermissionDenied, ValidationError
+from app.domain.exceptions import CapacityExceeded, ConflictError, PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, SignupMode, SlotType, User
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
@@ -1546,7 +1546,7 @@ class ActivityPanel(QWidget):
                 set_banner(self._slot_message, "success", msg)
             else:
                 set_banner(self._slot_message, "info", "未找到符合条件的日期")
-        except (PermissionDenied, ValidationError) as exc:
+        except (PermissionDenied, ValidationError, ConflictError, CapacityExceeded) as exc:
             # 部分成功也需刷新 UI，否则用户会误以为全部失败而重试，造成重复数据
             if slots_added > 0:
                 self.refresh()
@@ -1557,6 +1557,11 @@ class ActivityPanel(QWidget):
                 )
             else:
                 set_banner(self._slot_message, "error", str(exc))
+        except Exception as exc:
+            # 兜底：未预期的异常（如 SQLite 约束、网络错误等），仍需提示用户
+            if slots_added > 0:
+                self.refresh()
+            set_banner(self._slot_message, "error", f"批量添加失败：{exc}")
 
 
 class CopyActivityDialog(QDialog):

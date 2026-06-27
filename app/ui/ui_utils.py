@@ -111,6 +111,25 @@ def to_utc(value: str | datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def to_local(value: str | datetime) -> datetime:
+    """将时间值转为本地时区-aware datetime，用于 UI 展示。
+
+    统一入口：先经 to_utc 归一化（naive 视为本地时间），再 astimezone() 转回本地，
+    保证 UI 看到的是用户所在时区的「墙上时间」，而非 UTC。
+    """
+    return to_utc(value).astimezone()
+
+
+def safe_to_utc(value: str | datetime | None) -> datetime | None:
+    """安全的 to_utc：传入 None 或非法字符串返回 None，避免上层异常。"""
+    if value is None or value == "":
+        return None
+    try:
+        return to_utc(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def format_activity_status(activity: dict) -> str:
     """根据活动状态和时间，返回细粒度的状态文字。
 
@@ -130,12 +149,12 @@ def format_activity_status(activity: dict) -> str:
         signup_start = activity.get("signup_start")
         signup_end = activity.get("signup_end")
         if signup_start:
-            start = to_utc(signup_start)
-            if now < start:
+            start = safe_to_utc(signup_start)
+            if start and now < start:
                 return "报名未开始"
         if signup_end:
-            end = to_utc(signup_end)
-            if now > end:
+            end = safe_to_utc(signup_end)
+            if end and now > end:
                 return "报名已截止"
         return "报名中"
 
@@ -144,12 +163,12 @@ def format_activity_status(activity: dict) -> str:
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")
         if checkin_start:
-            start = to_utc(checkin_start)
-            if now < start:
+            start = safe_to_utc(checkin_start)
+            if start and now < start:
                 return "签到未开始"
         if checkin_end:
-            end = to_utc(checkin_end)
-            if now > end:
+            end = safe_to_utc(checkin_end)
+            if end and now > end:
                 return "签到已结束"
         return "签到中"
 

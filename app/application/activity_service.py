@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, Activity, ActivityStatus, ActivityType, CheckInMode, Role, SignupMode, SlotType, TimeSlot, User
+from app.infrastructure.db import transaction
 from app.infrastructure.repositories import ActivityRepository, TimeSlotRepository
 
 
@@ -326,18 +327,21 @@ class ActivityService:
             group_id=activity.get("group_id"),
             allow_multiple_slots=bool(activity.get("allow_multiple_slots", 0)),
         )
-        self._activity_repo.create(new_activity)
 
-        slots = self._slot_repo.list_by_activity(activity_id)
+        # 读取源活动 slot 在事务外读取不影响一致性（只读），但创建活动+slot 必须原子
+        source_slots = self._slot_repo.list_by_activity(activity_id)
         # 计算时间偏移：统一转为 UTC-aware 后相减，得到正确的挂钟时间差
         # naive datetime 视为本地时间，aware datetime 统一到 UTC
         old_start = datetime.fromisoformat(activity["signup_start"]).astimezone(timezone.utc)
         new_start = new_signup_start.astimezone(timezone.utc)
         signup_diff = new_start - old_start
 
+        # 预构建所有新 slot（不涉及 DB 写入），随后在单一事务内统一落库
         # 先复制父级 slot，建立 ID 映射
         old_to_new_slot_id: dict[str, str] = {}
-        for slot in slots:
+        new_parent_slots: list[TimeSlot] = []
+        new_child_slots: list[TimeSlot] = []
+        for slot in source_slots:
             if slot.get("parent_slot_id"):
                 continue  # 子岗位在第二轮处理
             slot_type = SlotType(slot.get("slot_type", "time_slot"))
@@ -378,11 +382,11 @@ class ActivityService:
                     parent_slot_id=None,
                     metadata=metadata,
                 )
-            self._slot_repo.create(new_slot)
+            new_parent_slots.append(new_slot)
             old_to_new_slot_id[slot["id"]] = new_slot.id
 
         # 复制子岗位
-        for slot in slots:
+        for slot in source_slots:
             if not slot.get("parent_slot_id"):
                 continue
             new_parent_id = old_to_new_slot_id.get(slot["parent_slot_id"])
@@ -391,8 +395,16 @@ class ActivityService:
             new_slot = TimeSlot.create_position(
                 new_activity.id, new_parent_id, slot.get("name", ""), slot["capacity"],
             )
-            self._slot_repo.create(new_slot)
-        
+            new_child_slots.append(new_slot)
+
+        # 单一事务：活动创建与所有 slot 创建原子化，避免中途失败导致数据残缺
+        with transaction() as conn:
+            self._activity_repo.create(new_activity, conn=conn)
+            for new_slot in new_parent_slots:
+                self._slot_repo.create(new_slot, conn=conn)
+            for new_slot in new_child_slots:
+                self._slot_repo.create(new_slot, conn=conn)
+
         return new_activity
 
     def reject_activity(self, user: User, activity_id: str) -> None:
