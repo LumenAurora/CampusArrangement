@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import QDate, QDateTime, Qt
 from PySide6.QtGui import QAction, QColor
@@ -55,6 +55,7 @@ from app.ui.ui_utils import (
     make_status_item,
     set_banner,
     set_table_empty,
+    to_utc,
 )
 
 
@@ -95,7 +96,7 @@ class ActivityPanel(QWidget):
         self._activity_selector.setMinimumWidth(240)
 
         self._search_box = SearchBox()
-        self._search_box.textChanged.connect(self._filter_activities)
+        self._search_box.textChanged.connect(self._apply_filters)
         self._all_activities: list[dict] = []
 
         self._init_activity_form()
@@ -105,9 +106,36 @@ class ActivityPanel(QWidget):
         activity_list_layout = QVBoxLayout()
         activity_list_layout.setContentsMargins(12, 12, 12, 12)
 
+        # 状态筛选：覆盖活动生命周期细粒度状态
+        self._status_filter = StyledComboBox()
+        self._status_filter.addItem("全部状态", "all")
+        self._status_filter.addItem("报名中", "报名中")
+        self._status_filter.addItem("报名未开始", "报名未开始")
+        self._status_filter.addItem("报名已截止", "报名已截止")
+        self._status_filter.addItem("签到中", "签到中")
+        self._status_filter.addItem("签到未开始", "签到未开始")
+        self._status_filter.addItem("签到已结束", "签到已结束")
+        self._status_filter.addItem("草稿", "草稿")
+        self._status_filter.addItem("待审核", "待审核")
+        self._status_filter.addItem("已归档", "已归档")
+        self._status_filter.currentIndexChanged.connect(self._apply_filters)
+
+        # 时间筛选：按报名开始时间过滤
+        self._time_filter = StyledComboBox()
+        self._time_filter.addItem("全部时间", "all")
+        self._time_filter.addItem("本周", "week")
+        self._time_filter.addItem("本月", "month")
+        self._time_filter.addItem("近 30 天", "30d")
+        self._time_filter.addItem("近 90 天", "90d")
+        self._time_filter.currentIndexChanged.connect(self._apply_filters)
+
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("搜索"))
         search_layout.addWidget(self._search_box, 1)
+        search_layout.addWidget(QLabel("状态"))
+        search_layout.addWidget(self._status_filter)
+        search_layout.addWidget(QLabel("时间"))
+        search_layout.addWidget(self._time_filter)
         activity_list_layout.addLayout(search_layout)
 
         activity_list_layout.addWidget(self._activity_table)
@@ -684,7 +712,7 @@ class ActivityPanel(QWidget):
 
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
-        self._filter_activities(self._search_box.text())
+        self._apply_filters()
         # 更新小组选择器
         if self._group_repo:
             current = self._group_selector.currentData()
@@ -729,15 +757,64 @@ class ActivityPanel(QWidget):
         }
         ItemDetailDialog("活动详情", data, self).exec()
 
-    def _filter_activities(self, query: str) -> None:
-        query = query.strip().lower()
-        if query:
-            activities = [a for a in self._all_activities if query in a["name"].lower() or query in a.get("details", "").lower()]
-        else:
-            activities = self._all_activities
+    def _apply_filters(self, *args) -> None:
+        """统一应用搜索 + 状态 + 时间筛选。
+
+        - 搜索：按名称/详情模糊匹配（不区分大小写）
+        - 状态：按 format_activity_status 输出的细粒度状态匹配
+        - 时间：按报名开始时间过滤（本周/本月/近 N 天）
+
+        空状态文案区分「无任何活动」与「有活动但筛选后为空」，便于用户调整筛选条件。
+        """
+        query = self._search_box.text().strip().lower()
+        status_filter = self._status_filter.currentData() or "all"
+        time_filter = self._time_filter.currentData() or "all"
+
+        now = datetime.now(timezone.utc)
+        time_window_start: datetime | None = None
+        if time_filter == "week":
+            # 本周：从本周周一开始（与日历复制弹窗一致）
+            today = now.date()
+            monday = today - timedelta(days=today.weekday())
+            time_window_start = datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc)
+        elif time_filter == "month":
+            time_window_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif time_filter in ("30d", "90d"):
+            days = 30 if time_filter == "30d" else 90
+            time_window_start = now - timedelta(days=days)
+
+        def _matches(activity: dict) -> bool:
+            # 搜索匹配
+            if query:
+                name = activity.get("name", "").lower()
+                details = activity.get("details", "").lower()
+                if query not in name and query not in details:
+                    return False
+            # 状态匹配
+            if status_filter != "all":
+                if format_activity_status(activity) != status_filter:
+                    return False
+            # 时间匹配（按报名开始时间）
+            if time_window_start is not None:
+                signup_start = activity.get("signup_start")
+                if not signup_start:
+                    return False
+                try:
+                    if to_utc(signup_start) < time_window_start:
+                        return False
+                except (ValueError, TypeError):
+                    return False
+            return True
+
+        activities = [a for a in self._all_activities if _matches(a)]
 
         if not activities:
-            set_table_empty(self._activity_table, 6, "暂无活动，请先创建活动")
+            # 区分两种空状态：完全没活动 vs 筛选条件导致为空
+            if not self._all_activities:
+                empty_msg = "暂无活动，请先创建活动"
+            else:
+                empty_msg = "无符合筛选条件的活动，请调整搜索/筛选条件"
+            set_table_empty(self._activity_table, 6, empty_msg)
             self._activity_selector.blockSignals(True)
             self._activity_selector.clear()
             self._activity_selector.blockSignals(False)
@@ -785,7 +862,6 @@ class ActivityPanel(QWidget):
 
         self._activity_table.setColumnHidden(0, True)
         self._update_status_buttons()
-        self._load_slots()
 
     def _make_row_actions(self, activity: dict, p) -> QWidget:
         """构建行内操作区：复制 + 更多下拉（详情/删除/归档）。"""
