@@ -156,7 +156,17 @@ def format_activity_status(activity: dict) -> str:
     return format_status(status)
 
 
-def set_banner(label: QLabel, kind: str, text: str) -> None:
+_banner_timers: dict[int, "QTimer"] = {}
+
+
+def set_banner(label: QLabel, kind: str, text: str, auto_dismiss: bool | None = None) -> None:
+    """更新 banner 文案与样式。
+
+    默认 toast 行为：success/info 在 2.5 秒后自动消失，error 持久保留直到下次操作。
+    显式传入 ``auto_dismiss`` 可覆盖默认行为。
+
+    若 label 已有挂载的自动消失计时器，会先取消，避免旧计时器误清新文案。
+    """
     mapping = {
         "success": "bannerSuccess",
         "error": "bannerError",
@@ -167,6 +177,31 @@ def set_banner(label: QLabel, kind: str, text: str) -> None:
     label.setVisible(bool(text))
     label.style().unpolish(label)
     label.style().polish(label)
+
+    label_id = id(label)
+    if label_id in _banner_timers:
+        _banner_timers[label_id].stop()
+        del _banner_timers[label_id]
+
+    should_dismiss = auto_dismiss if auto_dismiss is not None else kind in ("success", "info")
+    if text and should_dismiss:
+        timer = QTimer(label)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: _clear_banner(label))
+        timer.start(2500)
+        _banner_timers[label_id] = timer
+
+
+def _clear_banner(label: QLabel) -> None:
+    """清空 banner 文案与样式，并移除对应的自动消失计时器。"""
+    label.setObjectName("bannerInfo")
+    label.setText("")
+    label.setVisible(False)
+    label.style().unpolish(label)
+    label.style().polish(label)
+    label_id = id(label)
+    if label_id in _banner_timers:
+        del _banner_timers[label_id]
 
 
 def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数据") -> None:
