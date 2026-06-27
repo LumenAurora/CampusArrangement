@@ -28,6 +28,7 @@ class ActivityService:
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
         group_id: str | None = None,
+        allow_multiple_slots: bool = False,
     ) -> Activity:
         if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise PermissionDenied("仅组织者或管理员可创建活动")
@@ -70,6 +71,7 @@ class ActivityService:
             checkin_start=checkin_start,
             checkin_end=checkin_end,
             group_id=group_id,
+            allow_multiple_slots=allow_multiple_slots,
         )
         self._activity_repo.create(activity)
         return activity
@@ -315,6 +317,7 @@ class ActivityService:
             checkin_start=new_checkin_start,
             checkin_end=new_checkin_end,
             group_id=activity.get("group_id"),
+            allow_multiple_slots=bool(activity.get("allow_multiple_slots", 0)),
         )
         self._activity_repo.create(new_activity)
 

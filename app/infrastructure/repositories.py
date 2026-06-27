@@ -104,8 +104,8 @@ class ActivityRepository:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id, allow_multiple_slots) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -123,6 +123,7 @@ class ActivityRepository:
                     activity.checkin_start.isoformat() if activity.checkin_start else None,
                     activity.checkin_end.isoformat() if activity.checkin_end else None,
                     activity.group_id,
+                    1 if activity.allow_multiple_slots else 0,
                 ),
             )
             conn.commit()
@@ -422,7 +423,7 @@ class RegistrationRepository:
         except sqlite3.IntegrityError:
             if own:
                 conn.rollback()
-            raise ConflictError("您已报名该活动，请勿重复报名")
+            raise ConflictError("您已报名该时段，请勿重复报名")
         finally:
             if own:
                 conn.close()
@@ -482,6 +483,18 @@ class RegistrationRepository:
             rows = conn.execute(
                 "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ? AND status != ?",
                 (user_id, activity_id, RegistrationStatus.CANCELLED.value),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_user_slot(self, user_id: str, slot_id: str) -> list[dict]:
+        """查询用户在指定 slot 下的所有未取消报名记录（用于兼报模式下的重复校验）。"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM registrations WHERE user_id = ? AND slot_id = ? AND status != ?",
+                (user_id, slot_id, RegistrationStatus.CANCELLED.value),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:

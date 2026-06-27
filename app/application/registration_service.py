@@ -55,12 +55,21 @@ class RegistrationService:
         if not slot or slot["activity_id"] != activity_id:
             raise ValidationError("所选时段不属于该活动")
 
-        # 如果用户有NOT_ASSIGNED记录，先将其置为CANCELLED以允许重新报名
-        existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
-        not_assigned_ids = [r["id"] for r in existing if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
-        active_existing = [r for r in existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
-        if active_existing:
-            raise ValidationError("您已报名该活动，请勿重复报名")
+        allow_multiple = bool(activity.get("allow_multiple_slots", 0))
+        if allow_multiple:
+            # 兼报模式：只检查同一 slot 是否已报名，允许同活动报不同 slot
+            existing_slot = self._reg_repo.list_by_user_slot(user_id, slot_id)
+            not_assigned_ids = [r["id"] for r in existing_slot if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
+            active_slot = [r for r in existing_slot if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+            if active_slot:
+                raise ValidationError("您已报名该时段，请勿重复报名")
+        else:
+            # 单报模式：检查同一 activity 是否已有 active 报名
+            existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
+            not_assigned_ids = [r["id"] for r in existing if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
+            active_existing = [r for r in existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+            if active_existing:
+                raise ValidationError("您已报名该活动，请勿重复报名")
 
         registration = Registration.create(
             user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority,

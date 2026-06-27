@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QDate, QDateTime, Qt
 from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDateTimeEdit,
     QDialog,
     QFormLayout,
@@ -388,6 +389,10 @@ class ActivityPanel(QWidget):
         rule_form.addRow("签到开始", self._checkin_start)
         rule_form.addRow("签到截止", self._checkin_end)
         rule_form.addRow(self._checkin_err)
+        # 允许兼报多个时段/岗位（默认关闭，兼顾快速创建）
+        self._allow_multiple_slots = QCheckBox("允许同一用户兼报多个时段/岗位")
+        self._allow_multiple_slots.setToolTip("开启后，同一用户可报名同一活动下的多个时段或岗位；\n关闭时每用户仅可报一个时段。")
+        rule_form.addRow("兼报设置", self._allow_multiple_slots)
         self._group_selector = StyledComboBox()
         self._group_selector.addItem("公开（全体用户）", None)
         rule_form.addRow("报名范围", self._group_selector)
@@ -1013,6 +1018,7 @@ class ActivityPanel(QWidget):
                 checkin_start=self._checkin_start.dateTime().toPython(),
                 checkin_end=self._checkin_end.dateTime().toPython(),
                 group_id=self._group_selector.currentData(),
+                allow_multiple_slots=self._allow_multiple_slots.isChecked(),
             )
             self.refresh()
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
@@ -1201,6 +1207,9 @@ class ActivityPanel(QWidget):
             AllocationMode.FIRST_COME.value: "先到先得",
             AllocationMode.LOTTERY.value: "抽签",
         }.get(allocation_mode, "志愿优先")
+        # 追加兼报标识，让组织者一眼看清活动是否允许多选
+        if bool(activity.get("allow_multiple_slots", 0)):
+            allocation_text += " · 允许兼报"
         self._detail_allocation_label.setText(allocation_text)
 
     def _on_batch_interval_changed(self) -> None:

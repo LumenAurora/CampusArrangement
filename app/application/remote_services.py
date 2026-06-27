@@ -74,6 +74,8 @@ class RemoteActivityService:
         checkin_mode: str = "manual",
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
+        group_id: str | None = None,
+        allow_multiple_slots: bool = False,
     ) -> Activity:
         # 确保 checkin_mode 序列化为字符串
         checkin_mode_str = checkin_mode.value if isinstance(checkin_mode, CheckInMode) else str(checkin_mode)
@@ -87,11 +89,14 @@ class RemoteActivityService:
             "location": location,
             "activity_type": activity_type.value,
             "checkin_mode": checkin_mode_str,
+            "allow_multiple_slots": allow_multiple_slots,
         }
         if checkin_start:
             json_data["checkin_start"] = checkin_start.isoformat()
         if checkin_end:
             json_data["checkin_end"] = checkin_end.isoformat()
+        if group_id:
+            json_data["group_id"] = group_id
         payload = self._api.post("/activities", json=json_data)
         return Activity(
             id=payload["id"],
@@ -109,6 +114,8 @@ class RemoteActivityService:
             checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
             checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
             checkin_end=datetime.fromisoformat(payload["checkin_end"]) if payload.get("checkin_end") else None,
+            group_id=payload.get("group_id"),
+            allow_multiple_slots=bool(payload.get("allow_multiple_slots", 0)),
         )
 
     def add_slot(

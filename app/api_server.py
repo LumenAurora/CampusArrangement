@@ -93,6 +93,8 @@ class ActivityCreateRequest(BaseModel):
     checkin_mode: CheckInMode = CheckInMode.MANUAL
     checkin_start: datetime | None = None
     checkin_end: datetime | None = None
+    group_id: str | None = None
+    allow_multiple_slots: bool = False
 
 
 class SlotCreateRequest(BaseModel):
@@ -354,6 +356,8 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
             checkin_mode=payload.checkin_mode.value,
             checkin_start=payload.checkin_start,
             checkin_end=payload.checkin_end,
+            group_id=payload.group_id,
+            allow_multiple_slots=payload.allow_multiple_slots,
         )
     except Exception as exc:
         _handle_domain_error(exc)
@@ -373,6 +377,8 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
         "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+        "group_id": activity.group_id,
+        "allow_multiple_slots": activity.allow_multiple_slots,
     }
 
 
