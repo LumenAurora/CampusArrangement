@@ -155,8 +155,6 @@ def init_db() -> None:
         _ensure_column(conn, "slots", "slot_type", "slot_type TEXT NOT NULL DEFAULT 'time_slot'")
         _ensure_column(conn, "slots", "name", "name TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "slots", "metadata", "metadata TEXT NOT NULL DEFAULT ''")
-        # 使slots表中start_time和end_time允许为空
-        # （注意：SQLite不支持直接修改列约束，所以我们不改变这些列的定义）
         _ensure_column(conn, "checkins", "latitude", "latitude REAL")
         _ensure_column(conn, "checkins", "longitude", "longitude REAL")
         _ensure_column(conn, "checkins", "photo_path", "photo_path TEXT NOT NULL DEFAULT ''")
@@ -180,6 +178,8 @@ def init_db() -> None:
         # 改造报名唯一索引：从 (user_id, activity_id) 改为 (user_id, slot_id)
         # 允许兼报时同一用户可报同一活动的不同 slot，但同一 slot 不可重复报
         _migrate_registration_unique_index(conn)
+        # 放宽 slots.start_time/end_time 的 NOT NULL 约束（选题模式岗位无时间字段）
+        _migrate_slots_nullable_time(conn)
         # 迁移旧 activity_type 到新模式：scheduling/topic_selection/course_selection/seat_reservation/custom → time_slot/non_time_slot
         _migrate_activity_type(conn)
         conn.commit()
@@ -195,6 +195,48 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
     columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+def _migrate_slots_nullable_time(conn: sqlite3.Connection) -> None:
+    """放宽 slots 表 start_time/end_time 的 NOT NULL 约束。
+
+    旧 schema 中 start_time/end_time 为 NOT NULL，但选题模式下的岗位
+    （create_position 创建，无 parent 时段时间）不需要这两个字段，
+    导致 INSERT 失败。SQLite 不支持 ALTER COLUMN 放宽约束，需重建表。
+    """
+    cols = conn.execute("PRAGMA table_info(slots)").fetchall()
+    need_migrate = any(
+        row["name"] in ("start_time", "end_time") and row["notnull"] == 1
+        for row in cols
+    )
+    if not need_migrate:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE slots_new (
+            id TEXT PRIMARY KEY,
+            activity_id TEXT NOT NULL,
+            slot_type TEXT NOT NULL DEFAULT 'time_slot',
+            name TEXT NOT NULL DEFAULT '',
+            start_time TEXT,
+            end_time TEXT,
+            capacity INTEGER NOT NULL,
+            used_count INTEGER NOT NULL DEFAULT 0,
+            metadata TEXT NOT NULL DEFAULT '',
+            parent_slot_id TEXT,
+            FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
+        );
+        INSERT INTO slots_new
+            (id, activity_id, slot_type, name, start_time, end_time,
+             capacity, used_count, metadata, parent_slot_id)
+        SELECT
+            id, activity_id, slot_type, name, start_time, end_time,
+            capacity, used_count, metadata, parent_slot_id
+        FROM slots;
+        DROP TABLE slots;
+        ALTER TABLE slots_new RENAME TO slots;
+        """
+    )
 
 
 def _migrate_activity_type(conn: sqlite3.Connection) -> None:
