@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import QDate, QDateTime, Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QAction, QColor, QPainter
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDateTimeEdit,
     QDialog,
     QFormLayout,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -24,11 +27,11 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
-    QMessageBox,
 )
 
 from app.application.activity_service import ActivityService
@@ -54,6 +57,7 @@ from app.ui.ui_utils import (
     make_status_item,
     set_banner,
     set_table_empty,
+    to_utc,
 )
 
 
@@ -131,7 +135,7 @@ class ActivityPanel(QWidget):
         self._activity_selector.setMinimumWidth(180)
 
         self._search_box = SearchBox()
-        self._search_box.textChanged.connect(self._filter_activities)
+        self._search_box.textChanged.connect(self._apply_filters)
         self._all_activities: list[dict] = []
 
         self._init_activity_form()
@@ -141,9 +145,36 @@ class ActivityPanel(QWidget):
         activity_list_layout = QVBoxLayout()
         activity_list_layout.setContentsMargins(12, 12, 12, 12)
 
+        # 状态筛选：覆盖活动生命周期细粒度状态
+        self._status_filter = StyledComboBox()
+        self._status_filter.addItem("全部状态", "all")
+        self._status_filter.addItem("报名中", "报名中")
+        self._status_filter.addItem("报名未开始", "报名未开始")
+        self._status_filter.addItem("报名已截止", "报名已截止")
+        self._status_filter.addItem("签到中", "签到中")
+        self._status_filter.addItem("签到未开始", "签到未开始")
+        self._status_filter.addItem("签到已结束", "签到已结束")
+        self._status_filter.addItem("草稿", "草稿")
+        self._status_filter.addItem("待审核", "待审核")
+        self._status_filter.addItem("已归档", "已归档")
+        self._status_filter.currentIndexChanged.connect(self._apply_filters)
+
+        # 时间筛选：按报名开始时间过滤
+        self._time_filter = StyledComboBox()
+        self._time_filter.addItem("全部时间", "all")
+        self._time_filter.addItem("本周", "week")
+        self._time_filter.addItem("本月", "month")
+        self._time_filter.addItem("近 30 天", "30d")
+        self._time_filter.addItem("近 90 天", "90d")
+        self._time_filter.currentIndexChanged.connect(self._apply_filters)
+
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("搜索"))
         search_layout.addWidget(self._search_box, 1)
+        search_layout.addWidget(QLabel("状态"))
+        search_layout.addWidget(self._status_filter)
+        search_layout.addWidget(QLabel("时间"))
+        search_layout.addWidget(self._time_filter)
         activity_list_layout.addLayout(search_layout)
 
         activity_list_layout.addWidget(self._activity_table)
@@ -386,6 +417,20 @@ class ActivityPanel(QWidget):
         self._checkin_end.setCalendarPopup(True)
         self._checkin_end.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._checkin_end.setSpecialValueText("不限制")
+
+        # 字段级实时错误提示（默认隐藏）
+        p = get_palette()
+        err_style = f"color: {p.error_fg}; font-size: 11px; border: none; padding: 0 4px;"
+        self._signup_err = QLabel("")
+        self._signup_err.setStyleSheet(err_style)
+        self._signup_err.setVisible(False)
+        self._checkin_err = QLabel("")
+        self._checkin_err.setStyleSheet(err_style)
+        self._checkin_err.setVisible(False)
+        # 时间变化即触发实时校验，无需等待点击「创建活动」
+        for w in (self._signup_start, self._signup_end, self._checkin_start, self._checkin_end):
+            w.dateTimeChanged.connect(self._validate_activity_form)
+
         self._activity_message = QLabel("")
         set_banner(self._activity_message, "info", "")
         create_btn = QPushButton("创建活动")
@@ -408,6 +453,7 @@ class ActivityPanel(QWidget):
         form.addRow("名称", self._activity_name)
         form.addRow("报名开始", self._signup_start)
         form.addRow("报名截止", self._signup_end)
+        form.addRow(self._signup_err)
         form.addRow("详情", self._details)
         form.addRow("地点", self._location)
         form.addRow("名额显示", self._signup_mode)
@@ -415,6 +461,11 @@ class ActivityPanel(QWidget):
         form.addRow("签到模式", self._checkin_mode)
         form.addRow("签到开始", self._checkin_start)
         form.addRow("签到截止", self._checkin_end)
+        form.addRow(self._checkin_err)
+        # 允许兼报多个时段/岗位（默认关闭，兼顾快速创建）
+        self._allow_multiple_slots = QCheckBox("允许同一用户兼报多个时段/岗位")
+        self._allow_multiple_slots.setToolTip("开启后，同一用户可报名同一活动下的多个时段或岗位；\n关闭时每用户仅可报一个时段。")
+        form.addRow("兼报设置", self._allow_multiple_slots)
         # 小组限制
         self._group_selector = StyledComboBox()
         self._group_selector.addItem("公开（全体用户）", None)
@@ -429,6 +480,30 @@ class ActivityPanel(QWidget):
         # 因为选题无需物理到场，签到与坐标无意义。
         self._activity_type.currentIndexChanged.connect(self._update_activity_form_mode)
         self._update_activity_form_mode()
+
+    def _validate_activity_form(self, *args) -> bool:
+        """实时校验活动表单的时间字段，更新字段级错误提示并返回是否全部有效。"""
+        signup_start = self._signup_start.dateTime().toPython()
+        signup_end = self._signup_end.dateTime().toPython()
+        signup_ok = signup_end > signup_start
+        self._signup_err.setVisible(not signup_ok)
+        if not signup_ok:
+            self._signup_err.setText("⚠ 报名截止必须晚于报名开始")
+
+        checkin_start = self._checkin_start.dateTime().toPython()
+        checkin_end = self._checkin_end.dateTime().toPython()
+        checkin_ok = True
+        checkin_msg = ""
+        if checkin_end <= checkin_start:
+            checkin_ok = False
+            checkin_msg = "⚠ 签到截止必须晚于签到开始"
+        elif checkin_start < signup_start:
+            checkin_ok = False
+            checkin_msg = "⚠ 签到开始不应早于报名开始"
+        self._checkin_err.setVisible(not checkin_ok)
+        if not checkin_ok:
+            self._checkin_err.setText(checkin_msg)
+        return signup_ok and checkin_ok
 
     def _update_activity_form_mode(self) -> None:
         """根据活动模式动态联动创建活动表单字段。
@@ -445,6 +520,7 @@ class ActivityPanel(QWidget):
             self._checkin_mode,
             self._checkin_start,
             self._checkin_end,
+            self._checkin_err,
         ]
         for widget in fields_to_toggle:
             label = form.labelForField(widget)
@@ -455,6 +531,7 @@ class ActivityPanel(QWidget):
         if not is_time_slot:
             self._location.clear()
             self._checkin_mode.setCurrentIndex(0)  # 重置为手动签到
+            self._checkin_err.setVisible(False)
 
     def _init_slot_form(self) -> None:
         # 根据活动模式动态切换的表单
@@ -536,6 +613,15 @@ class ActivityPanel(QWidget):
 
         self._batch_interval.currentIndexChanged.connect(self._on_batch_interval_changed)
 
+        # 时段时间字段级实时校验
+        p = get_palette()
+        err_style = f"color: {p.error_fg}; font-size: 11px; border: none; padding: 0 4px;"
+        self._slot_time_err = QLabel("")
+        self._slot_time_err.setStyleSheet(err_style)
+        self._slot_time_err.setVisible(False)
+        for w in (self._slot_start, self._slot_end):
+            w.dateTimeChanged.connect(self._validate_slot_form)
+
         # 主表单
         self._slot_form = QFormLayout()
         self._slot_form.setHorizontalSpacing(12)
@@ -546,6 +632,7 @@ class ActivityPanel(QWidget):
         # 时段模式字段
         self._slot_form.addRow("开始时间", self._slot_start)
         self._slot_form.addRow("结束时间", self._slot_end)
+        self._slot_form.addRow(self._slot_time_err)
         # 非时段模式字段
         self._slot_form.addRow("选项类型", self._slot_option_type)
         self._slot_form.addRow("说明", self._slot_description)
@@ -644,10 +731,22 @@ class ActivityPanel(QWidget):
             name_label = self._slot_form.labelForField(self._slot_name)
             if name_label:
                 name_label.setText("选项名称")
+        # 切换模式后触发一次实时校验，更新时段错误提示可见性
+        self._slot_time_err.setVisible(is_time_slot_mode and not self._validate_slot_form())
+
+    def _validate_slot_form(self, *args) -> bool:
+        """实时校验时段表单的时间字段，返回是否有效。"""
+        start = self._slot_start.dateTime().toPython()
+        end = self._slot_end.dateTime().toPython()
+        ok = end > start
+        self._slot_time_err.setVisible(not ok)
+        if not ok:
+            self._slot_time_err.setText("⚠ 结束时间不能早于开始时间")
+        return ok
 
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
-        self._filter_activities(self._search_box.text())
+        self._apply_filters()
         # 更新小组选择器
         if self._group_repo:
             current = self._group_selector.currentData()
@@ -693,15 +792,64 @@ class ActivityPanel(QWidget):
         }
         ItemDetailDialog("活动详情", data, self).exec()
 
-    def _filter_activities(self, query: str) -> None:
-        query = query.strip().lower()
-        if query:
-            activities = [a for a in self._all_activities if query in a["name"].lower() or query in a.get("details", "").lower()]
-        else:
-            activities = self._all_activities
+    def _apply_filters(self, *args) -> None:
+        """统一应用搜索 + 状态 + 时间筛选。
+
+        - 搜索：按名称/详情模糊匹配（不区分大小写）
+        - 状态：按 format_activity_status 输出的细粒度状态匹配
+        - 时间：按报名开始时间过滤（本周/本月/近 N 天）
+
+        空状态文案区分「无任何活动」与「有活动但筛选后为空」，便于用户调整筛选条件。
+        """
+        query = self._search_box.text().strip().lower()
+        status_filter = self._status_filter.currentData() or "all"
+        time_filter = self._time_filter.currentData() or "all"
+
+        now = datetime.now(timezone.utc)
+        time_window_start: datetime | None = None
+        if time_filter == "week":
+            # 本周：从本周周一开始（与日历复制弹窗一致）
+            today = now.date()
+            monday = today - timedelta(days=today.weekday())
+            time_window_start = datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc)
+        elif time_filter == "month":
+            time_window_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif time_filter in ("30d", "90d"):
+            days = 30 if time_filter == "30d" else 90
+            time_window_start = now - timedelta(days=days)
+
+        def _matches(activity: dict) -> bool:
+            # 搜索匹配
+            if query:
+                name = activity.get("name", "").lower()
+                details = activity.get("details", "").lower()
+                if query not in name and query not in details:
+                    return False
+            # 状态匹配
+            if status_filter != "all":
+                if format_activity_status(activity) != status_filter:
+                    return False
+            # 时间匹配（按报名开始时间）
+            if time_window_start is not None:
+                signup_start = activity.get("signup_start")
+                if not signup_start:
+                    return False
+                try:
+                    if to_utc(signup_start) < time_window_start:
+                        return False
+                except (ValueError, TypeError):
+                    return False
+            return True
+
+        activities = [a for a in self._all_activities if _matches(a)]
 
         if not activities:
-            set_table_empty(self._activity_table, 9, "暂无活动，请先创建活动")
+            # 区分两种空状态：完全没活动 vs 筛选条件导致为空
+            if not self._all_activities:
+                empty_msg = "暂无活动，请先创建活动"
+            else:
+                empty_msg = "无符合筛选条件的活动，请调整搜索/筛选条件"
+            set_table_empty(self._activity_table, 9, empty_msg)
             self._activity_selector.blockSignals(True)
             self._activity_selector.clear()
             self._activity_selector.blockSignals(False)
@@ -709,8 +857,11 @@ class ActivityPanel(QWidget):
             return
         self._activity_table.clearSpans()
         self._activity_table.setRowCount(len(activities))
+        # 保留当前选中的活动 ID，refresh 后恢复选择，避免跳回列表第一个
+        preserved_activity_id = self._activity_selector.currentData()
         self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
+        p = get_palette()
         for row_index, activity in enumerate(activities):
             self._activity_table.setItem(row_index, 0, QTableWidgetItem(str(activity["id"])))
             self._activity_table.setItem(row_index, 1, QTableWidgetItem(str(activity["name"])))
@@ -729,7 +880,6 @@ class ActivityPanel(QWidget):
             # Location with prominent styling
             location_text = activity.get("location") or "-"
             location_label = QLabel(f"📍 {location_text}")
-            p = get_palette()
             location_label.setStyleSheet(
                 f"color: {p.accent}; font-weight: 500; padding: 2px 6px; "
                 f"background: {p.accent_soft}; border-radius: 4px;"
@@ -738,22 +888,138 @@ class ActivityPanel(QWidget):
             self._activity_table.setCellWidget(row_index, 6, location_label)
             status_text = format_activity_status(activity)
             self._activity_table.setItem(row_index, 7, make_status_item(status_text))
-
-            copy_btn = QPushButton("复制")
-            copy_btn.setObjectName("secondaryButton")
-            copy_btn.setProperty("activity_id", activity["id"])
-            copy_btn.clicked.connect(self._on_copy_activity)
-            self._activity_table.setCellWidget(row_index, 8, copy_btn)
+            # 行内操作：复制 + 更多下拉（详情/归档/删除）
+            self._activity_table.setCellWidget(row_index, 8, self._make_row_actions(activity, p))
 
             # 活动选择器显示模式标签
             at = activity.get("activity_type", "time_slot")
             mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
             self._activity_selector.addItem(f"{activity['name']} [{mode_tag}]", activity["id"])
+        # 恢复之前选中的活动，refresh 后用户仍停在原活动上
+        if preserved_activity_id:
+            for i in range(self._activity_selector.count()):
+                if self._activity_selector.itemData(i) == preserved_activity_id:
+                    self._activity_selector.setCurrentIndex(i)
+                    break
         self._activity_selector.blockSignals(False)
+        # 显式触发一次 _load_slots，因为重建期间信号被阻塞，未自动加载
+        self._load_slots()
 
         self._activity_table.setColumnHidden(0, True)
         self._update_status_buttons()
-        self._load_slots()
+
+    def _select_activity_by_id(self, activity_id: str) -> None:
+        """在活动选择器中选中指定 ID 的活动并加载其时段。
+
+        用于「创建活动 → 自动聚焦新活动 → 引导添加时段」的分步流程。
+        若选择器中找不到（如被筛选条件排除），则不改动当前选择。
+        """
+        for i in range(self._activity_selector.count()):
+            if self._activity_selector.itemData(i) == activity_id:
+                # setCurrentIndex 会触发 currentIndexChanged → _load_slots
+                self._activity_selector.setCurrentIndex(i)
+                return
+
+    def _make_row_actions(self, activity: dict, p) -> QWidget:
+        """构建行内操作区：复制 + 更多下拉（详情/归档/删除）。"""
+        container = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(6)
+
+        copy_btn = QPushButton("复制")
+        copy_btn.setObjectName("secondaryButton")
+        copy_btn.setProperty("activity_id", activity["id"])
+        copy_btn.clicked.connect(self._on_copy_activity)
+        layout.addWidget(copy_btn)
+
+        more_btn = QToolButton()
+        more_btn.setObjectName("secondaryButton")
+        more_btn.setText("更多")
+        more_btn.setPopupMode(QToolButton.InstantPopup)
+        more_btn.setStyleSheet(
+            f"QToolButton#secondaryButton::menu-indicator {{ image: none; }}"
+        )
+        more_menu = QMenu(more_btn)
+        more_menu.setStyleSheet(
+            f"QMenu {{ background: {p.bg_card}; color: {p.text_primary}; "
+            f"border: 1px solid {p.border_light}; border-radius: 8px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 6px 24px 6px 16px; border-radius: 4px; }}"
+            f"QMenu::item:selected {{ background: {p.accent_soft}; }}"
+        )
+        detail_action = QAction("查看详情", more_menu)
+        detail_action.triggered.connect(lambda _=False, aid=activity["id"]: self._open_detail_by_id(aid))
+        more_menu.addAction(detail_action)
+        more_menu.addSeparator()
+        archive_action = QAction("归档", more_menu)
+        archive_action.triggered.connect(lambda _=False, aid=activity["id"]: self._archive_activity_by_id(aid))
+        more_menu.addAction(archive_action)
+        delete_action = QAction("删除", more_menu)
+        delete_action.triggered.connect(lambda _=False, aid=activity["id"]: self._delete_activity_by_id(aid))
+        more_menu.addAction(delete_action)
+        more_btn.setMenu(more_menu)
+        layout.addWidget(more_btn)
+
+        container.setLayout(layout)
+        return container
+
+    def _open_detail_by_id(self, activity_id: str) -> None:
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if not activity:
+            return
+        signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
+        allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value)
+        allocation_text = {
+            AllocationMode.GREEDY.value: "志愿优先",
+            AllocationMode.FIRST_COME.value: "先到先得",
+            AllocationMode.LOTTERY.value: "抽签",
+            AllocationMode.POINTS.value: "意愿点",
+        }.get(allocation_mode, "志愿优先")
+        data = {
+            "ID": str(activity.get("id", "")),
+            "名称": activity.get("name", ""),
+            "报名开始": format_datetime(activity["signup_start"]) if activity.get("signup_start") else "—",
+            "报名截止": format_datetime(activity["signup_end"]) if activity.get("signup_end") else "—",
+            "名额显示": signup_mode_text,
+            "分配策略": allocation_text,
+            "地点": activity.get("location") or "—",
+            "状态": format_activity_status(activity),
+            "详情": activity.get("details") or "—",
+        }
+        ItemDetailDialog("活动详情", data, self).exec()
+
+    def _archive_activity_by_id(self, activity_id: str) -> None:
+        """通过行内菜单归档指定活动。"""
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if not activity:
+            return
+        try:
+            self._service.archive_activity(user=self._user, activity_id=activity_id)
+            self.refresh()
+            set_banner(self._activity_message, "success", f"活动「{activity['name']}」已归档")
+        except (PermissionDenied, ValidationError) as exc:
+            set_banner(self._activity_message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._activity_message, "error", f"归档失败：{exc}")
+
+    def _delete_activity_by_id(self, activity_id: str) -> None:
+        """通过行内菜单删除指定活动（带确认）。"""
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        name = activity["name"] if activity else activity_id
+        confirm = QMessageBox.question(
+            self, "确认删除", f"确定删除活动「{name}」吗？此操作不可撤销。"
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            self._service.delete_activity(activity_id=activity_id, user=self._user)
+            self.refresh()
+            set_banner(self._activity_message, "success", "活动已删除")
+        except (PermissionDenied, ValidationError) as exc:
+            set_banner(self._activity_message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._activity_message, "error", f"删除失败：{exc}")
+
 
     def _load_slots(self) -> None:
         self._update_slot_form_mode()
@@ -858,11 +1124,12 @@ class ActivityPanel(QWidget):
             if not name:
                 set_banner(self._activity_message, "error", "活动名称不能为空")
                 return
+            # 实时校验不通过时阻止创建（错误提示已在字段旁显示）
+            if not self._validate_activity_form():
+                set_banner(self._activity_message, "error", "请修正表单中的时间错误后再创建")
+                return
             signup_start = self._signup_start.dateTime().toPython()
             signup_end = self._signup_end.dateTime().toPython()
-            if signup_end <= signup_start:
-                set_banner(self._activity_message, "error", "报名截止时间必须晚于开始时间")
-                return
             activity = self._service.create_activity(
                 user=self._user,
                 name=name,
@@ -877,8 +1144,13 @@ class ActivityPanel(QWidget):
                 checkin_start=self._checkin_start.dateTime().toPython(),
                 checkin_end=self._checkin_end.dateTime().toPython(),
                 group_id=self._group_selector.currentData(),
+                allow_multiple_slots=self._allow_multiple_slots.isChecked(),
             )
             self.refresh()
+            # 创建活动后自动聚焦新活动，并引导用户继续添加时段/选项
+            self._select_activity_by_id(activity.id)
+            next_step = "请在下方继续添加时段/选项"
+            set_banner(self._activity_message, "success", f"已创建活动：{activity.name}，{next_step}")
             self._activity_name.clear()
             self._details.clear()
             self._location.clear()
@@ -886,7 +1158,6 @@ class ActivityPanel(QWidget):
             now = datetime.now()
             self._signup_start.setDateTime(now)
             self._signup_end.setDateTime(now + timedelta(days=1))
-            set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._activity_message, "error", str(exc))
         except Exception as exc:
@@ -1127,6 +1398,11 @@ class ActivityPanel(QWidget):
             name = self._slot_name.text().strip()
             capacity = self._slot_capacity.value()
             auto_position = self._auto_create_position.currentData() == "default"
+
+            # 时段模式：实时校验时间，结束时间不得早于开始时间
+            if is_time_slot_mode and not self._validate_slot_form():
+                set_banner(self._slot_message, "error", "结束时间不能早于开始时间")
+                return
 
             if is_time_slot_mode:
                 slot = self._service.add_slot(

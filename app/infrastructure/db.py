@@ -180,9 +180,6 @@ def init_db() -> None:
         # 改造报名唯一索引：从 (user_id, activity_id) 改为 (user_id, slot_id)
         # 允许兼报时同一用户可报同一活动的不同 slot，但同一 slot 不可重复报
         _migrate_registration_unique_index(conn)
-        # 新增：用户头像与通知偏好
-        _ensure_column(conn, "users", "avatar_path", "avatar_path TEXT NOT NULL DEFAULT ''")
-        _ensure_column(conn, "users", "notification_mode", "notification_mode TEXT NOT NULL DEFAULT 'in_app'")
         # 迁移旧 activity_type 到新模式：scheduling/topic_selection/course_selection/seat_reservation/custom → time_slot/non_time_slot
         _migrate_activity_type(conn)
         conn.commit()
