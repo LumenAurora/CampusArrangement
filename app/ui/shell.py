@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
+import logging
 
 from PySide6.QtCore import QPropertyAnimation, QSize, Qt, QSettings
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -12,17 +12,15 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSizePolicy,
-    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app.domain.models import User
-from app.infrastructure.repositories import UserRepository
-from app.ui.account_settings import make_circular_pixmap, make_initial_pixmap
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.style import (
     DENSITY_COMFORTABLE,
@@ -41,21 +39,14 @@ from app.ui.style import (
 NAV_EXPANDED_WIDTH = 200
 NAV_COLLAPSED_WIDTH = 56
 
-# 头像存储根目录：app/resources/uploads/（与 account_settings.py 保持一致）
-_AVATAR_ROOT = Path(__file__).resolve().parent.parent / "resources" / "uploads"
-
 
 class NavigationWindow(QMainWindow):
-    def __init__(self, title: str, user_label: str) -> None:
+    def __init__(self, title: str, user: User) -> None:
         super().__init__()
         self.setWindowTitle(title)
+        self._user = user
         self._nav_expanded = True
-
-        # 用户上下文：由 set_user_context 注入，用于顶栏头像与账号设置入口
-        # 初始为 None，避免修改 __init__ 签名破坏 admin_window/client_window 调用方
-        self._user: User | None = None
-        self._user_repo: UserRepository | None = None
-        self._user_label_text: str = user_label
+        self._app: QApplication | None = None
 
         # 恢复窗口几何信息
         settings = QSettings("CampusScheduler", "CampusScheduler")
@@ -84,7 +75,7 @@ class NavigationWindow(QMainWindow):
         # 存储页面标题用于折叠时显示
         self._page_titles: list[str] = []
 
-        top_bar = self._build_topbar(user_label)
+        top_bar = self._build_topbar(user)
 
         # 顶栏与内容之间的分隔线
         p = get_palette()
@@ -93,19 +84,11 @@ class NavigationWindow(QMainWindow):
         separator.setFixedHeight(1)
         separator.setStyleSheet(f"background: {p.border_light}; border: none;")
 
-        # 关键修复：原 body_layout 用 QHBoxLayout，nav 收起只改自身宽度，
-        # 不通知右侧 stack 内页面重排，导致页面内表格仍按原宽度渲染、横向溢出。
-        # 改用 QSplitter，nav 可拖拽收起，且 stack 自动获得释放的空间；
-        # 同时设置 nav 可折叠、stack 不可折叠，避免 stack 被压缩到不可用。
-        body_splitter = QSplitter(Qt.Horizontal)
-        body_splitter.setContentsMargins(0, 0, 0, 0)
-        body_splitter.addWidget(self._nav)
-        body_splitter.addWidget(self._stack)
-        body_splitter.setCollapsible(0, True)
-        body_splitter.setCollapsible(1, False)
-        body_splitter.setStretchFactor(0, 0)
-        body_splitter.setStretchFactor(1, 1)
-        body_splitter.setHandleWidth(6)
+        body_layout = QHBoxLayout()
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
+        body_layout.addWidget(self._nav)
+        body_layout.addWidget(self._stack, 1)
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(16, 12, 16, 16)
@@ -113,7 +96,7 @@ class NavigationWindow(QMainWindow):
         root_layout.addWidget(top_bar)
         root_layout.addWidget(separator)
         root_layout.addSpacing(12)
-        root_layout.addWidget(body_splitter)
+        root_layout.addLayout(body_layout)
 
         root = QWidget()
         root.setLayout(root_layout)
@@ -179,84 +162,6 @@ class NavigationWindow(QMainWindow):
         self._anim2.setEndValue(target)
         self._anim2.start()
 
-        # 关键修复：动画结束后触发当前页面重排，让其内的表格/QSplitter
-        # 按 nav 收起后释放的宽度重新计算几何，避免横向溢出/滚动条残留。
-        self._anim2.finished.connect(self._on_sidebar_anim_finished)
-
-        # 更新按钮箭头
-        self._toggle_btn.setText("☰" if self._nav_expanded else "≫")
-
-    def _on_sidebar_anim_finished(self) -> None:
-        """侧边栏收起/展开动画结束后，通知当前页面重排几何。"""
-        current = self._stack.currentWidget()
-        if current is not None:
-            current.updateGeometry()
-            # 强制触发 layout 重算，确保内部 QSplitter/QTableWidget 重新分配空间
-            if current.layout() is not None:
-                current.layout().activate()
-
-    def attach_menus(self, app: QApplication) -> None:
-        menu_bar = self.menuBar()
-        menu_bar.clear()
-        file_menu = menu_bar.addMenu("文件")
-        view_menu = menu_bar.addMenu("视图")
-        help_menu = menu_bar.addMenu("帮助")
-
-        settings_action = QAction("设置...", self)
-        settings_action.triggered.connect(lambda: self._open_settings(app))
-        exit_action = QAction("退出", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(settings_action)
-        file_menu.addSeparator()
-        file_menu.addAction(exit_action)
-
-        theme_group = QActionGroup(self)
-        light_action = QAction("浅色主题", self, checkable=True)
-        dark_action = QAction("深色主题", self, checkable=True)
-        theme_group.addAction(light_action)
-        theme_group.addAction(dark_action)
-        theme_group.setExclusive(True)
-        theme = get_theme()
-        light_action.setChecked(theme == THEME_LIGHT)
-        dark_action.setChecked(theme == THEME_DARK)
-        light_action.triggered.connect(lambda: self._apply_theme(app, THEME_LIGHT))
-        dark_action.triggered.connect(lambda: self._apply_theme(app, THEME_DARK))
-        view_menu.addAction(light_action)
-        view_menu.addAction(dark_action)
-        view_menu.addSeparator()
-
-        density_group = QActionGroup(self)
-        density = get_density()
-        compact_action = QAction("紧凑密度", self, checkable=True)
-        comfortable_action = QAction("舒适密度", self, checkable=True)
-        density_group.addAction(compact_action)
-        density_group.addAction(comfortable_action)
-        density_group.setExclusive(True)
-        compact_action.setChecked(density == DENSITY_COMPACT)
-        comfortable_action.setChecked(density == DENSITY_COMFORTABLE)
-        compact_action.triggered.connect(lambda: self._apply_density(app, DENSITY_COMPACT))
-        comfortable_action.triggered.connect(lambda: self._apply_density(app, DENSITY_COMFORTABLE))
-        view_menu.addAction(comfortable_action)
-        view_menu.addAction(compact_action)
-
-        about_action = QAction("关于", self)
-        about_action.triggered.connect(self._show_about_dialog)
-        help_menu.addAction(about_action)
-
-    def _show_about_dialog(self) -> None:
-        """显示关于对话框，介绍应用来源与开源属性。"""
-        from PySide6.QtWidgets import QMessageBox
-        msg = QMessageBox(self)
-        msg.setWindowTitle("关于")
-        msg.setIcon(QMessageBox.Information)
-        msg.setText("Campus Scheduler · 校园报名与排班系统")
-        msg.setInformativeText(
-            "Developed by GoF Group\n"
-            "Open Source Application\n\n"
-            "面向校园场景的活动报名、时段排班与签到管理系统。"
-        )
-        msg.exec()
-
     def _apply_default_page(self) -> None:
         if not self._page_keys:
             return
@@ -272,10 +177,15 @@ class NavigationWindow(QMainWindow):
         if 0 <= index < len(self._page_titles):
             self.statusBar().showMessage(self._page_titles[index])
         # Refresh the page data when switching tabs
+        # 单页面刷新异常不应阻塞页面切换，仅记录日志并在状态栏提示，避免拖垮主框架
         if 0 <= index < len(self._pages):
             page = self._pages[index]
             if hasattr(page, "refresh") and callable(page.refresh):
-                page.refresh()
+                try:
+                    page.refresh()
+                except Exception as exc:  # noqa: BLE001 - UI 层兜底，需保留异常细节用于排查
+                    logging.getLogger(__name__).exception("页面 %s 刷新失败: %s", type(page).__name__, exc)
+                    self.statusBar().showMessage(f"页面刷新失败：{exc}", 5000)
 
     def _switch_to_page(self, index: int) -> None:
         """通过快捷键切换到指定页面。"""
@@ -298,12 +208,14 @@ class NavigationWindow(QMainWindow):
         set_density(density)
         apply_app_style(app, get_theme())
 
-    def _build_topbar(self, user_label: str) -> QFrame:
+    def _build_topbar(self, user: User) -> QFrame:
         bar = QFrame()
         bar.setObjectName("topBar")
         layout = QHBoxLayout()
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(12)
+
+        p = get_palette()
 
         # 左侧：汉堡按钮
         self._toggle_btn = QPushButton("☰")
@@ -327,86 +239,134 @@ class NavigationWindow(QMainWindow):
         title_col.addWidget(subtitle)
         layout.addLayout(title_col, 1)
 
-        # 右侧：头像 + 用户标签 + 登出按钮
-        p = get_palette()
-        # 头像 QLabel（32x32，点击打开账号设置）
-        # 初始用 user_label 首字母做占位，set_user_context 注入后刷新为真实头像
-        self._avatar_label = QLabel()
-        self._avatar_label.setFixedSize(32, 32)
-        self._avatar_label.setCursor(Qt.PointingHandCursor)
-        self._avatar_label.setToolTip("点击打开账号设置")
-        initial = user_label[:1] if user_label else "?"
-        self._avatar_label.setPixmap(make_initial_pixmap(initial, 32, p.accent, p.text_on_accent))
-        # QLabel 默认不响应点击，通过重写 mousePressEvent 实现点击
-        self._avatar_label.mousePressEvent = lambda event: self._open_account_settings()
-        layout.addWidget(self._avatar_label)
+        # 右侧：用户头像按钮（下拉菜单整合帮助/设置/关于/角色/登出）
+        avatar_btn = QPushButton(user.username[:1].upper())
+        avatar_btn.setObjectName("userAvatarButton")
+        avatar_btn.setCursor(Qt.PointingHandCursor)
+        avatar_btn.setToolTip(f"{user.username} · 点击查看菜单")
+        avatar_btn.setFixedSize(38, 38)
+        avatar_btn.setStyleSheet(f"""
+            QPushButton#userAvatarButton {{
+                background: {p.accent};
+                color: {p.text_on_accent};
+                border: none;
+                border-radius: 19px;
+                font-size: 16px;
+                font-weight: 700;
+            }}
+            QPushButton#userAvatarButton:hover {{
+                background: {p.accent_hover};
+            }}
+            QPushButton#userAvatarButton:pressed {{
+                background: {p.accent_pressed};
+            }}
+        """)
 
-        user = QLabel(user_label)
-        user.setObjectName("userBadge")
-        user.setCursor(Qt.PointingHandCursor)
-        user.setToolTip("点击打开账号设置")
-        user.mousePressEvent = lambda event: self._open_account_settings()
-        layout.addWidget(user)
-
-        logout_btn = QPushButton("登出")
-        logout_btn.setObjectName("logoutButton")
-        logout_btn.setCursor(Qt.PointingHandCursor)
-        logout_btn.setToolTip("退出当前账号")
-        logout_btn.setStyleSheet(
-            f"QPushButton#logoutButton {{"
-            f" background: {p.btn_secondary_bg}; color: {p.text_secondary};"
-            f" border: 1px solid {p.border_light}; border-radius: 6px;"
-            f" padding: 4px 12px; font-size: 12px; font-weight: 500;"
-            f"}}"
-            f"QPushButton#logoutButton:hover {{"
-            f" background: {p.btn_danger_bg}; color: {p.error_fg};"
-            f" border-color: {p.error_fg};"
-            f"}}"
+        # 用户名标签（在头像左侧）
+        name_label = QLabel(user.username)
+        name_label.setObjectName("userNameLabel")
+        name_label.setStyleSheet(
+            f"color: {p.text_primary}; font-weight: 600; font-size: 13px; border: none;"
         )
-        logout_btn.clicked.connect(self.close)
-        layout.addWidget(logout_btn)
+        layout.addWidget(name_label)
+        layout.addWidget(avatar_btn)
+
+        # 下拉菜单
+        menu = QMenu(avatar_btn)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {p.bg_card};
+                color: {p.text_primary};
+                border: 1px solid {p.border_light};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 24px 6px 20px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background: {p.accent_soft};
+                color: {p.text_primary};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {p.border_light};
+                margin: 4px 8px;
+            }}
+            QMenu::title {{
+                background: transparent;
+                color: {p.text_tertiary};
+                font-size: 11px;
+                padding: 4px 12px 2px 12px;
+            }}
+        """)
+
+        # 菜单标题：用户名 + 角色
+        role_text = {
+            "super_admin": "超级管理员",
+            "organizer": "组织者",
+            "student": "学生",
+        }.get(user.role.value, user.role.value)
+        menu.setTitle(f"{user.username}  ·  {role_text}")
+
+        # 设置...
+        settings_action = QAction("设置...", menu)
+        settings_action.triggered.connect(lambda: self._open_settings(QApplication.instance()))
+        menu.addAction(settings_action)
+
+        menu.addSeparator()
+
+        # 主题子菜单
+        theme_menu = menu.addMenu("主题")
+        theme_group = QActionGroup(theme_menu)
+        light_action = QAction("浅色", theme_menu, checkable=True)
+        dark_action = QAction("深色", theme_menu, checkable=True)
+        theme_group.addAction(light_action)
+        theme_group.addAction(dark_action)
+        theme_group.setExclusive(True)
+        theme = get_theme()
+        light_action.setChecked(theme == THEME_LIGHT)
+        dark_action.setChecked(theme == THEME_DARK)
+        light_action.triggered.connect(lambda: self._apply_theme(QApplication.instance(), THEME_LIGHT))
+        dark_action.triggered.connect(lambda: self._apply_theme(QApplication.instance(), THEME_DARK))
+        theme_menu.addAction(light_action)
+        theme_menu.addAction(dark_action)
+
+        # 密度子菜单
+        density_menu = menu.addMenu("显示密度")
+        density_group = QActionGroup(density_menu)
+        compact_action = QAction("紧凑", density_menu, checkable=True)
+        comfortable_action = QAction("舒适", density_menu, checkable=True)
+        density_group.addAction(compact_action)
+        density_group.addAction(comfortable_action)
+        density_group.setExclusive(True)
+        density = get_density()
+        compact_action.setChecked(density == DENSITY_COMPACT)
+        comfortable_action.setChecked(density == DENSITY_COMFORTABLE)
+        compact_action.triggered.connect(lambda: self._apply_density(QApplication.instance(), DENSITY_COMPACT))
+        comfortable_action.triggered.connect(lambda: self._apply_density(QApplication.instance(), DENSITY_COMFORTABLE))
+        density_menu.addAction(comfortable_action)
+        density_menu.addAction(compact_action)
+
+        menu.addSeparator()
+
+        # 关于
+        about_action = QAction("关于", menu)
+        about_action.triggered.connect(
+            lambda: self.statusBar().showMessage("Campus Scheduler · 校园报名与排班系统", 5000)
+        )
+        menu.addAction(about_action)
+
+        # 登出
+        menu.addSeparator()
+        logout_action = QAction("登出", menu)
+        logout_action.triggered.connect(self.close)
+        menu.addAction(logout_action)
+
+        avatar_btn.setMenu(menu)
+        # QPushButton.setMenu 已内置「点击即弹出菜单」行为，
+        # 无需 setPopupMode（该方法属 QToolButton，对 QPushButton 调用会抛 AttributeError）
 
         bar.setLayout(layout)
         return bar
-
-    def set_user_context(self, user: User, user_repo: UserRepository) -> None:
-        """注入用户上下文，启用顶栏头像与账号设置入口。
-
-        由于 __init__ 仅接收 user_label: str，无法直接获取 User/UserRepository，
-        由 admin_window/client_window 在构造后调用此方法注入上下文，
-        避免修改 __init__ 签名破坏调用方。
-        """
-        self._user = user
-        self._user_repo = user_repo
-        self._refresh_topbar_avatar()
-
-    def _refresh_topbar_avatar(self) -> None:
-        """根据当前用户上下文刷新顶栏头像显示。"""
-        if not self._user or not self._user_repo:
-            return
-        try:
-            record = self._user_repo.get_by_id(self._user.id)
-            avatar_path = record.get("avatar_path", "") if record else ""
-        except Exception:
-            avatar_path = ""
-        p = get_palette()
-        if avatar_path:
-            # 拼接 app/resources/uploads/ 前缀加载图片
-            full = _AVATAR_ROOT / avatar_path
-            pix = QPixmap(str(full))
-            if not pix.isNull():
-                self._avatar_label.setPixmap(make_circular_pixmap(pix, 32))
-                return
-        # 无头像或加载失败：用用户名首字母做圆形占位（背景色 accent）
-        initial = self._user.username[:1] if self._user.username else "?"
-        self._avatar_label.setPixmap(make_initial_pixmap(initial, 32, p.accent, p.text_on_accent))
-
-    def _open_account_settings(self) -> None:
-        """打开账号设置对话框。"""
-        if not self._user or not self._user_repo:
-            return
-        from app.ui.account_settings import AccountSettingsDialog
-        dialog = AccountSettingsDialog(self._user, self._user_repo, self)
-        dialog.exec()
-        # 对话框关闭后刷新顶栏头像（用户可能上传了新头像或修改了偏好）
-        self._refresh_topbar_avatar()

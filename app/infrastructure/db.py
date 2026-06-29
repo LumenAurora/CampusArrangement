@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from app.config import DATA_DIR, DB_PATH
+from app.config import DATA_DIR
 
 
 def ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def get_db_path() -> str:
+    """懒读取 DB_PATH：每次调用都从环境变量获取，便于测试通过 monkeypatch.setenv 切换数据库。
+
+    保留与 app.config 一致的默认值（DATA_DIR/app.db），生产行为不变。
+    """
+    return os.environ.get("CAMPUS_DB_PATH", str(DATA_DIR / "app.db"))
+
+
 def get_connection() -> sqlite3.Connection:
     ensure_data_dir()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -83,8 +92,8 @@ def init_db() -> None:
                 FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE
             );
 
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_activity_active
-                ON registrations(user_id, activity_id) WHERE status NOT IN ('cancelled', 'not_assigned');
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_slot_active
+                ON registrations(user_id, slot_id) WHERE status NOT IN ('cancelled', 'not_assigned');
 
             CREATE TABLE IF NOT EXISTS schedule_results (
                 id TEXT PRIMARY KEY,
@@ -160,6 +169,11 @@ def init_db() -> None:
         _ensure_column(conn, "registrations", "points", "points INTEGER NOT NULL DEFAULT 0")
         # 新增：人工提前结束签到（与 checkin_end 时间独立，可逆）
         _ensure_column(conn, "activities", "checkin_closed", "checkin_closed INTEGER NOT NULL DEFAULT 0")
+        # 新增：允许兼报多个时段/岗位（0=不允许，1=允许）
+        _ensure_column(conn, "activities", "allow_multiple_slots", "allow_multiple_slots INTEGER NOT NULL DEFAULT 0")
+        # 改造报名唯一索引：从 (user_id, activity_id) 改为 (user_id, slot_id)
+        # 允许兼报时同一用户可报同一活动的不同 slot，但同一 slot 不可重复报
+        _migrate_registration_unique_index(conn)
         # 新增：用户头像与通知偏好
         _ensure_column(conn, "users", "avatar_path", "avatar_path TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "users", "notification_mode", "notification_mode TEXT NOT NULL DEFAULT 'in_app'")
@@ -193,4 +207,25 @@ def _migrate_activity_type(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE activities SET activity_type = ? WHERE activity_type = ?",
             (new_val, old_val),
+        )
+
+
+def _migrate_registration_unique_index(conn: sqlite3.Connection) -> None:
+    """将报名唯一索引从 (user_id, activity_id) 改为 (user_id, slot_id)。
+
+    旧索引阻止同一用户在同一活动下报多个 slot（即阻止兼报）；
+    新索引只阻止同一用户重复报同一 slot，允许兼报不同 slot。
+    对于不允许兼报的活动，由应用层 RegistrationService.register 做检查。
+    """
+    # 检查旧索引是否存在，存在则删除
+    indexes = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='registrations'"
+    ).fetchall()
+    index_names = {row["name"] for row in indexes}
+    if "idx_reg_user_activity_active" in index_names:
+        conn.execute("DROP INDEX IF EXISTS idx_reg_user_activity_active")
+    if "idx_reg_user_slot_active" not in index_names:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_slot_active "
+            "ON registrations(user_id, slot_id) WHERE status NOT IN ('cancelled', 'not_assigned')"
         )

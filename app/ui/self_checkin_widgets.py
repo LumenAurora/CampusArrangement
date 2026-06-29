@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -150,8 +151,8 @@ class SelfCheckInPanel(QWidget):
         code_layout.addWidget(self._checkin_code_input, 1)
 
         # ---- 位置签到页 ----
-        self._location_label = QLabel("尚未获取位置")
-        self._get_location_btn = QPushButton("获取位置")
+        self._location_label = QLabel("尚未设置位置")
+        self._get_location_btn = QPushButton("设置位置")
         self._get_location_btn.setObjectName("secondaryButton")
         self._get_location_btn.clicked.connect(self._fetch_location)
 
@@ -349,7 +350,7 @@ class SelfCheckInPanel(QWidget):
             self._checkin_stack.setCurrentIndex(1)
             self._latitude = None
             self._longitude = None
-            self._location_label.setText("尚未获取位置")
+            self._location_label.setText("尚未设置位置")
         elif mode == CheckInMode.PHOTO:
             self._checkin_stack.setCurrentIndex(2)
             self._photo_path = ""
@@ -362,12 +363,38 @@ class SelfCheckInPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _fetch_location(self) -> None:
-        """获取当前位置（模拟）"""
-        # 桌面端无法直接获取 GPS，此处使用模拟坐标
-        # 实际项目中可集成系统定位 API 或让用户手动输入
-        self._latitude = 39.9042
-        self._longitude = 116.4074
-        self._location_label.setText(f"已获取位置: {self._latitude:.4f}, {self._longitude:.4f}")
+        """让用户手动输入当前坐标（桌面端无 GPS）"""
+        # 桌面端无法直接获取 GPS，让用户手动输入坐标
+        # 实际项目中可集成系统定位 API，此处用输入对话框作为通用方案
+        default_text = (
+            f"{self._latitude:.4f},{self._longitude:.4f}"
+            if self._latitude is not None and self._longitude is not None
+            else ""
+        )
+        text, ok = QInputDialog.getText(
+            self,
+            "设置当前位置",
+            "请输入您当前的经纬度（格式：纬度,经度，如 39.9042,116.4074）：",
+            text=default_text,
+        )
+        if not ok or not text.strip():
+            return
+        parts = text.strip().split(",")
+        if len(parts) != 2:
+            set_banner(self._message, "error", "坐标格式错误，请使用 纬度,经度 格式")
+            return
+        try:
+            lat = float(parts[0].strip())
+            lon = float(parts[1].strip())
+        except ValueError:
+            set_banner(self._message, "error", "坐标解析失败，请输入有效的数字")
+            return
+        if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+            set_banner(self._message, "error", "坐标超出有效范围（纬度 ±90，经度 ±180）")
+            return
+        self._latitude = lat
+        self._longitude = lon
+        self._location_label.setText(f"已设置位置: {lat:.4f}, {lon:.4f}")
 
     # ------------------------------------------------------------------
     # 拍照签到辅助

@@ -131,6 +131,7 @@ class Activity:
     checkin_end: datetime | None = None
     group_id: str | None = None  # 小组限制：None=公开，非None=仅小组成员可报名
     checkin_closed: bool = False  # 人工提前结束签到（与 checkin_end 时间独立，可逆）
+    allow_multiple_slots: bool = False  # 是否允许同一用户兼报多个时段/岗位
 
     @staticmethod
     def create(
@@ -149,6 +150,7 @@ class Activity:
         checkin_end: datetime | None = None,
         group_id: str | None = None,
         checkin_closed: bool = False,
+        allow_multiple_slots: bool = False,
     ) -> "Activity":
         return Activity(
             id=str(uuid4()),
@@ -168,6 +170,7 @@ class Activity:
             checkin_end=checkin_end,
             group_id=group_id,
             checkin_closed=checkin_closed,
+            allow_multiple_slots=allow_multiple_slots,
         )
 
 

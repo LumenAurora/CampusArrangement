@@ -8,7 +8,6 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import patch
 
 from app.infrastructure.db import init_db
@@ -38,15 +37,22 @@ class TimeDiagnosisTests(unittest.TestCase):
         """创建临时目录用于存放测试DB"""
         cls._tmpdir = tempfile.mkdtemp(prefix="campus_time_test_")
 
+    def _restore_db_path(self) -> None:
+        """恢复 CAMPUS_DB_PATH 环境变量，避免污染其他测试。"""
+        if self._orig_db_path is None:
+            os.environ.pop("CAMPUS_DB_PATH", None)
+        else:
+            os.environ["CAMPUS_DB_PATH"] = self._orig_db_path
+
     def setUp(self) -> None:
         db_path = os.path.join(self._tmpdir, f"{self._testMethodName}.db")
         if os.path.exists(db_path):
             os.remove(db_path)
 
-        # patch DB_PATH 使得所有数据库操作使用独立DB
-        self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(db_path))
-        self._db_patcher.start()
-        self.addCleanup(self._db_patcher.stop)
+        # 通过设置 CAMPUS_DB_PATH 环境变量切换 DB（get_db_path 懒读取此变量）
+        self._orig_db_path = os.environ.get("CAMPUS_DB_PATH")
+        os.environ["CAMPUS_DB_PATH"] = db_path
+        self.addCleanup(self._restore_db_path)
 
         init_db()
 

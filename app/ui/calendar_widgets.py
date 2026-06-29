@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -44,6 +45,16 @@ def _p():
 
 def _color(hex_str: str) -> QColor:
     return QColor(hex_str)
+
+
+def _make_arrow_button(arrow_type: QStyle.StandardPixmap, parent_widget: QWidget) -> QPushButton:
+    """创建一个使用系统标准图标的箭头按钮，避免 Unicode 字形缺失问题。"""
+    btn = QPushButton()
+    btn.setObjectName("secondaryButton")
+    btn.setFixedSize(32, 28)
+    icon = parent_widget.style().standardIcon(arrow_type)
+    btn.setIcon(icon)
+    return btn
 
 
 # ─── 自定义日程存储 ──────────────────────────────────────────
@@ -301,13 +312,9 @@ class WeekView(QWidget):
         # 导航栏
         nav = QHBoxLayout()
         nav.setContentsMargins(8, 4, 8, 4)
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setObjectName("secondaryButton")
-        self._prev_btn.setFixedSize(32, 28)
+        self._prev_btn = _make_arrow_button(QStyle.SP_ArrowLeft, self)
         self._prev_btn.clicked.connect(self._go_prev)
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setObjectName("secondaryButton")
-        self._next_btn.setFixedSize(32, 28)
+        self._next_btn = _make_arrow_button(QStyle.SP_ArrowRight, self)
         self._next_btn.clicked.connect(self._go_next)
         self._header_label = QLabel()
         self._header_label.setAlignment(Qt.AlignCenter)
@@ -518,13 +525,9 @@ class DayView(QWidget):
         # 导航栏
         nav = QHBoxLayout()
         nav.setContentsMargins(8, 4, 8, 4)
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setObjectName("secondaryButton")
-        self._prev_btn.setFixedSize(32, 28)
+        self._prev_btn = _make_arrow_button(QStyle.SP_ArrowLeft, self)
         self._prev_btn.clicked.connect(self._go_prev)
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setObjectName("secondaryButton")
-        self._next_btn.setFixedSize(32, 28)
+        self._next_btn = _make_arrow_button(QStyle.SP_ArrowRight, self)
         self._next_btn.clicked.connect(self._go_next)
         self._header_label = QLabel()
         self._header_label.setAlignment(Qt.AlignCenter)
@@ -918,6 +921,9 @@ class CalendarPanel(QWidget):
         self._selected_date = date
         self._jump_date.setDate(date)
         if self._view_mode.currentIndex() == 2:
+            # 日视图：必须同时刷新事件，否则翻页后事件不更新
+            day_events = self._events_by_date.get(date, [])
+            self._day_view.set_events(day_events)
             self._day_view.set_date(date)
         self._update_date_info()
         self._update_my_events()
@@ -945,8 +951,11 @@ class CalendarPanel(QWidget):
         elif idx == 1:
             self._week_view.set_week_start(date)
         elif idx == 2:
+            day_events = self._events_by_date.get(date, [])
+            self._day_view.set_events(day_events)
             self._day_view.set_date(date)
         self._update_date_info()
+        self._update_my_events()
 
     def _on_event_click(self, item: QListWidgetItem) -> None:
         data = item.data(Qt.UserRole)
@@ -971,23 +980,16 @@ class CalendarPanel(QWidget):
             end_dt = self._parse_dt(raw["end_time"])
             if not start_dt:
                 return
-            end_hour = end_dt.hour if end_dt else min(start_dt.hour + 1, 24)
+            start_h = start_dt.hour + start_dt.minute / 60.0
+            if end_dt:
+                end_h = end_dt.hour + end_dt.minute / 60.0
+                if end_h <= start_h:
+                    end_h = start_h + 1.0
+            else:
+                end_h = min(start_h + 1.0, 24.0)
             time_range = start_dt.strftime("%H:%M")
             if end_dt:
                 time_range += f" - {end_dt.strftime('%H:%M')}"
-            custom_event = {
-                "id": event_id,
-                "title": raw["title"],
-                "location": raw.get("location", ""),
-                "start_time": raw["start_time"],
-                "end_time": raw["end_time"],
-                "description": raw.get("description", ""),
-                "type": "custom",
-                "time": raw["start_time"][:16],
-                "time_range": time_range,
-                "start_hour": start_dt.hour,
-                "end_hour": end_hour,
-            }
             _CustomEventStore.add_event(self._user.id, {
                 "id": event_id,
                 "title": raw["title"],
@@ -1041,14 +1043,17 @@ class CalendarPanel(QWidget):
                         dt = self._parse_dt(start_time_str)
                         if dt:
                             qdate = QDate(dt.year, dt.month, dt.day)
+                            # 分钟级定位（用浮点小时避免整数小时对齐）
+                            start_h = dt.hour + dt.minute / 60.0
                             event = {
+                                "id": f"activity:{activity.get('id', '')}",
                                 "title": activity.get("name", "未知活动"),
                                 "time": start_time_str[:16],
                                 "time_range": dt.strftime("%H:%M") + " 开始报名",
                                 "location": activity.get("location", ""),
                                 "type": "activity",
-                                "start_hour": dt.hour,
-                                "end_hour": min(dt.hour + 1, 24),
+                                "start_hour": start_h,
+                                "end_hour": min(start_h + 1.0, 24.0),
                             }
                             events_by_date.setdefault(qdate, []).append(event)
                             all_events.append(event)
@@ -1074,18 +1079,25 @@ class CalendarPanel(QWidget):
                                 end_dt = self._parse_dt(end_time_str) if end_time_str else None
                                 if dt:
                                     qdate = QDate(dt.year, dt.month, dt.day)
-                                    end_hour = end_dt.hour if end_dt else min(dt.hour + 1, 24)
+                                    start_h = dt.hour + dt.minute / 60.0
+                                    if end_dt:
+                                        end_h = end_dt.hour + end_dt.minute / 60.0
+                                        if end_h <= start_h:
+                                            end_h = start_h + 1.0
+                                    else:
+                                        end_h = min(start_h + 1.0, 24.0)
                                     time_range = dt.strftime("%H:%M")
                                     if end_dt:
                                         time_range += f" - {end_dt.strftime('%H:%M')}"
                                     event = {
+                                        "id": f"schedule:{slot_id}",
                                         "title": activity_name,
                                         "time": start_time_str[:16],
                                         "time_range": time_range,
                                         "location": activity_location,
                                         "type": "schedule",
-                                        "start_hour": dt.hour,
-                                        "end_hour": end_hour,
+                                        "start_hour": start_h,
+                                        "end_hour": end_h,
                                         "checkin_status": checkin_map.get(slot_id),
                                     }
                                     events_by_date.setdefault(qdate, []).append(event)
@@ -1103,7 +1115,13 @@ class CalendarPanel(QWidget):
                     if not start_dt:
                         continue
                     qdate = QDate(start_dt.year, start_dt.month, start_dt.day)
-                    end_hour = end_dt.hour if end_dt else min(start_dt.hour + 1, 24)
+                    start_h = start_dt.hour + start_dt.minute / 60.0
+                    if end_dt:
+                        end_h = end_dt.hour + end_dt.minute / 60.0
+                        if end_h <= start_h:
+                            end_h = start_h + 1.0
+                    else:
+                        end_h = min(start_h + 1.0, 24.0)
                     time_range = start_dt.strftime("%H:%M")
                     if end_dt:
                         time_range += f" - {end_dt.strftime('%H:%M')}"
@@ -1115,8 +1133,8 @@ class CalendarPanel(QWidget):
                         "location": ce.get("location", ""),
                         "description": ce.get("description", ""),
                         "type": "custom",
-                        "start_hour": start_dt.hour,
-                        "end_hour": end_hour,
+                        "start_hour": start_h,
+                        "end_hour": end_h,
                     }
                     events_by_date.setdefault(qdate, []).append(event)
                     all_events.append(event)
