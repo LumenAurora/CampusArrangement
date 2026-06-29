@@ -48,6 +48,22 @@ class GroupService:
             raise ValidationError("小组不存在")
         if user.role != Role.SUPER_ADMIN and group["owner_id"] != user.id:
             raise PermissionDenied("只能删除自己创建的小组")
+        # Clear group_id on activities referencing this group to prevent
+        # them from becoming inaccessible to everyone.
+        all_activities = self._activity_repo.list_all()
+        for activity in all_activities:
+            if activity.get("group_id") == group_id:
+                # Use a direct DB update to clear the group_id
+                from app.infrastructure.db import get_connection
+                conn = get_connection()
+                try:
+                    conn.execute(
+                        "UPDATE activities SET group_id = NULL WHERE id = ?",
+                        (activity["id"],),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
         self._repo.delete(group_id)
 
     # ── 成员管理 ──────────────────────────────────────────

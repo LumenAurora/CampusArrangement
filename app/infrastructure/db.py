@@ -7,6 +7,8 @@ from pathlib import Path
 
 from app.config import DATA_DIR
 
+DB_PATH = str(DATA_DIR / "app.db")
+
 
 def ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -17,7 +19,7 @@ def get_db_path() -> str:
 
     保留与 app.config 一致的默认值（DATA_DIR/app.db），生产行为不变。
     """
-    return os.environ.get("CAMPUS_DB_PATH", str(DATA_DIR / "app.db"))
+    return os.environ.get("CAMPUS_DB_PATH", DB_PATH)
 
 
 def get_connection() -> sqlite3.Connection:
@@ -25,6 +27,7 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
@@ -169,6 +172,9 @@ def init_db() -> None:
         _ensure_column(conn, "registrations", "points", "points INTEGER NOT NULL DEFAULT 0")
         # 新增：人工提前结束签到（与 checkin_end 时间独立，可逆）
         _ensure_column(conn, "activities", "checkin_closed", "checkin_closed INTEGER NOT NULL DEFAULT 0")
+        # 新增：用户头像与通知偏好
+        _ensure_column(conn, "users", "avatar_path", "avatar_path TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "users", "notification_mode", "notification_mode TEXT NOT NULL DEFAULT 'in_app'")
         # 新增：允许兼报多个时段/岗位（0=不允许，1=允许）
         _ensure_column(conn, "activities", "allow_multiple_slots", "allow_multiple_slots INTEGER NOT NULL DEFAULT 0")
         # 改造报名唯一索引：从 (user_id, activity_id) 改为 (user_id, slot_id)

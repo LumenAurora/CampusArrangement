@@ -25,6 +25,7 @@ class DatabaseTests(unittest.TestCase):
         self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(db_path))
         self._db_patcher.start()
         self.addCleanup(self._db_patcher.stop)
+        os.environ.pop("CAMPUS_DB_PATH", None)
         init_db()
 
     def test_slot_locking(self) -> None:

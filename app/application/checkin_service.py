@@ -263,6 +263,12 @@ class CheckInService:
             raise ValidationError("该活动签到模式不支持生成签到码")
         code = secrets.token_hex(4).upper()
         self._activity_repo.update_checkin_code(activity_id, code)
+        # Re-read the activity to get the actual stored code.
+        # In remote mode, the server generates its own code and ignores
+        # the one we passed in, so we must return the server's version.
+        updated = self._activity_repo.get(activity_id)
+        if updated and updated.get("checkin_code"):
+            return updated["checkin_code"]
         return code
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
@@ -281,7 +287,16 @@ class CheckInService:
         total_assigned = len(results)
         checked_in = sum(1 for c in checkins if c["status"] == CheckInStatus.CHECKED_IN.value)
         absent = sum(1 for c in checkins if c["status"] == CheckInStatus.ABSENT.value)
-        not_checked_in = max(0, total_assigned - checked_in - absent)
+        raw_not_checked_in = total_assigned - checked_in - absent
+        if raw_not_checked_in < 0:
+            # Data inconsistency: more checkins/absences than assignments
+            # Log the discrepancy but still report 0 to avoid negative UI values
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Checkin stats inconsistency for activity {activity_id}: "
+                f"total_assigned={total_assigned}, checked_in={checked_in}, absent={absent}"
+            )
+        not_checked_in = max(0, raw_not_checked_in)
         # 按时段统计
         slot_stats: dict[str, dict] = {}
         for r in results:

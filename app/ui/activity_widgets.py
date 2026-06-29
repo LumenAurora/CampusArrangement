@@ -634,12 +634,16 @@ class ActivityPanel(QWidget):
             self._add_slot_btn.setText("添加时段")
             self._slot_group.setTitle("添加时段")
             self._slot_name.setPlaceholderText("例如：周二下午3-6点")
-            self._slot_form.labelForField(self._slot_name).setText("名称")
+            name_label = self._slot_form.labelForField(self._slot_name)
+            if name_label:
+                name_label.setText("名称")
         else:
             self._add_slot_btn.setText("添加选项")
             self._slot_group.setTitle("添加选项")
             self._slot_name.setPlaceholderText("例如：机器学习选题A / 高等数学")
-            self._slot_form.labelForField(self._slot_name).setText("选项名称")
+            name_label = self._slot_form.labelForField(self._slot_name)
+            if name_label:
+                name_label.setText("选项名称")
 
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
@@ -844,15 +848,26 @@ class ActivityPanel(QWidget):
                 set_banner(self._activity_message, "success", "活动已复制")
             except (PermissionDenied, ValidationError) as exc:
                 set_banner(self._activity_message, "error", str(exc))
+            except Exception as exc:
+                set_banner(self._activity_message, "error", f"复制失败：{exc}")
 
     def _create_activity(self) -> None:
         try:
             set_banner(self._activity_message, "info", "")
+            name = self._activity_name.text().strip()
+            if not name:
+                set_banner(self._activity_message, "error", "活动名称不能为空")
+                return
+            signup_start = self._signup_start.dateTime().toPython()
+            signup_end = self._signup_end.dateTime().toPython()
+            if signup_end <= signup_start:
+                set_banner(self._activity_message, "error", "报名截止时间必须晚于开始时间")
+                return
             activity = self._service.create_activity(
                 user=self._user,
-                name=self._activity_name.text().strip(),
-                signup_start=self._signup_start.dateTime().toPython(),
-                signup_end=self._signup_end.dateTime().toPython(),
+                name=name,
+                signup_start=signup_start,
+                signup_end=signup_end,
                 details=self._details.text().strip(),
                 signup_mode=SignupMode(self._signup_mode.currentData()),
                 allocation_mode=AllocationMode(self._allocation_mode.currentData()),
@@ -864,9 +879,18 @@ class ActivityPanel(QWidget):
                 group_id=self._group_selector.currentData(),
             )
             self.refresh()
+            self._activity_name.clear()
+            self._details.clear()
+            self._location.clear()
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            self._signup_start.setDateTime(now)
+            self._signup_end.setDateTime(now + timedelta(days=1))
             set_banner(self._activity_message, "success", f"已创建活动：{activity.name}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._activity_message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._activity_message, "error", f"创建失败：{exc}")
 
     def _open_wizard(self) -> None:
         """打开向导式创建活动对话框。
@@ -976,8 +1000,14 @@ class ActivityPanel(QWidget):
                 if self._scheduling_service and not isinstance(self._scheduling_service, RemoteSchedulingService):
                     try:
                         self._scheduling_service.run(activity_id)
-                    except Exception:
-                        self._service.reopen_activity(user=self._user, activity_id=activity_id)
+                    except Exception as sched_err:
+                        try:
+                            self._service.reopen_activity(user=self._user, activity_id=activity_id)
+                        except Exception as reopen_err:
+                            set_banner(self._activity_message, "error",
+                                       f"排班失败且回滚失败：{sched_err}（回滚错误：{reopen_err}）")
+                            self.refresh()
+                            return
                         raise
             elif action == "archive":
                 self._service.archive_activity(user=self._user, activity_id=activity_id)
@@ -1129,9 +1159,14 @@ class ActivityPanel(QWidget):
                     metadata=metadata,
                 )
             self.refresh()
+            # Clear slot form fields after success
+            self._slot_name.clear()
+            self._slot_capacity.setValue(1)
             set_banner(self._slot_message, "success", "已添加" + ("（含默认岗位）" if auto_position and is_time_slot_mode else ""))
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._slot_message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._slot_message, "error", f"添加失败：{exc}")
 
     def _add_position(self) -> None:
         """为选中的时段添加子岗位"""
@@ -1169,10 +1204,13 @@ class ActivityPanel(QWidget):
                 capacity=capacity,
             )
             self._position_name.clear()
+            self._position_capacity.setValue(1)
             self.refresh()
             set_banner(self._slot_message, "success", f"已添加岗位：{name}")
         except (PermissionDenied, ValidationError) as exc:
             set_banner(self._slot_message, "error", str(exc))
+        except Exception as exc:
+            set_banner(self._slot_message, "error", f"添加岗位失败：{exc}")
 
     def _add_default_position(self) -> None:
         """为选中的时段一键创建默认岗位（名称与时段相同，容量等于时段容量）"""

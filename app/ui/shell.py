@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from PySide6.QtCore import QPropertyAnimation, QSize, Qt, QSettings
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -15,12 +16,15 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app.domain.models import User
+from app.infrastructure.repositories import UserRepository
+from app.ui.account_settings import make_circular_pixmap, make_initial_pixmap
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.style import (
     DENSITY_COMFORTABLE,
@@ -39,6 +43,9 @@ from app.ui.style import (
 NAV_EXPANDED_WIDTH = 200
 NAV_COLLAPSED_WIDTH = 56
 
+# 头像存储根目录：app/resources/uploads/（与 account_settings.py 保持一致）
+_AVATAR_ROOT = Path(__file__).resolve().parent.parent / "resources" / "uploads"
+
 
 class NavigationWindow(QMainWindow):
     def __init__(self, title: str, user: User) -> None:
@@ -47,6 +54,7 @@ class NavigationWindow(QMainWindow):
         self._user = user
         self._nav_expanded = True
         self._app: QApplication | None = None
+        self._user_repo: UserRepository | None = None
 
         # 恢复窗口几何信息
         settings = QSettings("CampusScheduler", "CampusScheduler")
@@ -84,11 +92,19 @@ class NavigationWindow(QMainWindow):
         separator.setFixedHeight(1)
         separator.setStyleSheet(f"background: {p.border_light}; border: none;")
 
-        body_layout = QHBoxLayout()
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(12)
-        body_layout.addWidget(self._nav)
-        body_layout.addWidget(self._stack, 1)
+        # 关键修复：原 body_layout 用 QHBoxLayout，nav 收起只改自身宽度，
+        # 不通知右侧 stack 内页面重排，导致页面内表格仍按原宽度渲染、横向溢出。
+        # 改用 QSplitter，nav 可拖拽收起，且 stack 自动获得释放的空间；
+        # 同时设置 nav 可折叠、stack 不可折叠，避免 stack 被压缩到不可用。
+        body_splitter = QSplitter(Qt.Horizontal)
+        body_splitter.setContentsMargins(0, 0, 0, 0)
+        body_splitter.addWidget(self._nav)
+        body_splitter.addWidget(self._stack)
+        body_splitter.setCollapsible(0, True)
+        body_splitter.setCollapsible(1, False)
+        body_splitter.setStretchFactor(0, 0)
+        body_splitter.setStretchFactor(1, 1)
+        body_splitter.setHandleWidth(6)
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(16, 12, 16, 16)
@@ -96,7 +112,7 @@ class NavigationWindow(QMainWindow):
         root_layout.addWidget(top_bar)
         root_layout.addWidget(separator)
         root_layout.addSpacing(12)
-        root_layout.addLayout(body_layout)
+        root_layout.addWidget(body_splitter)
 
         root = QWidget()
         root.setLayout(root_layout)
@@ -161,6 +177,21 @@ class NavigationWindow(QMainWindow):
         self._anim2.setStartValue(self._nav.width())
         self._anim2.setEndValue(target)
         self._anim2.start()
+
+        # 关键修复：动画结束后触发当前页面重排，让其内的表格/QSplitter
+        # 按 nav 收起后释放的宽度重新计算几何，避免横向溢出/滚动条残留。
+        self._anim2.finished.connect(self._on_sidebar_anim_finished)
+
+        # 更新按钮箭头
+        self._toggle_btn.setText("☰" if self._nav_expanded else "≫")
+
+    def _on_sidebar_anim_finished(self) -> None:
+        """侧边栏收起/展开动画结束后，通知当前页面重排几何。"""
+        current = self._stack.currentWidget()
+        if current is not None:
+            current.updateGeometry()
+            if current.layout() is not None:
+                current.layout().activate()
 
     def _apply_default_page(self) -> None:
         if not self._page_keys:
@@ -240,12 +271,12 @@ class NavigationWindow(QMainWindow):
         layout.addLayout(title_col, 1)
 
         # 右侧：用户头像按钮（下拉菜单整合帮助/设置/关于/角色/登出）
-        avatar_btn = QPushButton(user.username[:1].upper())
-        avatar_btn.setObjectName("userAvatarButton")
-        avatar_btn.setCursor(Qt.PointingHandCursor)
-        avatar_btn.setToolTip(f"{user.username} · 点击查看菜单")
-        avatar_btn.setFixedSize(38, 38)
-        avatar_btn.setStyleSheet(f"""
+        self._avatar_btn = QPushButton(user.username[:1].upper())
+        self._avatar_btn.setObjectName("userAvatarButton")
+        self._avatar_btn.setCursor(Qt.PointingHandCursor)
+        self._avatar_btn.setToolTip(f"{user.username} · 点击查看菜单")
+        self._avatar_btn.setFixedSize(38, 38)
+        self._avatar_btn.setStyleSheet(f"""
             QPushButton#userAvatarButton {{
                 background: {p.accent};
                 color: {p.text_on_accent};
@@ -269,10 +300,10 @@ class NavigationWindow(QMainWindow):
             f"color: {p.text_primary}; font-weight: 600; font-size: 13px; border: none;"
         )
         layout.addWidget(name_label)
-        layout.addWidget(avatar_btn)
+        layout.addWidget(self._avatar_btn)
 
         # 下拉菜单
-        menu = QMenu(avatar_btn)
+        menu = QMenu(self._avatar_btn)
         menu.setStyleSheet(f"""
             QMenu {{
                 background: {p.bg_card};
@@ -314,6 +345,11 @@ class NavigationWindow(QMainWindow):
         settings_action = QAction("设置...", menu)
         settings_action.triggered.connect(lambda: self._open_settings(QApplication.instance()))
         menu.addAction(settings_action)
+
+        # 账号设置（头像、通知偏好）
+        account_action = QAction("账号设置", menu)
+        account_action.triggered.connect(self._open_account_settings)
+        menu.addAction(account_action)
 
         menu.addSeparator()
 
@@ -364,9 +400,37 @@ class NavigationWindow(QMainWindow):
         logout_action.triggered.connect(self.close)
         menu.addAction(logout_action)
 
-        avatar_btn.setMenu(menu)
+        self._avatar_btn.setMenu(menu)
         # QPushButton.setMenu 已内置「点击即弹出菜单」行为，
         # 无需 setPopupMode（该方法属 QToolButton，对 QPushButton 调用会抛 AttributeError）
 
         bar.setLayout(layout)
         return bar
+
+    def set_user_context(self, user: User, user_repo: UserRepository) -> None:
+        """注入用户上下文，启用顶栏头像与账号设置入口。
+
+        由于 __init__ 仅接收 user_label: str，无法直接获取 User/UserRepository，
+        由 admin_window/client_window 在构造后调用此方法注入上下文，
+        避免修改 __init__ 签名破坏调用方。
+        """
+        self._user = user
+        self._user_repo = user_repo
+        self._refresh_topbar_avatar()
+
+    def _refresh_topbar_avatar(self) -> None:
+        """根据当前用户上下文刷新顶栏头像显示。"""
+        if not self._user or not self._user_repo:
+            return
+        initial = self._user.username[:1].upper() if self._user.username else "?"
+        self._avatar_btn.setText(initial)
+
+    def _open_account_settings(self) -> None:
+        """打开账号设置对话框。"""
+        if not self._user or not self._user_repo:
+            return
+        from app.ui.account_settings import AccountSettingsDialog
+        dialog = AccountSettingsDialog(self._user, self._user_repo, self)
+        dialog.exec()
+        # 对话框关闭后刷新顶栏头像（用户可能上传了新头像或修改了偏好）
+        self._refresh_topbar_avatar()

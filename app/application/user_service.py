@@ -73,7 +73,10 @@ class UserService:
         record = self._user_repo.get_by_username(username)
         if not record or not verify_password(password, record["password_hash"]):
             raise ValidationError("用户名或密码错误")
-        status = UserStatus(record.get("status", "approved"))
+        try:
+            status = UserStatus(record.get("status", "approved"))
+        except ValueError:
+            raise ValidationError("用户状态数据异常，请联系管理员")
         if status == UserStatus.PENDING_REVIEW:
             raise ValidationError("账号待审批，请等待管理员审核")
         if status == UserStatus.REJECTED:

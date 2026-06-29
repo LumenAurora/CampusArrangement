@@ -61,6 +61,7 @@ class _IsolatedDBTestCase(unittest.TestCase):
         self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(db_path))
         self._db_patcher.start()
         self.addCleanup(self._db_patcher.stop)
+        os.environ.pop("CAMPUS_DB_PATH", None)
         init_db()
 
 
@@ -75,7 +76,7 @@ class PointsModeTests(unittest.TestCase):
         rng = random.Random(42)
         results = schedule_registrations([reg_low, reg_high], [slot], mode=AllocationMode.POINTS, rng=rng)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].user_id, "u_high")
+        self.assertEqual(results[0][1].user_id, "u_high")
 
     def test_points_mode_same_points_random_抽签(self) -> None:
         now = datetime.now(timezone.utc)
@@ -85,7 +86,7 @@ class PointsModeTests(unittest.TestCase):
         rng = random.Random(42)
         results = schedule_registrations([reg_a, reg_b], [slot], mode=AllocationMode.POINTS, rng=rng)
         self.assertEqual(len(results), 1)
-        self.assertIn(results[0].user_id, {"u_a", "u_b"})
+        self.assertIn(results[0][1].user_id, {"u_a", "u_b"})
 
     def test_points_mode_zero_points(self) -> None:
         now = datetime.now(timezone.utc)
@@ -97,7 +98,7 @@ class PointsModeTests(unittest.TestCase):
         rng = random.Random(42)
         results = schedule_registrations(regs, [slot], mode=AllocationMode.POINTS, rng=rng)
         self.assertEqual(len(results), 2)
-        assigned = {r.user_id for r in results}
+        assigned = {r[1].user_id for r in results}
         self.assertTrue(assigned.issubset({f"u{i}" for i in range(5)}))
 
 
