@@ -38,6 +38,7 @@ class ScenarioTests(unittest.TestCase):
         self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(self._db_path))
         self._db_patcher.start()
         self.addCleanup(self._db_patcher.stop)
+        os.environ.pop("CAMPUS_DB_PATH", None)
         init_db()
 
         self.user_repo = UserRepository()

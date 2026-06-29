@@ -82,7 +82,10 @@ def format_datetime(value: str) -> str:
 
 
 def format_slot_name(slot: dict) -> str:
-    """Format a slot dict into a human-readable label."""
+    """Format a slot dict into a human-readable label.
+
+    时间格式与 format_datetime 保持一致（含年份），避免年份显示不一致。
+    """
     name = slot.get("name")
     if name:
         return name
@@ -92,7 +95,10 @@ def format_slot_name(slot: dict) -> str:
         try:
             s = datetime.fromisoformat(str(start))
             e = datetime.fromisoformat(str(end))
-            return f"{s.strftime('%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+            # 同日只显示一次日期，跨日显示完整起止
+            if s.date() == e.date():
+                return f"{s.strftime('%Y-%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+            return f"{s.strftime('%Y-%m-%d %H:%M')} ~ {e.strftime('%Y-%m-%d %H:%M')}"
         except ValueError:
             pass
     return str(slot.get("id", "—"))
@@ -128,6 +134,15 @@ def to_utc(value: str | datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def to_local(value: str | datetime) -> datetime:
+    """将时间值转为本地时区-aware datetime，用于 UI 展示。
+
+    统一入口：先经 to_utc 归一化（naive 视为本地时间），再 astimezone() 转回本地，
+    保证 UI 看到的是用户所在时区的「墙上时间」，而非 UTC。
+    """
+    return to_utc(value).astimezone()
+
+
 def safe_to_utc(value: str | datetime | None) -> datetime | None:
     """安全的 to_utc：传入 None 或非法字符串返回 None，避免上层异常。
 
@@ -160,12 +175,12 @@ def format_activity_status(activity: dict) -> str:
         signup_start = activity.get("signup_start")
         signup_end = activity.get("signup_end")
         if signup_start:
-            start = to_utc(signup_start)
-            if now < start:
+            start = safe_to_utc(signup_start)
+            if start and now < start:
                 return "报名未开始"
         if signup_end:
-            end = to_utc(signup_end)
-            if now > end:
+            end = safe_to_utc(signup_end)
+            if end and now > end:
                 return "报名已截止"
         return "报名中"
 
@@ -187,7 +202,6 @@ def format_activity_status(activity: dict) -> str:
         if checkin_end:
             end = safe_to_utc(checkin_end)
             if end and now > end:
-                # 仅当签到已开始（或未设开始时间但结束时间已过）才判为"签到已结束"
                 if not checkin_start or (start is not None and now >= start):
                     return "签到已结束"
         return "签到中"
@@ -195,7 +209,19 @@ def format_activity_status(activity: dict) -> str:
     return format_status(status)
 
 
-def set_banner(label: QLabel, kind: str, text: str) -> None:
+_banner_timers: dict[int, "QTimer"] = {}
+
+
+def set_banner(label: QLabel, kind: str, text: str, auto_dismiss: bool | None = None) -> None:
+    """更新 banner 文案与样式。
+
+    默认 toast 行为：success/info 在 2.5 秒后自动消失，error 持久保留直到下次操作。
+    显式传入 ``auto_dismiss`` 可覆盖默认行为。
+
+    若 label 已有挂载的自动消失计时器，会先取消，避免旧计时器误清新文案。
+    计时器以 label 为父对象，label 销毁时计时器同步销毁；
+    此处对 stop() 做异常兜底，避免 label 销毁后 id 复用导致 RuntimeError。
+    """
     mapping = {
         "success": "bannerSuccess",
         "error": "bannerError",
@@ -206,6 +232,43 @@ def set_banner(label: QLabel, kind: str, text: str) -> None:
     label.setVisible(bool(text))
     label.style().unpolish(label)
     label.style().polish(label)
+
+    label_id = id(label)
+    existing = _banner_timers.pop(label_id, None)
+    if existing is not None:
+        try:
+            existing.stop()
+        except RuntimeError:
+            # 旧 label 已销毁、计时器随之销毁，stop 失败可忽略
+            pass
+
+    should_dismiss = auto_dismiss if auto_dismiss is not None else kind in ("success", "info")
+    if text and should_dismiss:
+        timer = QTimer(label)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: _clear_banner(label))
+        timer.start(2500)
+        _banner_timers[label_id] = timer
+
+
+def _clear_banner(label: QLabel) -> None:
+    """清空 banner 文案与样式，并移除对应的自动消失计时器。"""
+    label_id = id(label)
+    existing = _banner_timers.pop(label_id, None)
+    if existing is not None:
+        try:
+            existing.stop()
+        except RuntimeError:
+            pass
+    try:
+        label.setObjectName("bannerInfo")
+        label.setText("")
+        label.setVisible(False)
+        label.style().unpolish(label)
+        label.style().polish(label)
+    except RuntimeError:
+        # label 已销毁（理论上不会发生，因计时器是 label 子对象），兜底保护
+        pass
 
 
 def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数据") -> None:
@@ -228,11 +291,11 @@ def make_status_item(text: str) -> QTableWidgetItem:
     color_map = {
         "报名中": (p.success_fg, p.success_bg),
         "报名未开始": (p.accent, p.accent_soft),
-        "报名已截止": (p.error_fg, p.error_bg),
+        "报名已截止": (p.text_tertiary, p.bg_sidebar),
         "签到未开始": (p.accent, p.accent_soft),
         "签到中": (p.success_fg, p.success_bg),
-        "签到已结束": (p.error_fg, p.error_bg),
-        "已结束": (p.error_fg, p.error_bg),
+        "签到已结束": (p.text_tertiary, p.bg_sidebar),
+        "已结束": (p.text_tertiary, p.bg_sidebar),
         "已归档": (p.text_tertiary, p.bg_sidebar),
         "草稿": (p.warning_fg, p.warning_bg),
         "待审核": (p.accent, p.accent_soft),

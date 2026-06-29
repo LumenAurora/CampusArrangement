@@ -35,6 +35,14 @@ class CheckInService:
         """
         return dt.astimezone(timezone.utc)
 
+    @staticmethod
+    def _check_owner_or_admin(user: User, activity: dict) -> None:
+        """校验调用者是超级管理员或活动拥有者，防止 ORGANIZER 越权操作他人活动。"""
+        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+            raise PermissionDenied("仅管理员或组织者可执行此操作")
+        if user.role != Role.SUPER_ADMIN and activity.get("owner_id") != user.id:
+            raise PermissionDenied("无权操作该活动")
+
     def _validate_checkin_allowed(self, activity: dict) -> None:
         """校验活动状态和签到时间窗口。
 
@@ -100,8 +108,7 @@ class CheckInService:
         activity = self._activity_repo.get(activity_id)
         if not activity:
             raise ValidationError("活动不存在")
-        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            raise ValidationError("仅管理员或组织者可手动签到")
+        self._check_owner_or_admin(user, activity)
         self._validate_checkin_allowed(activity)
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if existing:
@@ -118,13 +125,13 @@ class CheckInService:
         activity = self._activity_repo.get(activity_id)
         if not activity:
             raise ValidationError("活动不存在")
-        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            raise ValidationError("仅管理员或组织者可标记缺勤")
+        self._check_owner_or_admin(user, activity)
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if existing:
             if existing["status"] == CheckInStatus.ABSENT.value:
                 raise ValidationError("该用户已被标记缺勤")
-            self._checkin_repo.update_status(existing["id"], CheckInStatus.ABSENT)
+            # 保留原始 checked_at，避免覆盖用户实际签到时间
+            self._checkin_repo.update_status(existing["id"], CheckInStatus.ABSENT, keep_checked_at=True)
             return CheckIn(
                 id=existing["id"], activity_id=activity_id, user_id=user_id,
                 slot_id=slot_id, status=CheckInStatus.ABSENT,
@@ -141,11 +148,10 @@ class CheckInService:
 
     def unmark_absent(self, user: User, activity_id: str, user_id: str, slot_id: str) -> None:
         """取消缺勤标记，恢复为已签到"""
-        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            raise ValidationError("仅管理员或组织者可取消缺勤标记")
         activity = self._activity_repo.get(activity_id)
         if not activity:
             raise ValidationError("活动不存在")
+        self._check_owner_or_admin(user, activity)
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if not existing:
             raise ValidationError("该用户无签到记录")
@@ -161,6 +167,9 @@ class CheckInService:
         if activity.get("checkin_mode") not in (CheckInMode.SELF_CODE.value, CheckInMode.QRCODE.value):
             raise ValidationError("该活动不支持自助签到码签到")
         self._validate_checkin_allowed(activity)
+        # 拦截空签到码：避免活动未生成签到码或用户传入空值时被 "" != "" 误判绕过
+        if not activity.get("checkin_code") or not checkin_code:
+            raise ValidationError("签到码未生成或无效，请联系管理员生成签到码")
         if activity.get("checkin_code") != checkin_code:
             raise ValidationError("签到码无效")
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
@@ -188,21 +197,20 @@ class CheckInService:
         if activity.get("checkin_mode") != CheckInMode.LOCATION.value:
             raise ValidationError("该活动不支持位置签到")
         self._validate_checkin_allowed(activity)
-        # 验证位置距离
+        # 验证位置距离：LOCATION 模式下 location 必须是有效的"纬度,经度"坐标，
+        # 缺失或格式异常时必须拒绝签到，避免无校验直接放行。
         location_str = activity.get("location", "")
-        if not location_str:
-            raise ValidationError("活动未设置地点坐标，无法进行位置签到")
-        if "," not in location_str:
-            raise ValidationError("活动地点格式不是坐标，无法进行位置签到")
+        if not location_str or "," not in location_str:
+            raise ValidationError("活动地点坐标未配置或格式异常，无法进行位置签到")
         try:
             parts = location_str.split(",")
             act_lat = float(parts[0].strip())
             act_lon = float(parts[1].strip())
+            distance = _haversine_km(act_lat, act_lon, latitude, longitude)
+            if distance * 1000 > _DEFAULT_MAX_DISTANCE_M:
+                raise ValidationError(f"您距离活动地点过远（{distance * 1000:.0f}米），无法签到")
         except (ValueError, IndexError):
-            raise ValidationError("活动地点坐标格式无效，应为：纬度,经度")
-        distance = _haversine_km(act_lat, act_lon, latitude, longitude)
-        if distance * 1000 > _DEFAULT_MAX_DISTANCE_M:
-            raise ValidationError(f"您距离活动地点过远（{distance * 1000:.0f}米），无法签到")
+            raise ValidationError("活动地点坐标格式异常，无法进行位置签到")
         existing = self._checkin_repo.get_by_user_slot(user_id, slot_id)
         if existing:
             raise ConflictError("您已签到此时段")
@@ -250,8 +258,7 @@ class CheckInService:
         activity = self._activity_repo.get(activity_id)
         if not activity:
             raise ValidationError("活动不存在")
-        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            raise ValidationError("仅管理员或组织者可生成签到码")
+        self._check_owner_or_admin(user, activity)
         if activity.get("checkin_mode") not in (CheckInMode.SELF_CODE.value, CheckInMode.QRCODE.value):
             raise ValidationError("该活动签到模式不支持生成签到码")
         code = secrets.token_hex(4).upper()

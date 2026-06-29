@@ -46,11 +46,46 @@ class UserRepository:
             conn.close()
 
     def delete(self, user_id: str) -> bool:
+        """删除用户。
+
+        前置处理（与外键约束维护一致）：
+        1. 拒绝删除尚为小组 owner 的用户，避免 groups.owner_id 外键约束崩溃；
+        2. 释放该用户 REALTIME 模式下 PENDING 报名占用的 slot.used_count，
+           避免 users 级联删除 registrations 后 slot 名额虚占。
+
+        所有清理在单事务内完成，保证原子性。
+        """
         conn = get_connection()
         try:
+            # 1. 拒绝小组 owner 删除
+            group_owner_count = conn.execute(
+                "SELECT COUNT(*) FROM groups WHERE owner_id = ?", (user_id,)
+            ).fetchone()[0]
+            if group_owner_count > 0:
+                raise ConflictError("该用户是小组 owner，请先转让或删除小组后再删除用户")
+
+            # 2. 释放该用户 PENDING 报名占用的 slot.used_count
+            # registrations 表通过 ON DELETE CASCADE 级联删除，但 slots.used_count 不会回滚，
+            # 这里手动扣减。仅处理 status='pending' 的报名，因为 ASSIGNED/CONFIRMED 已被
+            # scheduling_service.reset_used_counts 在排班时重算。
+            pending_rows = conn.execute(
+                "SELECT slot_id FROM registrations WHERE user_id = ? AND status = 'pending'",
+                (user_id,),
+            ).fetchall()
+            for row in pending_rows:
+                slot_id = row["slot_id"] if hasattr(row, "keys") else row[0]
+                conn.execute(
+                    "UPDATE slots SET used_count = MAX(used_count - 1, 0) WHERE id = ?",
+                    (slot_id,),
+                )
+
+            # 3. 删除用户（registrations/checkins/group_members 由 ON DELETE CASCADE 处理）
             cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -125,12 +160,14 @@ class UserRepository:
 
 
 class ActivityRepository:
-    def create(self, activity: Activity) -> None:
-        conn = get_connection()
+    def create(self, activity: Activity, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id, checkin_closed) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id, checkin_closed, allow_multiple_slots) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -149,11 +186,14 @@ class ActivityRepository:
                     activity.checkin_end.isoformat() if activity.checkin_end else None,
                     activity.group_id,
                     1 if activity.checkin_closed else 0,
+                    1 if activity.allow_multiple_slots else 0,
                 ),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def get(self, activity_id: str) -> dict | None:
         conn = get_connection()
@@ -256,8 +296,10 @@ class TimeSlotRepository:
         finally:
             conn.close()
 
-    def create(self, slot: TimeSlot) -> None:
-        conn = get_connection()
+    def create(self, slot: TimeSlot, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             start_time_str = slot.start_time.isoformat() if slot.start_time else None
             end_time_str = slot.end_time.isoformat() if slot.end_time else None
@@ -277,9 +319,11 @@ class TimeSlotRepository:
                     slot.parent_slot_id,
                 ),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def list_by_activity(self, activity_id: str, conn: sqlite3.Connection | None = None) -> list[dict]:
         own = conn is None
@@ -461,7 +505,7 @@ class RegistrationRepository:
         except sqlite3.IntegrityError:
             if own:
                 conn.rollback()
-            raise ConflictError("您已报名该活动，请勿重复报名")
+            raise ConflictError("您已报名该时段，请勿重复报名")
         finally:
             if own:
                 conn.close()
@@ -521,6 +565,18 @@ class RegistrationRepository:
             rows = conn.execute(
                 "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ? AND status != ?",
                 (user_id, activity_id, RegistrationStatus.CANCELLED.value),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def list_by_user_slot(self, user_id: str, slot_id: str) -> list[dict]:
+        """查询用户在指定 slot 下的所有未取消报名记录（用于兼报模式下的重复校验）。"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM registrations WHERE user_id = ? AND slot_id = ? AND status != ?",
+                (user_id, slot_id, RegistrationStatus.CANCELLED.value),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
@@ -677,6 +733,8 @@ class CheckInRepository:
             )
             conn.commit()
         except sqlite3.IntegrityError:
+            # 并发场景下 check_in 与 self_check_in 都可能先通过 get_by_user_slot 检查
+            # 但 UNIQUE(user_id, slot_id) 约束会拦截重复插入，转换为业务冲突
             conn.rollback()
             raise ConflictError("该用户已签到此时段")
         except Exception:
@@ -815,16 +873,6 @@ class GroupRepository:
     def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending", reason: str = "") -> None:
         conn = get_connection()
         try:
-            # Use INSERT ... ON CONFLICT to avoid silently demoting approved members.
-            # Only update if the new status is different and the existing record is not approved,
-            # or if the caller explicitly sets a higher-priority status.
-            existing = conn.execute(
-                "SELECT status FROM group_members WHERE group_id = ? AND user_id = ?",
-                (group_id, user_id),
-            ).fetchone()
-            if existing and existing["status"] == "approved" and status != "approved":
-                # Don't demote an approved member via add_member
-                return
             conn.execute(
                 "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at, reason) VALUES (?, ?, ?, ?, ?, ?)",
                 (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat(), reason),

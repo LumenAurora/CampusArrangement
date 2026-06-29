@@ -34,11 +34,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Campus Scheduler API", version="1.0")
 
-import os
-_allowed_origins = os.environ.get("CAMPUS_CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,11 +62,9 @@ _TOKEN_TTL = 86400
 
 
 def _ensure_admin() -> None:
-    import os
     if user_repo.get_by_username("admin"):
         return
-    admin_password = os.environ.get("CAMPUS_ADMIN_PASSWORD", "admin")
-    user_service.register(current_user=None, username="admin", password=admin_password, role=Role.SUPER_ADMIN)
+    user_service.register(current_user=None, username="admin", password="admin", role=Role.SUPER_ADMIN)
 
 
 _ensure_admin()
@@ -99,6 +95,8 @@ class ActivityCreateRequest(BaseModel):
     checkin_mode: CheckInMode = CheckInMode.MANUAL
     checkin_start: datetime | None = None
     checkin_end: datetime | None = None
+    group_id: str | None = None
+    allow_multiple_slots: bool = False
 
 
 class SlotCreateRequest(BaseModel):
@@ -215,12 +213,29 @@ def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
     record = user_repo.get_by_id(user_id)
     if not record:
         raise HTTPException(status_code=401, detail="用户不存在")
-    return _to_user(record)
+    user = _to_user(record)
+    # 校验用户当前状态：REJECTED/PENDING 用户即便持有旧 token 也不允许操作
+    if user.status != UserStatus.APPROVED:
+        with _tokens_lock:
+            _tokens.pop(token, None)
+        raise HTTPException(status_code=403, detail="账号已被禁用或尚未审批通过")
+    return user
 
 
 def _require_roles(user: User, roles: set[Role]) -> None:
     if user.role not in roles:
         raise HTTPException(status_code=403, detail="权限不足")
+
+
+def _check_activity_access(user: User, activity_id: str) -> dict:
+    """校验用户对活动的访问权限：超级管理员或活动 owner 可访问，
+    否则抛 403。返回活动记录供后续使用。"""
+    activity = activity_repo.get(activity_id)
+    if not activity:
+        raise HTTPException(status_code=404, detail="活动不存在")
+    if user.role != Role.SUPER_ADMIN and activity.get("owner_id") != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该活动的数据")
+    return activity
 
 
 def _handle_domain_error(exc: Exception) -> None:
@@ -262,6 +277,13 @@ def login(payload: LoginRequest) -> dict:
     }
 
 
+def _strip_secrets(user: dict | None) -> dict | None:
+    """剔除用户记录中的敏感字段（password_hash），避免通过 API 外泄。"""
+    if user is None:
+        return None
+    return {k: v for k, v in user.items() if k != "password_hash"}
+
+
 @app.get("/users")
 def list_users(
     username: Optional[str] = None,
@@ -270,7 +292,8 @@ def list_users(
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     if username:
         user = user_repo.get_by_username(username)
-        return [user] if user else []
+        stripped = _strip_secrets(user)
+        return [stripped] if stripped else []
     return user_repo.list_all()
 
 
@@ -278,17 +301,15 @@ def list_users(
 def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     user = user_repo.get_by_id(user_id)
-    if not user:
+    stripped = _strip_secrets(user)
+    if not stripped:
         raise HTTPException(status_code=404, detail="用户不存在")
-    return user
+    return stripped
 
 
 @app.post("/users")
 def create_user(payload: UserCreateRequest, current_user: User = Depends(_get_current_user)) -> dict:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
-    # ORGANIZER cannot create SUPER_ADMIN users
-    if current_user.role == Role.ORGANIZER and payload.role == Role.SUPER_ADMIN:
-        raise HTTPException(status_code=403, detail="组织者无权创建超级管理员")
     try:
         user = user_service.register(current_user=current_user, username=payload.username, password=payload.password, role=payload.role)
     except Exception as exc:
@@ -469,6 +490,8 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
             checkin_mode=payload.checkin_mode.value,
             checkin_start=payload.checkin_start,
             checkin_end=payload.checkin_end,
+            group_id=payload.group_id,
+            allow_multiple_slots=payload.allow_multiple_slots,
         )
     except Exception as exc:
         _handle_domain_error(exc)
@@ -488,6 +511,8 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
         "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+        "group_id": activity.group_id,
+        "allow_multiple_slots": activity.allow_multiple_slots,
     }
 
 
@@ -533,6 +558,8 @@ def duplicate_activity(
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
         "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+        "group_id": activity.group_id,
+        "allow_multiple_slots": activity.allow_multiple_slots,
     }
 
 
@@ -554,8 +581,8 @@ def update_activity_status(
                 logger.warning(f"Auto-scheduling failed for activity {activity_id}: {e}")
                 try:
                     activity_service.reopen_activity(user=current_user, activity_id=activity_id)
-                except Exception as reopen_err:
-                    logger.error(f"Failed to reopen activity {activity_id} after scheduling failure: {reopen_err}")
+                except Exception:
+                    pass
                 raise ValidationError(f"排班失败，活动已重新开放：{e}") from e
         elif payload.action == "reopen":
             activity_service.reopen_activity(user=current_user, activity_id=activity_id)
@@ -683,11 +710,14 @@ def list_registrations(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
-        if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            raise HTTPException(status_code=403, detail="权限不足")
+        _check_activity_access(current_user, activity_id)
         if status == "pending":
             return reg_repo.list_pending(activity_id)
-        return reg_repo.list_by_activity(activity_id)
+        all_regs = reg_repo.list_by_activity(activity_id)
+        if status:
+            # 仅返回符合状态过滤的报名，避免静默忽略 status 参数
+            return [r for r in all_regs if r.get("status") == status]
+        return all_regs
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
@@ -696,13 +726,10 @@ def list_registrations(
 
 
 @app.get("/registrations/{registration_id}")
-def get_registration(registration_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+def get_registration(registration_id: str, _: User = Depends(_get_current_user)) -> dict:
     reg = reg_repo.get(registration_id)
     if not reg:
         raise HTTPException(status_code=404, detail="报名记录不存在")
-    # Only the owner or admin/organizer can view registration details
-    if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and reg.get("user_id") != current_user.id:
-        raise HTTPException(status_code=403, detail="权限不足")
     return reg
 
 
@@ -748,6 +775,7 @@ def cancel_registration(
 @app.post("/scheduling/run")
 def run_scheduling(payload: ScheduleRunRequest, current_user: User = Depends(_get_current_user)) -> dict:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _check_activity_access(current_user, payload.activity_id)
     try:
         count = scheduling_service.run(payload.activity_id)
     except Exception as exc:
@@ -762,18 +790,13 @@ def list_schedules(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
-        # Non-admin users can only view schedules for activities they participate in
-        if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            user_schedules = schedule_repo.list_by_user(current_user.id)
-            if not any(s["activity_id"] == activity_id for s in user_schedules):
-                raise HTTPException(status_code=403, detail="权限不足")
+        _check_activity_access(current_user, activity_id)
         return schedule_repo.list_by_activity(activity_id)
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
         return schedule_repo.list_by_user(user_id)
     raise HTTPException(status_code=400, detail="必须提供 activity_id 或 user_id")
-
 
 @app.get("/checkins")
 def list_checkins(
@@ -782,6 +805,7 @@ def list_checkins(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
+        _check_activity_access(current_user, activity_id)
         return checkin_repo.list_by_activity(activity_id)
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
