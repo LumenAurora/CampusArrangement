@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
-    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -92,19 +91,13 @@ class NavigationWindow(QMainWindow):
         separator.setFixedHeight(1)
         separator.setStyleSheet(f"background: {p.border_light}; border: none;")
 
-        # 关键修复：原 body_layout 用 QHBoxLayout，nav 收起只改自身宽度，
-        # 不通知右侧 stack 内页面重排，导致页面内表格仍按原宽度渲染、横向溢出。
-        # 改用 QSplitter，nav 可拖拽收起，且 stack 自动获得释放的空间；
-        # 同时设置 nav 可折叠、stack 不可折叠，避免 stack 被压缩到不可用。
-        body_splitter = QSplitter(Qt.Horizontal)
-        body_splitter.setContentsMargins(0, 0, 0, 0)
-        body_splitter.addWidget(self._nav)
-        body_splitter.addWidget(self._stack)
-        body_splitter.setCollapsible(0, True)
-        body_splitter.setCollapsible(1, False)
-        body_splitter.setStretchFactor(0, 0)
-        body_splitter.setStretchFactor(1, 1)
-        body_splitter.setHandleWidth(6)
+        # 侧边栏 + 主内容区：用 QHBoxLayout，nav 宽度由动画控制，
+        # stack 自动占据剩余空间。nav 收起后的重排在 _on_sidebar_anim_finished 中触发。
+        body_layout = QHBoxLayout()
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
+        body_layout.addWidget(self._nav)
+        body_layout.addWidget(self._stack, 1)
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(16, 12, 16, 16)
@@ -112,7 +105,7 @@ class NavigationWindow(QMainWindow):
         root_layout.addWidget(top_bar)
         root_layout.addWidget(separator)
         root_layout.addSpacing(12)
-        root_layout.addWidget(body_splitter)
+        root_layout.addLayout(body_layout)
 
         root = QWidget()
         root.setLayout(root_layout)
@@ -178,7 +171,7 @@ class NavigationWindow(QMainWindow):
         self._anim2.setEndValue(target)
         self._anim2.start()
 
-        # 关键修复：动画结束后触发当前页面重排，让其内的表格/QSplitter
+        # 关键修复：动画结束后触发当前页面重排，让其内的表格
         # 按 nav 收起后释放的宽度重新计算几何，避免横向溢出/滚动条残留。
         self._anim2.finished.connect(self._on_sidebar_anim_finished)
 
