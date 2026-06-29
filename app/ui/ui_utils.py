@@ -202,6 +202,7 @@ def format_activity_status(activity: dict) -> str:
         if checkin_end:
             end = safe_to_utc(checkin_end)
             if end and now > end:
+                # 仅当签到已开始（或未设开始时间但结束时间已过）才判为"签到已结束"
                 if not checkin_start or (start is not None and now >= start):
                     return "签到已结束"
         return "签到中"

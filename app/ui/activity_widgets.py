@@ -854,7 +854,6 @@ class ActivityPanel(QWidget):
     def _create_activity(self) -> None:
         try:
             set_banner(self._activity_message, "info", "")
-            # Client-side validation
             name = self._activity_name.text().strip()
             if not name:
                 set_banner(self._activity_message, "error", "活动名称不能为空")
@@ -880,7 +879,6 @@ class ActivityPanel(QWidget):
                 group_id=self._group_selector.currentData(),
             )
             self.refresh()
-            # Clear form fields after successful creation
             self._activity_name.clear()
             self._details.clear()
             self._location.clear()
