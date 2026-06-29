@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, QTimer, Signal
+from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRect, QRectF, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget,
@@ -203,20 +203,33 @@ class ActivityCalendar(QCalendarWidget):
         painter.setFont(font)
         painter.drawText(rect.adjusted(4, 2, -2, 0), Qt.AlignTop | Qt.AlignLeft, str(date.day()))
 
-        # 活动条目
+        # 活动条目：用户反馈「单元格扩大不好，无法显示底下的事件，干脆同一行标记数量」
+        # 原方案画 3 条 bar 占用整个单元格高度，事件多时被截断且挤压日期数字。
+        # 改为：单元格底部同行显示事件数量徽标（按类型着色），点击日期后查看详情。
         events = self._events_by_date.get(date, [])
         if events:
-            y_offset = 18
-            max_events = min(len(events), 3)  # 最多显示3条
-            bar_height = 14
-            bar_margin = 2
-            for i in range(max_events):
-                event = events[i]
-                bar_rect = rect.adjusted(3, y_offset + i * (bar_height + bar_margin), -3, 0)
-                bar_rect.setHeight(bar_height)
+            # 按类型分组计数
+            type_counts: dict[str, int] = {}
+            for ev in events:
+                t = ev.get("type", "schedule")
+                type_counts[t] = type_counts.get(t, 0) + 1
 
-                # 条目颜色
-                etype = event.get("type", "schedule")
+            # 底部一行徽标：每个类型一个圆角小色块 + 数量
+            badge_h = 12
+            badge_margin = 2
+            x = rect.left() + 3
+            y = rect.bottom() - badge_h - 2
+            font.setPointSize(7)
+            font.setBold(True)
+            painter.setFont(font)
+
+            # 按稳定顺序：activity → schedule → 其他
+            ordered_types = sorted(
+                type_counts.keys(),
+                key=lambda t: {"activity": 0, "schedule": 1}.get(t, 2),
+            )
+            for etype in ordered_types:
+                count = type_counts[etype]
                 if etype == "activity":
                     bg = _color(p.accent)
                     fg = _color(p.text_on_accent)
@@ -227,26 +240,23 @@ class ActivityCalendar(QCalendarWidget):
                     bg = _color(p.success_fg)
                     fg = _color(p.text_on_accent)
 
+                label = f"{count}个" if count > 1 else "·"
+                # 测量文字宽度估算徽标宽度
+                metrics = painter.fontMetrics()
+                text_w = metrics.horizontalAdvance(label)
+                badge_w = text_w + 6
+
+                badge_rect = QRect(x, y, badge_w, badge_h)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(bg)
-                painter.drawRoundedRect(bar_rect, 3, 3)
+                painter.drawRoundedRect(badge_rect, 3, 3)
 
-                # 条目文字
                 painter.setPen(fg)
-                font.setPointSize(7)
-                font.setBold(False)
-                painter.setFont(font)
-                title = event.get("title", "")
-                if len(title) > 8:
-                    title = title[:7] + "…"
-                painter.drawText(bar_rect.adjusted(3, 0, -1, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
-
-            if len(events) > 3:
-                painter.setPen(_color(p.text_tertiary))
-                font.setPointSize(7)
-                painter.setFont(font)
-                more_y = y_offset + max_events * (bar_height + bar_margin)
-                painter.drawText(rect.adjusted(5, more_y, -2, 0), Qt.AlignTop | Qt.AlignLeft, f"+{len(events) - 3}")
+                painter.drawText(badge_rect, Qt.AlignCenter, label)
+                x += badge_w + badge_margin
+                # 防止超出单元格右边界
+                if x > rect.right() - badge_w:
+                    break
 
         # 今日下划线
         if is_today:

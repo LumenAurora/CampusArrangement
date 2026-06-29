@@ -122,7 +122,7 @@ class _ActivityInfoCard(QFrame):
         status_text = format_activity_status(activity)
         self._status_label.setText(status_text)
 
-        alloc_map = {"greedy": "贪心分配", "first_come": "先到先得", "lottery": "抽签"}
+        alloc_map = {"greedy": "贪心分配", "first_come": "先到先得", "lottery": "抽签", "points": "意愿点"}
         self._alloc_label.setText(alloc_map.get(activity.get("allocation_mode", ""), activity.get("allocation_mode", "-")))
 
         signup_map = {"realtime": "实时", "blind": "盲选"}

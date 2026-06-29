@@ -35,6 +35,11 @@ class AllocationMode(str, Enum):
     GREEDY = "greedy"
     FIRST_COME = "first_come"
     LOTTERY = "lottery"
+    POINTS = "points"  # 意愿点模式：用户分配 99 意愿点到志愿，高者优先，同级别抽签
+
+
+# 意愿点模式每用户每活动的总点数上限
+MAX_POINTS = 99
 
 
 class CheckInMode(str, Enum):
@@ -43,6 +48,13 @@ class CheckInMode(str, Enum):
     SELF_CODE = "self_code"
     LOCATION = "location"
     PHOTO = "photo"
+
+
+class NotificationMode(str, Enum):
+    """用户通知偏好：决定提醒推送渠道"""
+    IN_APP = "in_app"  # 应用内通知（弹窗/系统托盘）
+    EMAIL = "email"    # 邮件通知（预留，当前仅记录偏好）
+    NONE = "none"      # 不提醒
 
 
 class RegistrationStatus(str, Enum):
@@ -92,6 +104,8 @@ class User:
     username: str
     role: Role
     status: UserStatus = UserStatus.APPROVED
+    avatar_path: str = ""
+    notification_mode: NotificationMode = NotificationMode.IN_APP
 
     @staticmethod
     def create(username: str, role: Role, status: UserStatus = UserStatus.APPROVED) -> "User":
@@ -116,6 +130,7 @@ class Activity:
     checkin_start: datetime | None = None
     checkin_end: datetime | None = None
     group_id: str | None = None  # 小组限制：None=公开，非None=仅小组成员可报名
+    checkin_closed: bool = False  # 人工提前结束签到（与 checkin_end 时间独立，可逆）
     allow_multiple_slots: bool = False  # 是否允许同一用户兼报多个时段/岗位
 
     @staticmethod
@@ -134,6 +149,7 @@ class Activity:
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
         group_id: str | None = None,
+        checkin_closed: bool = False,
         allow_multiple_slots: bool = False,
     ) -> "Activity":
         return Activity(
@@ -153,6 +169,7 @@ class Activity:
             checkin_start=checkin_start,
             checkin_end=checkin_end,
             group_id=group_id,
+            checkin_closed=checkin_closed,
             allow_multiple_slots=allow_multiple_slots,
         )
 
@@ -252,9 +269,10 @@ class Registration:
     priority: int
     status: RegistrationStatus
     created_at: datetime
+    points: int = 0  # 意愿点模式下用户分配到该志愿的点数（0~MAX_POINTS）
 
     @staticmethod
-    def create(user_id: str, activity_id: str, slot_id: str, priority: int) -> "Registration":
+    def create(user_id: str, activity_id: str, slot_id: str, priority: int, points: int = 0) -> "Registration":
         return Registration(
             id=str(uuid4()),
             user_id=user_id,
@@ -263,6 +281,7 @@ class Registration:
             priority=priority,
             status=RegistrationStatus.PENDING,
             created_at=datetime.now(timezone.utc),
+            points=points,
         )
 
 

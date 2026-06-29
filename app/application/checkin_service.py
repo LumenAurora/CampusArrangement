@@ -49,6 +49,8 @@ class CheckInService:
         允许签到的状态：
         - CLOSED / ARCHIVED：报名已结束，始终允许签到（受签到窗口约束）。
         - OPEN：仅当活动配置了签到时间窗口时允许签到（支持"边报名边签到"场景）。
+
+        人工提前结束签到（checkin_closed=True）优先于时间窗口判定。
         """
         status = activity["status"]
         allowed_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value}
@@ -58,6 +60,9 @@ class CheckInService:
                 raise ValidationError("活动报名中且未设置签到时间窗口，请先关闭报名或设置签到窗口")
         elif status not in allowed_statuses:
             raise ValidationError("该活动当前不在可签到状态")
+        # 人工提前结束签到：最高优先级，直接拒绝
+        if activity.get("checkin_closed"):
+            raise ValidationError("签到已结束")
         now = datetime.now(timezone.utc)
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")
@@ -71,6 +76,32 @@ class CheckInService:
             end = self._to_utc(end)
             if now > end:
                 raise ValidationError("签到已结束")
+
+    def close_checkin(self, user: User, activity_id: str) -> None:
+        """人工提前结束签到。与 checkin_end 时间独立，可逆（reopen_checkin 恢复）。"""
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+            raise PermissionDenied("仅管理员或组织者可结束签到")
+        if user.role != Role.SUPER_ADMIN and activity.get("owner_id") != user.id:
+            raise PermissionDenied("无权操作该活动")
+        if activity.get("checkin_closed"):
+            raise ValidationError("签到已结束，无需重复操作")
+        self._activity_repo.update_checkin_closed(activity_id, True)
+
+    def reopen_checkin(self, user: User, activity_id: str) -> None:
+        """恢复签到（撤销人工提前结束）。仅在 checkin_end 时间未过期时生效。"""
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+            raise PermissionDenied("仅管理员或组织者可恢复签到")
+        if user.role != Role.SUPER_ADMIN and activity.get("owner_id") != user.id:
+            raise PermissionDenied("无权操作该活动")
+        if not activity.get("checkin_closed"):
+            raise ValidationError("签到未被人工结束，无需恢复")
+        self._activity_repo.update_checkin_closed(activity_id, False)
 
     def check_in(self, user: User, activity_id: str, user_id: str, slot_id: str) -> CheckIn:
         """管理员手动签到"""
@@ -232,6 +263,12 @@ class CheckInService:
             raise ValidationError("该活动签到模式不支持生成签到码")
         code = secrets.token_hex(4).upper()
         self._activity_repo.update_checkin_code(activity_id, code)
+        # Re-read the activity to get the actual stored code.
+        # In remote mode, the server generates its own code and ignores
+        # the one we passed in, so we must return the server's version.
+        updated = self._activity_repo.get(activity_id)
+        if updated and updated.get("checkin_code"):
+            return updated["checkin_code"]
         return code
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
@@ -250,7 +287,16 @@ class CheckInService:
         total_assigned = len(results)
         checked_in = sum(1 for c in checkins if c["status"] == CheckInStatus.CHECKED_IN.value)
         absent = sum(1 for c in checkins if c["status"] == CheckInStatus.ABSENT.value)
-        not_checked_in = max(0, total_assigned - checked_in - absent)
+        raw_not_checked_in = total_assigned - checked_in - absent
+        if raw_not_checked_in < 0:
+            # Data inconsistency: more checkins/absences than assignments
+            # Log the discrepancy but still report 0 to avoid negative UI values
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Checkin stats inconsistency for activity {activity_id}: "
+                f"total_assigned={total_assigned}, checked_in={checked_in}, absent={absent}"
+            )
+        not_checked_in = max(0, raw_not_checked_in)
         # 按时段统计
         slot_stats: dict[str, dict] = {}
         for r in results:

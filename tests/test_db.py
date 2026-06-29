@@ -2,8 +2,8 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-
-os.environ["CAMPUS_DB_PATH"] = os.path.join(tempfile.gettempdir(), "campus_test.db")
+from pathlib import Path
+from unittest.mock import patch
 
 from app.infrastructure.db import init_db
 from app.infrastructure.repositories import ActivityRepository, CheckInRepository, RegistrationRepository, TimeSlotRepository, UserRepository
@@ -11,9 +11,21 @@ from app.domain.models import Activity, Role, TimeSlot, User
 
 
 class DatabaseTests(unittest.TestCase):
+    """数据库基础行为测试 — 每个测试使用独立 DB（通过 patch DB_PATH）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmpdir = tempfile.mkdtemp(prefix="campus_db_test_")
+
     def setUp(self) -> None:
-        if os.path.exists(os.environ["CAMPUS_DB_PATH"]):
-            os.remove(os.environ["CAMPUS_DB_PATH"])
+        db_path = os.path.join(self._tmpdir, f"{self._testMethodName}.db")
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        # patch DB_PATH 避免模块导入时缓存导致的测试间 DB 共享
+        self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(db_path))
+        self._db_patcher.start()
+        self.addCleanup(self._db_patcher.stop)
+        os.environ.pop("CAMPUS_DB_PATH", None)
         init_db()
 
     def test_slot_locking(self) -> None:

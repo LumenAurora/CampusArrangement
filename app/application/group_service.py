@@ -48,12 +48,28 @@ class GroupService:
             raise ValidationError("小组不存在")
         if user.role != Role.SUPER_ADMIN and group["owner_id"] != user.id:
             raise PermissionDenied("只能删除自己创建的小组")
+        # Clear group_id on activities referencing this group to prevent
+        # them from becoming inaccessible to everyone.
+        all_activities = self._activity_repo.list_all()
+        for activity in all_activities:
+            if activity.get("group_id") == group_id:
+                # Use a direct DB update to clear the group_id
+                from app.infrastructure.db import get_connection
+                conn = get_connection()
+                try:
+                    conn.execute(
+                        "UPDATE activities SET group_id = NULL WHERE id = ?",
+                        (activity["id"],),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
         self._repo.delete(group_id)
 
     # ── 成员管理 ──────────────────────────────────────────
 
-    def join_group(self, user_id: str, group_id: str) -> None:
-        """用户申请加入小组"""
+    def join_group(self, user_id: str, group_id: str, reason: str = "") -> None:
+        """用户申请加入小组，可附申请理由供管理端审批参考"""
         group = self._repo.get(group_id)
         if not group:
             raise ValidationError("小组不存在")
@@ -64,10 +80,10 @@ class GroupService:
             if existing["status"] == MemberStatus.PENDING.value:
                 raise ValidationError("您的加入申请正在审核中")
             if existing["status"] == MemberStatus.REJECTED.value:
-                # 允许重新申请
-                self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value)
+                # 允许重新申请，更新理由
+                self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value, reason=reason)
                 return
-        self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value)
+        self._repo.add_member(group_id, user_id, role=GroupRole.MEMBER.value, status=MemberStatus.PENDING.value, reason=reason)
 
     def approve_member(self, user: User, group_id: str, member_user_id: str) -> None:
         """审批通过小组成员申请"""

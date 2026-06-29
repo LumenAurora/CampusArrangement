@@ -39,7 +39,8 @@ class UserRepository:
     def list_all(self) -> list[dict]:
         conn = get_connection()
         try:
-            rows = conn.execute("SELECT id, username, role, status, created_at FROM users ORDER BY created_at DESC").fetchall()
+            # 包含 avatar_path/notification_mode，供 UI 显示头像与偏好
+            rows = conn.execute("SELECT id, username, role, status, created_at, avatar_path, notification_mode FROM users ORDER BY created_at DESC").fetchall()
             return [dict(row) for row in rows]
         finally:
             conn.close()
@@ -115,7 +116,7 @@ class UserRepository:
         conn = get_connection()
         try:
             rows = conn.execute(
-                "SELECT id, username, role, status, created_at FROM users WHERE status = ? ORDER BY created_at DESC",
+                "SELECT id, username, role, status, created_at, avatar_path, notification_mode FROM users WHERE status = ? ORDER BY created_at DESC",
                 (status.value,),
             ).fetchall()
             return [dict(row) for row in rows]
@@ -133,6 +134,30 @@ class UserRepository:
         finally:
             conn.close()
 
+    def update_avatar(self, user_id: str, avatar_path: str) -> None:
+        """更新用户头像路径（相对路径，便于本地/远程统一）。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET avatar_path = ? WHERE id = ?",
+                (avatar_path, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_notification_mode(self, user_id: str, mode: str) -> None:
+        """更新用户通知偏好（in_app/email/none）。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET notification_mode = ? WHERE id = ?",
+                (mode, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class ActivityRepository:
     def create(self, activity: Activity, conn: sqlite3.Connection | None = None) -> None:
@@ -141,8 +166,8 @@ class ActivityRepository:
             conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id, allow_multiple_slots) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id, checkin_closed, allow_multiple_slots) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -160,6 +185,7 @@ class ActivityRepository:
                     activity.checkin_start.isoformat() if activity.checkin_start else None,
                     activity.checkin_end.isoformat() if activity.checkin_end else None,
                     activity.group_id,
+                    1 if activity.checkin_closed else 0,
                     1 if activity.allow_multiple_slots else 0,
                 ),
             )
@@ -243,6 +269,18 @@ class ActivityRepository:
             conn.execute(
                 "UPDATE activities SET checkin_code = ? WHERE id = ?",
                 (checkin_code, activity_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_checkin_closed(self, activity_id: str, closed: bool) -> None:
+        """人工提前结束/恢复签到。closed=True 结束，False 恢复。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE activities SET checkin_closed = ? WHERE id = ?",
+                (1 if closed else 0, activity_id),
             )
             conn.commit()
         finally:
@@ -449,8 +487,8 @@ class RegistrationRepository:
             conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO registrations (id, user_id, activity_id, slot_id, priority, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO registrations (id, user_id, activity_id, slot_id, priority, status, created_at, points) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     registration.id,
                     registration.user_id,
@@ -459,6 +497,7 @@ class RegistrationRepository:
                     registration.priority,
                     registration.status.value,
                     registration.created_at.isoformat(),
+                    registration.points,
                 ),
             )
             if own:
@@ -598,6 +637,7 @@ class RegistrationRepository:
                     priority=row["priority"],
                     status=RegistrationStatus(row["status"]),
                     created_at=datetime.fromisoformat(row["created_at"]),
+                    points=int(row.get("points", 0) or 0),
                 )
             )
         return regs
@@ -830,12 +870,12 @@ class GroupRepository:
 
     # ── 成员管理 ────────────────────────────────────────────
 
-    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending") -> None:
+    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending", reason: str = "") -> None:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, ?, ?)",
-                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat()),
+                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat(), reason),
             )
             conn.commit()
         finally:

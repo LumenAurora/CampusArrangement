@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -30,8 +31,30 @@ def configure_table(table: QTableWidget) -> None:
     table.verticalHeader().setVisible(False)
     table.setShowGrid(False)
     table.verticalHeader().setDefaultSectionSize(40)
+    # 关键：禁用横向滚动条。Stretch 模式下若 cell widget 顶出宽度，
+    # 默认 ScrollBarAsNeeded 会冒出滚动条，导致整页可左右滑动（系统性布局 bug 根因）。
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     header = table.horizontalHeader()
     header.setSectionResizeMode(QHeaderView.Stretch)
+    header.setCascadingSectionResizes(True)
+
+
+def configure_tree(tree: QTreeWidget) -> None:
+    """QTreeWidget 的自适应配置，与 configure_table 对齐。
+
+    关键修复：原 _slot_tree 硬编码 8 列共 780px，窄窗口下必然出现横向滚动条。
+    改为 Stretch + 禁用横向滚动条，让列宽随容器自适应。
+    """
+    tree.setAlternatingRowColors(True)
+    tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+    tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    tree.setRootIsDecorated(False)
+    tree.setUniformRowHeights(True)
+    tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    header = tree.header()
+    header.setSectionResizeMode(QHeaderView.Stretch)
+    header.setStretchLastSection(True)
+    header.setCascadingSectionResizes(True)
 
 
 def make_page_header(title: str, subtitle: str | None = None) -> QWidget:
@@ -121,7 +144,10 @@ def to_local(value: str | datetime) -> datetime:
 
 
 def safe_to_utc(value: str | datetime | None) -> datetime | None:
-    """安全的 to_utc：传入 None 或非法字符串返回 None，避免上层异常。"""
+    """安全的 to_utc：传入 None 或非法字符串返回 None，避免上层异常。
+
+    用于 UI 展示场景，单个字段格式异常不应拖垮整页渲染。
+    """
     if value is None or value == "":
         return None
     try:
@@ -159,9 +185,16 @@ def format_activity_status(activity: dict) -> str:
         return "报名中"
 
     if status == "closed":
+        # 人工提前结束签到：最高优先级，直接返回"签到已结束"
+        if activity.get("checkin_closed"):
+            return "签到已结束"
         now = datetime.now(timezone.utc)
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")
+        # 调整判断顺序：先看签到是否已开始，再看是否已结束。
+        # 原逻辑直接判 checkin_end 过期就返回"签到已结束"，
+        # 但若 checkin_start 未设置或未到，应优先返回"签到未开始"，
+        # 否则会出现"刚关闭报名就显示签到已结束"的语义跳跃。
         if checkin_start:
             start = safe_to_utc(checkin_start)
             if start and now < start:
@@ -169,7 +202,8 @@ def format_activity_status(activity: dict) -> str:
         if checkin_end:
             end = safe_to_utc(checkin_end)
             if end and now > end:
-                return "签到已结束"
+                if not checkin_start or (start is not None and now >= start):
+                    return "签到已结束"
         return "签到中"
 
     return format_status(status)

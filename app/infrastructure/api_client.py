@@ -37,6 +37,9 @@ class ApiClient:
     def post(self, path: str, json: dict | None = None, require_auth: bool = True) -> Any:
         return self._request("POST", path, json=json, require_auth=require_auth)
 
+    def put(self, path: str, json: dict | None = None, require_auth: bool = True) -> Any:
+        return self._request("PUT", path, json=json, require_auth=require_auth)
+
     def _request(
         self,
         method: str,
@@ -69,10 +72,17 @@ class ApiClient:
             except ValueError:
                 detail = response.text
             detail = detail or "服务端返回错误"
+            if response.status_code == 401:
+                self._token = None
+                raise ValidationError(f"认证已过期，请重新登录：{detail}")
             if response.status_code == 403:
                 raise PermissionDenied(detail)
+            if response.status_code == 404:
+                raise ValidationError(f"资源不存在：{detail}")
             if response.status_code == 409:
                 raise ConflictError(detail)
+            if response.status_code >= 500:
+                raise ValidationError(f"服务器内部错误：{detail}")
             raise ValidationError(detail)
         if not response.content:
             return None

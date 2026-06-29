@@ -45,8 +45,16 @@ class ActivityService:
             checkin_mode_enum = CheckInMode(checkin_mode)
         except ValueError:
             raise ValidationError(f"无效的签到模式: {checkin_mode}")
+        # 选题模式（NON_TIME_SLOT）语义上无物理到场，禁用位置签到，并清空地点/签到时间，
+        # 避免脏数据落库。前端已联动隐藏相关字段，这里作为后端兜底。
+        if activity_type == ActivityType.NON_TIME_SLOT:
+            if checkin_mode_enum == CheckInMode.LOCATION:
+                raise ValidationError("选题模式不支持位置签到")
+            location = ""
+            checkin_start = None
+            checkin_end = None
         # 位置签到模式必须提供坐标格式的地点
-        if checkin_mode_enum == CheckInMode.LOCATION:
+        elif checkin_mode_enum == CheckInMode.LOCATION:
             location_stripped = location.strip()
             if not location_stripped:
                 raise ValidationError("位置签到模式必须填写活动地点坐标")
@@ -149,15 +157,7 @@ class ActivityService:
         elif slot_type == SlotType.TOPIC:
             slot = TimeSlot.create_topic(activity_id, name, capacity, metadata)
         elif slot_type == SlotType.COURSE:
-            slot = TimeSlot(
-                id=str(uuid4()),
-                activity_id=activity_id,
-                slot_type=SlotType.COURSE,
-                name=name,
-                capacity=capacity,
-                used_count=0,
-                metadata=metadata,
-            )
+            slot = TimeSlot.create_course(activity_id, name, capacity, metadata)
         else:
             raise ValidationError(f"不支持的选项类型: {slot_type}")
         self._slot_repo.create(slot)
@@ -211,6 +211,8 @@ class ActivityService:
             raise PermissionDenied("无权删除该活动")
         if activity["status"] == ActivityStatus.OPEN.value:
             raise ValidationError("报名中的活动无法删除，请先结束报名")
+        if activity["status"] == ActivityStatus.CLOSED.value:
+            raise ValidationError("已结束的活动无法删除，请先归档")
         return self._activity_repo.delete(activity_id)
 
     def _check_owner_or_admin(self, user: User, activity: dict) -> None:
