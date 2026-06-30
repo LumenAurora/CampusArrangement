@@ -42,7 +42,7 @@ from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, S
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
 from app.ui.activity_guided import GuidedActivityPanel
-from app.ui.style import FORM_LAYOUT_GUIDED, get_form_layout_mode, get_palette
+from app.ui.style import FORM_LAYOUT_FLAT, FORM_LAYOUT_GUIDED, get_form_layout_mode, get_palette
 from app.ui.ui_utils import (
     ItemDetailDialog,
     ModeSelector,
@@ -286,12 +286,13 @@ class ActivityPanel(QWidget):
         # Left column: support both guided (default) and flat layouts
         p = get_palette()
         use_guided = get_form_layout_mode() == FORM_LAYOUT_GUIDED
+        self._layout_mode = FORM_LAYOUT_GUIDED if use_guided else FORM_LAYOUT_FLAT
 
         # Build the flat-mode tab widget for backward compatibility
-        tab_widget = QTabWidget()
-        tab_widget.addTab(self._activity_group, "创建活动")
-        tab_widget.addTab(self._slot_group, "添加选项")
-        tab_widget.setStyleSheet(f"""
+        self._flat_tab_widget = QTabWidget()
+        self._flat_tab_widget.addTab(self._activity_group, "创建活动")
+        self._flat_tab_widget.addTab(self._slot_group, "添加选项")
+        self._flat_tab_widget.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: none;
                 background: transparent;
@@ -316,31 +317,14 @@ class ActivityPanel(QWidget):
         """)
 
         # ── 构建左侧内容 ──────────────────────────────────
-        left_col = QVBoxLayout()
-        left_col.setSpacing(12)
+        self._left_col_layout = QVBoxLayout()
+        self._left_col_layout.setSpacing(12)
 
-        if use_guided:
-            # 向导模式：创建活动用分步向导，添加选项用原表单
-            self._guided_panel = GuidedActivityPanel(
-                activity_service=self._service,
-                user=self._user,
-                group_repo=self._group_repo,
-                parent=self,
-            )
-            self._guided_panel.set_on_created(self.refresh)
-            # 使用 QTabWidget 切换向导式创建 / 添加选项
-            guided_tab = QTabWidget()
-            guided_tab.addTab(self._guided_panel, "创建活动")
-            guided_tab.addTab(self._slot_group, "添加选项")
-            guided_tab.setStyleSheet(tab_widget.styleSheet())
-            left_col.addWidget(guided_tab)
-        else:
-            # 平铺模式：原有 QTabWidget
-            left_col.addWidget(tab_widget)
+        self._build_left_panel(use_guided)
 
-        left_col.addStretch(1)
+        self._left_col_layout.addStretch(1)
         left_widget = QWidget()
-        left_widget.setLayout(left_col)
+        left_widget.setLayout(self._left_col_layout)
         left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         left_scroll = QScrollArea()
@@ -480,6 +464,66 @@ class ActivityPanel(QWidget):
         self._stat_cards[2][1].setText(str(draft + pending))
         self._stat_cards[2][2].setText(f"草稿 {draft} · 待审 {pending}" if draft + pending > 0 else "")
         self._stat_cards[3][1].setText(str(counts.get("已归档", 0)))
+
+    # ═══════════════════════════════════════════════════════════
+    # 左侧面板构建 / 热切换
+    # ═══════════════════════════════════════════════════════════
+
+    def _build_left_panel(self, use_guided: bool) -> None:
+        """根据模式构建左侧面板（向导式或平铺式）。
+
+        从 _left_col_layout 中移除旧的 tab widget 并插入新的。
+        """
+        # 移除旧的 tab widget（索引 0 是 tab widget，索引 1 是 stretch）
+        while self._left_col_layout.count() > 0:
+            item = self._left_col_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+
+        if use_guided:
+            # 向导模式：确保 _slot_group 在 guided_tab 中
+            # 从 flat tab 中移除 _slot_group（如果在那里）
+            for i in range(self._flat_tab_widget.count()):
+                if self._flat_tab_widget.widget(i) is self._slot_group:
+                    self._flat_tab_widget.removeTab(i)
+                    break
+
+            if self._guided_panel is None:
+                self._guided_panel = GuidedActivityPanel(
+                    activity_service=self._service,
+                    user=self._user,
+                    group_repo=self._group_repo,
+                    parent=self,
+                )
+                self._guided_panel.set_on_created(self.refresh)
+
+            guided_tab = QTabWidget()
+            guided_tab.addTab(self._guided_panel, "创建活动")
+            guided_tab.addTab(self._slot_group, "添加选项")
+            guided_tab.setStyleSheet(self._flat_tab_widget.styleSheet())
+            self._left_col_layout.addWidget(guided_tab)
+            if hasattr(self, '_splitter'):
+                self._splitter.setSizes([600, 400])
+        else:
+            # 平铺模式：确保 _slot_group 在 _flat_tab_widget 中
+            found = False
+            for i in range(self._flat_tab_widget.count()):
+                if self._flat_tab_widget.widget(i) is self._slot_group:
+                    found = True
+                    break
+            if not found:
+                self._flat_tab_widget.addTab(self._slot_group, "添加选项")
+
+            self._left_col_layout.addWidget(self._flat_tab_widget)
+            if hasattr(self, '_splitter'):
+                self._splitter.setSizes([360, 720])
+
+    def _check_layout_mode(self) -> None:
+        """检测设置中的布局模式是否变更，如变更则热切换左侧面板。"""
+        current = get_form_layout_mode()
+        if current != self._layout_mode:
+            self._layout_mode = current
+            self._build_left_panel(current == FORM_LAYOUT_GUIDED)
 
     # ═══════════════════════════════════════════════════════════
     # 右侧信息面板
@@ -963,6 +1007,7 @@ class ActivityPanel(QWidget):
         return ok
 
     def refresh(self) -> None:
+        self._check_layout_mode()
         self._all_activities = self._service.list_activities()
         self._apply_filters()
         self._update_stats_row()
