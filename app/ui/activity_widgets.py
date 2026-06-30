@@ -336,25 +336,13 @@ class ActivityPanel(QWidget):
         left_scroll.setMaximumWidth(520)
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
-        # ── 右侧内容：活动列表 + 信息面板 ──────────────────
-        right_inner = QHBoxLayout()
-        right_inner.setSpacing(12)
-
-        # 活动列表 + 选项（主区域）
-        main_area = QVBoxLayout()
-        main_area.setSpacing(12)
-        main_area.addWidget(self._activity_list_group, 1)
-        main_area.addWidget(self._slot_list_group, 1)
-        main_widget = QWidget()
-        main_widget.setLayout(main_area)
-
-        right_panel = self._build_right_panel()
-
-        right_inner.addWidget(main_widget, 1)
-        right_inner.addWidget(right_panel)
-
+        # ── 右侧内容 ──────────────────────────────────────
+        right_col = QVBoxLayout()
+        right_col.setSpacing(12)
+        right_col.addWidget(self._activity_list_group, 1)
+        right_col.addWidget(self._slot_list_group, 1)
         right_widget = QWidget()
-        right_widget.setLayout(right_inner)
+        right_widget.setLayout(right_col)
 
         # ── QSplitter 布局 ────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -372,19 +360,12 @@ class ActivityPanel(QWidget):
 
         self._splitter = splitter  # 保存引用以便外部操作
 
-        # ── 统计卡片行 ──────────────────────────────────
-        stats_row = self._build_stats_row()
-
-        # ── 右侧活动信息面板 ──────────────────────────────
-        right_panel = self._build_right_panel()
-
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(header)
-        layout.addWidget(stats_row)
         layout.addWidget(splitter, 1)
         self.setLayout(layout)
 
@@ -396,93 +377,17 @@ class ActivityPanel(QWidget):
         self.refresh()
 
     # ═══════════════════════════════════════════════════════════
-    # 统计卡片行 — 参考 group_management_ui_redesign.html 设计
-    # ═══════════════════════════════════════════════════════════
-
-    def _build_stats_row(self) -> QWidget:
-        """构建顶部统计卡片行。"""
-        p = get_palette()
-        row = QWidget()
-        grid = QHBoxLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(12)
-
-        self._stat_cards: list[tuple[QLabel, QLabel, QLabel]] = []
-        stats_def = [
-            ("活动总数", "0", ""),
-            ("进行中", "0", ""),
-            ("待处理", "0", ""),
-            ("已归档", "0", ""),
-        ]
-        for title, value, _icon in stats_def:
-            card = QFrame()
-            card.setStyleSheet(
-                f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
-                f"border-radius: 10px; padding: 12px 16px; }}"
-            )
-            card_layout = QVBoxLayout()
-            card_layout.setContentsMargins(12, 10, 12, 10)
-            card_layout.setSpacing(4)
-
-            title_lbl = QLabel(title)
-            title_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 12px; font-weight: 500; border: none;")
-            val_lbl = QLabel(value)
-            val_lbl.setStyleSheet(f"color: {p.text_primary}; font-size: 24px; font-weight: 700; border: none;")
-            trend_lbl = QLabel("")
-            trend_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
-
-            card_layout.addWidget(title_lbl)
-            card_layout.addWidget(val_lbl)
-            card_layout.addWidget(trend_lbl)
-            card.setLayout(card_layout)
-            grid.addWidget(card)
-            self._stat_cards.append((title_lbl, val_lbl, trend_lbl))
-
-        row.setLayout(grid)
-        return row
-
-    def _update_stats_row(self) -> None:
-        """根据当前活动列表更新统计卡片。"""
-        if not hasattr(self, '_stat_cards') or not self._stat_cards:
-            return
-        p = get_palette()
-        total = len(self._all_activities)
-        counts = {
-            "报名中": 0, "报名未开始": 0, "报名已截止": 0,
-            "签到中": 0, "签到未开始": 0, "签到已结束": 0,
-            "草稿": 0, "待审核": 0, "已归档": 0,
-        }
-        for a in self._all_activities:
-            st = format_activity_status(a)
-            counts[st] = counts.get(st, 0) + 1
-
-        self._stat_cards[0][1].setText(str(total))
-        active = counts.get("报名中", 0) + counts.get("签到中", 0)
-        self._stat_cards[1][1].setText(str(active))
-        draft = counts.get("草稿", 0)
-        pending = counts.get("待审核", 0)
-        self._stat_cards[2][1].setText(str(draft + pending))
-        self._stat_cards[2][2].setText(f"草稿 {draft} · 待审 {pending}" if draft + pending > 0 else "")
-        self._stat_cards[3][1].setText(str(counts.get("已归档", 0)))
-
-    # ═══════════════════════════════════════════════════════════
     # 左侧面板构建 / 热切换
     # ═══════════════════════════════════════════════════════════
 
     def _build_left_panel(self, use_guided: bool) -> None:
-        """根据模式构建左侧面板（向导式或平铺式）。
-
-        从 _left_col_layout 中移除旧的 tab widget 并插入新的。
-        """
-        # 移除旧的 tab widget（索引 0 是 tab widget，索引 1 是 stretch）
+        """根据模式构建左侧面板（向导式或平铺式）。"""
         while self._left_col_layout.count() > 0:
             item = self._left_col_layout.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
 
         if use_guided:
-            # 向导模式：确保 _slot_group 在 guided_tab 中
-            # 从 flat tab 中移除 _slot_group（如果在那里）
             for i in range(self._flat_tab_widget.count()):
                 if self._flat_tab_widget.widget(i) is self._slot_group:
                     self._flat_tab_widget.removeTab(i)
@@ -505,7 +410,6 @@ class ActivityPanel(QWidget):
             if hasattr(self, '_splitter'):
                 self._splitter.setSizes([600, 400])
         else:
-            # 平铺模式：确保 _slot_group 在 _flat_tab_widget 中
             found = False
             for i in range(self._flat_tab_widget.count()):
                 if self._flat_tab_widget.widget(i) is self._slot_group:
@@ -513,7 +417,6 @@ class ActivityPanel(QWidget):
                     break
             if not found:
                 self._flat_tab_widget.addTab(self._slot_group, "添加选项")
-
             self._left_col_layout.addWidget(self._flat_tab_widget)
             if hasattr(self, '_splitter'):
                 self._splitter.setSizes([360, 720])
@@ -525,111 +428,10 @@ class ActivityPanel(QWidget):
             self._layout_mode = current
             self._build_left_panel(current == FORM_LAYOUT_GUIDED)
 
-    # ═══════════════════════════════════════════════════════════
-    # 右侧信息面板
-    # ═══════════════════════════════════════════════════════════
-
-    def _build_right_panel(self) -> QWidget:
-        """构建右侧活动信息面板（参考 HTML 设计）。"""
-        p = get_palette()
-        panel = QFrame()
-        panel.setStyleSheet(
-            f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; border-radius: 10px; }}"
-        )
-        panel.setMinimumWidth(200)
-        panel.setMaximumWidth(300)
-        panel_layout = QVBoxLayout()
-        panel_layout.setContentsMargins(14, 12, 14, 12)
-        panel_layout.setSpacing(8)
-
-        info_title = QLabel("活动详情")
-        info_title.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none;")
-        panel_layout.addWidget(info_title)
-
-        self._info_name = QLabel("请选择一个活动")
-        self._info_name.setWordWrap(True)
-        self._info_name.setStyleSheet(f"font-weight: 600; font-size: 13px; color: {p.text_primary}; border: none;")
-
-        self._info_status = QLabel("")
-        self._info_time = QLabel("")
-        self._info_time.setWordWrap(True)
-        self._info_time.setStyleSheet(f"color: {p.text_secondary}; font-size: 11px; border: none; line-height: 1.5;")
-        self._info_loc = QLabel("")
-        self._info_loc.setStyleSheet(f"color: {p.accent}; font-size: 11px; border: none;")
-
-        panel_layout.addWidget(self._info_name)
-        panel_layout.addWidget(self._info_status)
-        panel_layout.addWidget(self._info_time)
-        panel_layout.addWidget(self._info_loc)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"background: {p.border_light}; max-height: 1px; border: none;")
-        panel_layout.addWidget(sep)
-
-        quick_title = QLabel("快速操作")
-        quick_title.setStyleSheet(f"font-weight: 600; font-size: 11px; color: {p.text_secondary}; border: none;")
-        panel_layout.addWidget(quick_title)
-
-        btn_base = (
-            f"QPushButton {{ background: {p.btn_secondary_bg}; border: none; border-radius: 6px; "
-            f"padding: 7px 10px; text-align: left; font-size: 11px; color: {p.text_primary}; }}"
-            f"QPushButton:hover {{ background: {p.btn_secondary_hover}; }}"
-        )
-        self._info_publish_btn = QPushButton("🚀 发布")
-        self._info_publish_btn.setStyleSheet(btn_base.replace(p.btn_secondary_bg, p.accent_soft).replace(p.text_primary, p.accent))
-        self._info_publish_btn.clicked.connect(lambda: self._change_status("publish"))
-        self._info_close_btn = QPushButton("⏹ 结束报名")
-        self._info_close_btn.setStyleSheet(btn_base)
-        self._info_close_btn.clicked.connect(lambda: self._change_status("close"))
-        self._info_archive_btn = QPushButton("📦 归档")
-        self._info_archive_btn.setStyleSheet(btn_base)
-        self._info_archive_btn.clicked.connect(lambda: self._change_status("archive"))
-        self._info_delete_btn = QPushButton("🗑 删除")
-        self._info_delete_btn.setStyleSheet(btn_base.replace(p.text_primary, p.error_fg))
-        self._info_delete_btn.clicked.connect(self._delete_activity)
-
-        for btn in [self._info_publish_btn, self._info_close_btn, self._info_archive_btn, self._info_delete_btn]:
-            btn.setVisible(False)
-            panel_layout.addWidget(btn)
-
-        panel_layout.addStretch()
-        panel.setLayout(panel_layout)
-        return panel
-
-    def _update_right_panel(self, activity: dict | None) -> None:
-        """更新右侧信息面板。"""
-        p = get_palette()
-        if not activity:
-            self._info_name.setText("请选择一个活动")
-            self._info_status.setText("")
-            self._info_time.setText("")
-            self._info_loc.setText("")
-            for btn in [self._info_publish_btn, self._info_close_btn, self._info_archive_btn, self._info_delete_btn]:
-                btn.setVisible(False)
-            return
-
-        self._info_name.setText(activity.get("name", "-"))
-        status = format_activity_status(activity)
-        status_color = p.success_fg if "报名中" in status or "签到中" in status else p.warning_fg if "草稿" in status or "待审核" in status else p.text_tertiary
-        self._info_status.setText(f"● {status}")
-        self._info_status.setStyleSheet(f"font-size: 12px; color: {status_color}; font-weight: 600; border: none;")
-
-        ss = (activity.get("signup_start") or "")[:16]
-        se = (activity.get("signup_end") or "")[:16]
-        self._info_time.setText(f"🗓 报名：{ss} → {se}")
-        self._info_loc.setText(f"📍 {activity.get('location', '-') or '未设置地点'}")
-
-        for btn in [self._info_publish_btn, self._info_close_btn, self._info_archive_btn, self._info_delete_btn]:
-            btn.setVisible(True)
-
     def _on_activity_selection_changed(self) -> None:
-        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector + 更新右侧面板。"""
+        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector。"""
         self._update_status_buttons()
         activity_id, _ = self._get_selected_activity()
-        # 从缓存中查找完整活动信息
-        activity = next((a for a in self._all_activities if a["id"] == activity_id), None) if activity_id else None
-        self._update_right_panel(activity)
         if not activity_id:
             return
         # 避免重复 setCurrentIndex 触发不必要刷新
@@ -1010,7 +812,6 @@ class ActivityPanel(QWidget):
         self._check_layout_mode()
         self._all_activities = self._service.list_activities()
         self._apply_filters()
-        self._update_stats_row()
         # 更新小组选择器 — 区分向导/平铺模式
         if self._group_repo and self._guided_panel is not None:
             guided_gs = getattr(self._guided_panel, "_group_selector", None)
