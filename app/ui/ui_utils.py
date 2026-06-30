@@ -6,19 +6,23 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from app.ui.style import get_palette
@@ -437,3 +441,170 @@ class ItemDetailDialog(QDialog):
         layout.addWidget(close_btn)
 
         self.setLayout(layout)
+
+
+class RadioCardGroup(QWidget):
+    """卡片式单选组件 — 替代下拉选择框，每个选项显示为可点选的卡片。
+
+    每张卡片包含标题、简短说明文字，选中时显示主色边框和背景。
+    用于活动模式、名额显示、分配策略、签到模式等低频高认知负荷的选项。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        self.setLayout(self._layout)
+        self._cards: list[QRadioButton] = []
+        self._data: list = []
+
+        # 选中变化回调
+        self._group.buttonClicked.connect(self._on_card_clicked)
+
+    def add_card(self, title: str, description: str = "", data=None, tooltip: str = "") -> None:
+        """添加一张选项卡片。"""
+        p = get_palette()
+        card = QRadioButton()
+        card.setCursor(Qt.PointingHandCursor)
+        # 构建富文本：标题加粗 + 说明文字
+        text = f"<b>{title}</b>"
+        if description:
+            text += f"<br><span style='color: {p.text_tertiary}; font-size: 11px;'>{description}</span>"
+        card.setText(text)
+        if tooltip:
+            card.setToolTip(tooltip)
+        card.setStyleSheet(f"""
+            QRadioButton {{
+                background: {p.bg_input};
+                border: 1.5px solid {p.border_light};
+                border-radius: 10px;
+                padding: 10px 14px;
+                spacing: 0px;
+            }}
+            QRadioButton:hover {{
+                border-color: {p.accent};
+                background: {p.accent_soft};
+            }}
+            QRadioButton:checked {{
+                background: {p.accent_soft};
+                border: 2px solid {p.accent};
+            }}
+            QRadioButton::indicator {{
+                width: 0px;
+                height: 0px;
+            }}
+        """)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._layout.addWidget(card)
+        self._group.addButton(card)
+        self._cards.append(card)
+        self._data.append(data)
+
+    def current_data(self):
+        """返回当前选中卡片的数据。"""
+        checked = self._group.checkedButton()
+        if checked is None:
+            return None
+        idx = self._cards.index(checked)
+        return self._data[idx] if idx < len(self._data) else None
+
+    def current_index(self) -> int:
+        """返回当前选中卡片的索引，-1 表示无选中。"""
+        checked = self._group.checkedButton()
+        if checked is None:
+            return -1
+        try:
+            return self._cards.index(checked)
+        except ValueError:
+            return -1
+
+    def set_current_by_data(self, data) -> None:
+        """根据 data 值设置选中卡片。"""
+        try:
+            idx = self._data.index(data)
+            self._cards[idx].setChecked(True)
+        except (ValueError, IndexError):
+            pass
+
+    def set_current_index(self, index: int) -> None:
+        """根据索引设置选中卡片。"""
+        if 0 <= index < len(self._cards):
+            self._cards[index].setChecked(True)
+
+    def _on_card_clicked(self, button: QRadioButton) -> None:
+        """内部事件：重新应用选中样式确保视觉反馈一致。"""
+        pass  # QSS :checked 已自动处理
+
+
+class StepIndicator(QWidget):
+    """步骤指示器 — 水平步骤条，显示当前进度。
+
+    用法：StepIndicator(["基本信息", "报名规则", "时段岗位"], current=0)
+    """
+
+    def __init__(self, steps: list[str], current: int = 0, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._steps = steps
+        self._current = current
+        self._labels: list[QLabel] = []
+        self._build()
+
+    def _build(self) -> None:
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        p = get_palette()
+        for i, step in enumerate(self._steps):
+            # 步骤圆点 + 文字
+            is_active = i <= self._current
+            is_current = i == self._current
+            color = p.accent if is_active else p.text_tertiary
+            bg = p.accent if is_active else p.border_light
+
+            dot = QLabel()
+            dot.setFixedSize(28, 28)
+            dot.setAlignment(Qt.AlignCenter)
+            dot.setText(str(i + 1))
+            dot.setStyleSheet(
+                f"background: {bg}; color: {p.text_on_accent if is_active else p.text_secondary}; "
+                f"border-radius: 14px; font-weight: bold; font-size: 13px;"
+            )
+            layout.addWidget(dot)
+
+            label = QLabel(step)
+            label.setStyleSheet(
+                f"color: {color}; font-weight: {'700' if is_current else '400'}; "
+                f"font-size: 12px; margin: 0 8px;"
+            )
+            self._labels.append(label)
+            layout.addWidget(label)
+
+            if i < len(self._steps) - 1:
+                # 连接线
+                line = QFrame()
+                line.setFrameShape(QFrame.HLine)
+                line.setFixedHeight(2)
+                line.setMinimumWidth(24)
+                line.setStyleSheet(
+                    f"background: {p.accent if i < self._current else p.border_light}; "
+                    f"border: none; margin: 0 4px;"
+                )
+                line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                layout.addWidget(line)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def set_current(self, index: int) -> None:
+        """更新当前步骤索引并刷新样式。"""
+        self._current = max(0, min(index, len(self._steps) - 1))
+        # 清除并重建
+        while self.layout().count():
+            item = self.layout().takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._labels.clear()
+        self._build()

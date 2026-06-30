@@ -41,7 +41,8 @@ from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, SignupMode, SlotType, User
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
-from app.ui.style import get_palette
+from app.ui.activity_guided import GuidedActivityPanel
+from app.ui.style import FORM_LAYOUT_GUIDED, get_form_layout_mode, get_palette
 from app.ui.ui_utils import (
     ItemDetailDialog,
     ModeSelector,
@@ -114,6 +115,8 @@ class ActivityPanel(QWidget):
         self._scheduling_service = scheduling_service
         self._activity_repo = activity_repo
         self._group_repo = group_repo
+
+        self._guided_panel = None  # 仅在向导模式下初始化
 
         self._activity_table = QTableWidget(0, 9)
         self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "地点", "状态", "操作"])
@@ -280,8 +283,11 @@ class ActivityPanel(QWidget):
         slot_list_layout.addWidget(self._slot_tree)
         self._slot_list_group.setLayout(slot_list_layout)
 
-        # Left column: tab-based layout to reduce visual clutter
+        # Left column: support both guided (default) and flat layouts
         p = get_palette()
+        use_guided = get_form_layout_mode() == FORM_LAYOUT_GUIDED
+
+        # Build the flat-mode tab widget for backward compatibility
         tab_widget = QTabWidget()
         tab_widget.addTab(self._activity_group, "创建活动")
         tab_widget.addTab(self._slot_group, "添加选项")
@@ -309,9 +315,26 @@ class ActivityPanel(QWidget):
             }}
         """)
 
+        # ── 构建左侧内容 ──────────────────────────────────
         left_col = QVBoxLayout()
         left_col.setSpacing(12)
-        left_col.addWidget(tab_widget)
+
+        if use_guided:
+            # 向导模式：创建活动用分步向导，添加选项用原表单
+            self._guided_panel = GuidedActivityPanel(
+                self._service, self._user, self._group_repo, self
+            )
+            self._guided_panel.set_on_created(self.refresh)
+            # 使用 QTabWidget 切换向导式创建 / 添加选项
+            guided_tab = QTabWidget()
+            guided_tab.addTab(self._guided_panel, "创建活动")
+            guided_tab.addTab(self._slot_group, "添加选项")
+            guided_tab.setStyleSheet(tab_widget.styleSheet())
+            left_col.addWidget(guided_tab)
+        else:
+            # 平铺模式：原有 QTabWidget
+            left_col.addWidget(tab_widget)
+
         left_col.addStretch(1)
         left_widget = QWidget()
         left_widget.setLayout(left_col)
@@ -322,12 +345,11 @@ class ActivityPanel(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # 降低最小宽度：原 280px 与右侧 tree 软下限 780px 叠加，窗口 <1200px 必然溢出。
-        # 改为 220px，配合 configure_tree 的 Stretch 模式，整体可压缩到 ~700px。
         left_scroll.setMinimumWidth(220)
         left_scroll.setMaximumWidth(520)
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
+        # ── 右侧内容 ──────────────────────────────────────
         right_col = QVBoxLayout()
         right_col.setSpacing(12)
         right_col.addWidget(self._activity_list_group, 1)
@@ -335,13 +357,21 @@ class ActivityPanel(QWidget):
         right_widget = QWidget()
         right_widget.setLayout(right_col)
 
-        # 使用 QSplitter 替代固定比例，解决宽度显示不全问题
+        # ── QSplitter 布局 ────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
         splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([360, 720])
+        if use_guided:
+            # 向导模式：6:4 比例
+            splitter.setStretchFactor(0, 6)
+            splitter.setStretchFactor(1, 4)
+            splitter.setSizes([600, 400])
+        else:
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 2)
+            splitter.setSizes([360, 720])
+
+        self._splitter = splitter  # 保存引用以便外部操作
 
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
 
@@ -747,21 +777,31 @@ class ActivityPanel(QWidget):
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
         self._apply_filters()
-        # 更新小组选择器
-        if self._group_repo:
-            current = self._group_selector.currentData()
-            self._group_selector.blockSignals(True)
-            self._group_selector.clear()
-            self._group_selector.addItem("公开（全体用户）", None)
-            for g in self._group_repo.list_all():
-                self._group_selector.addItem(g["name"], g["id"])
-            # 恢复之前的选中项
-            if current:
-                for i in range(self._group_selector.count()):
-                    if self._group_selector.itemData(i) == current:
-                        self._group_selector.setCurrentIndex(i)
-                        break
-            self._group_selector.blockSignals(False)
+        # 更新小组选择器 — 区分向导/平铺模式
+        if self._group_repo and self._guided_panel is not None:
+            guided_gs = getattr(self._guided_panel, "_group_selector", None)
+            if guided_gs is not None:
+                self._update_group_selector(guided_gs)
+        elif self._group_repo:
+            self._update_group_selector(self._group_selector)
+
+    def _update_group_selector(self, selector) -> None:
+        """安全更新小组下拉选择器，保留当前选中项。"""
+        try:
+            current = selector.currentData()
+        except RuntimeError:
+            return  # Widget 已被销毁
+        selector.blockSignals(True)
+        selector.clear()
+        selector.addItem("公开（全体用户）", None)
+        for g in self._group_repo.list_all():
+            selector.addItem(g["name"], g["id"])
+        if current:
+            for i in range(selector.count()):
+                if selector.itemData(i) == current:
+                    selector.setCurrentIndex(i)
+                    break
+        selector.blockSignals(False)
 
     def _on_activity_double_clicked(self, row: int, _col: int) -> None:
         id_item = self._activity_table.item(row, 0)

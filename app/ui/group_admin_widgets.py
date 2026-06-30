@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QTextEdit,
+    QToolButton,
 )
 
 from app.application.group_service import GroupService
@@ -57,8 +58,10 @@ class GroupAdminPanel(QWidget):
         header = make_page_header("小组管理", "创建、管理小组，审核成员申请")
         layout.addWidget(header)
 
-        # ── 创建小组 ──────────────────────────────────────
-        create_group = QGroupBox("创建小组")
+        # ── 创建小组（可折叠） ──────────────────────────────
+        self._create_group_box = QGroupBox("创建小组")
+        self._create_group_box.setCheckable(True)
+        self._create_group_box.setChecked(False)  # 默认折叠，减少空间占用
         create_layout = QVBoxLayout()
         create_layout.setContentsMargins(12, 12, 12, 12)
         create_layout.setSpacing(8)
@@ -89,49 +92,63 @@ class GroupAdminPanel(QWidget):
         self._create_msg = QLabel("")
         set_banner(self._create_msg, "info", "")
         create_layout.addWidget(self._create_msg)
-        create_group.setLayout(create_layout)
-        layout.addWidget(create_group)
+        self._create_group_box.setLayout(create_layout)
+        layout.addWidget(self._create_group_box)
 
-        # ── 小组列表 ──────────────────────────────────────
+        # ── QSplitter: 小组列表 ↔ 成员管理 ──────────────────
+        splitter = QSplitter(Qt.Vertical)
+
+        # 小组列表
+        group_widget = QWidget()
+        group_layout = QVBoxLayout()
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_label = QLabel("小组列表")
+        group_label.setStyleSheet(f"font-weight: 600; color: {p.text_secondary}; font-size: 12px;")
+        group_layout.addWidget(group_label)
         self._group_table = QTableWidget(0, 4)
         self._group_table.setHorizontalHeaderLabels(["ID", "名称", "描述", "创建者"])
         configure_table(self._group_table)
         self._group_table.setColumnHidden(0, True)
         self._group_table.itemSelectionChanged.connect(self._on_group_selected)
-        # 修复「小组列表显示不全」：原 addWidget 无 stretch，表格拿不到垂直空间。
-        # 改为 stretch=1，让表格占据剩余高度。
-        layout.addWidget(self._group_table, 1)
+        group_layout.addWidget(self._group_table, 1)
+        group_widget.setLayout(group_layout)
+        splitter.addWidget(group_widget)
 
-        # ── 成员管理 ──────────────────────────────────────
-        member_group = QGroupBox("成员管理")
+        # 成员管理（含待审批）
+        member_widget = QWidget()
         member_layout = QVBoxLayout()
-        member_layout.setContentsMargins(12, 12, 12, 12)
-
-        self._member_table = QTableWidget(0, 5)
-        self._member_table.setHorizontalHeaderLabels(["用户名", "角色", "状态", "加入时间", "操作"])
-        configure_table(self._member_table)
+        member_layout.setContentsMargins(0, 0, 0, 0)
+        member_layout.setSpacing(6)
 
         self._member_label = QLabel("请先选择一个小组")
         self._member_label.setStyleSheet(f"color: {p.text_tertiary};")
         member_layout.addWidget(self._member_label)
-        # 同样补 stretch=1，让成员表占满成员管理区剩余空间
+
+        self._member_table = QTableWidget(0, 5)
+        self._member_table.setHorizontalHeaderLabels(["用户名", "角色", "状态", "加入时间", "操作"])
+        configure_table(self._member_table)
         member_layout.addWidget(self._member_table, 1)
 
-        # 待审批申请
-        pending_group = QGroupBox("待审批申请")
+        # 待审批申请（可折叠）
+        self._pending_group = QGroupBox("待审批申请")
+        self._pending_group.setCheckable(True)
+        self._pending_group.setChecked(True)  # 默认展开
         pending_layout = QVBoxLayout()
-        # 列数 5 → 6，新增「申请理由」列，方便审批人参考
+        pending_layout.setContentsMargins(8, 8, 8, 8)
         self._pending_table = QTableWidget(0, 6)
         self._pending_table.setHorizontalHeaderLabels(["小组", "用户名", "角色", "申请时间", "申请理由", "操作"])
         configure_table(self._pending_table)
-        # 限制待审批表最大高度，避免抢走成员表空间
         self._pending_table.setMaximumHeight(220)
         pending_layout.addWidget(self._pending_table)
-        pending_group.setLayout(pending_layout)
+        self._pending_group.setLayout(pending_layout)
 
-        member_layout.addWidget(pending_group)
-        member_group.setLayout(member_layout)
-        layout.addWidget(member_group)
+        member_layout.addWidget(self._pending_group)
+        member_widget.setLayout(member_layout)
+        splitter.addWidget(member_widget)
+
+        # 设置初始比例 6:4
+        splitter.setSizes([400, 260])
+        layout.addWidget(splitter, 1)
 
         self.setLayout(layout)
 
