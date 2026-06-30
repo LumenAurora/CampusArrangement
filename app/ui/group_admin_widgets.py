@@ -49,29 +49,41 @@ def _p():
 
 
 class _StatCard(QFrame):
-    """统计卡片 — 对应 HTML 的 bg-white rounded-xl border shadow-sm。"""
+    """统计卡片 — 对应 HTML 的 bg-white rounded-xl border shadow-sm + icon。"""
 
-    def __init__(self, title: str, value: str, parent=None) -> None:
+    def __init__(self, title: str, value: str, icon_symbol: str = "", parent=None) -> None:
         super().__init__(parent)
         p = _p()
         self.setStyleSheet(
             f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
-            f"border-radius: 10px; padding: 12px 16px; }}"
+            f"border-radius: 10px; }}"
         )
-        layout = QVBoxLayout()
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(4)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
 
+        # 左侧：文字区
+        text_area = QVBoxLayout()
+        text_area.setSpacing(4)
         self._title = QLabel(title)
         self._title.setStyleSheet(f"color: {p.text_tertiary}; font-size: 12px; font-weight: 500; border: none;")
         self._value = QLabel(value)
         self._value.setStyleSheet(f"color: {p.text_primary}; font-size: 24px; font-weight: 700; border: none;")
         self._subtitle = QLabel("")
         self._subtitle.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
+        text_area.addWidget(self._title)
+        text_area.addWidget(self._value)
+        text_area.addWidget(self._subtitle)
+        layout.addLayout(text_area, 1)
 
-        layout.addWidget(self._title)
-        layout.addWidget(self._value)
-        layout.addWidget(self._subtitle)
+        # 右侧：图标区
+        icon_lbl = QLabel(icon_symbol)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setFixedSize(40, 40)
+        icon_lbl.setStyleSheet(
+            f"background: {p.accent_soft}; border-radius: 8px; font-size: 18px; border: none;"
+        )
+        layout.addWidget(icon_lbl)
         self.setLayout(layout)
 
     def set_value(self, text: str) -> None:
@@ -104,10 +116,10 @@ class GroupAdminPanel(QWidget):
         # ── 统计卡片行 ──────────────────────────────────
         stats_row = QHBoxLayout()
         stats_row.setSpacing(12)
-        self._stat_total = _StatCard("小组总数", "0")
-        self._stat_members = _StatCard("成员总数", "0")
-        self._stat_pending = _StatCard("待审批", "0")
-        self._stat_active = _StatCard("活跃小组", "0")
+        self._stat_total = _StatCard("小组总数", "0", "👥")
+        self._stat_members = _StatCard("成员总数", "0", "👤")
+        self._stat_pending = _StatCard("待审批", "0", "⏳")
+        self._stat_active = _StatCard("活跃小组", "0", "🔥")
         for card in [self._stat_total, self._stat_members, self._stat_pending, self._stat_active]:
             stats_row.addWidget(card)
         layout.addLayout(stats_row)
@@ -232,22 +244,61 @@ class GroupAdminPanel(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
 
-        pending_header = QLabel("待审批申请")
-        pending_header.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none;")
-        right_layout.addWidget(pending_header)
+        # 待审批标题 + 计数徽章
+        pending_header_row = QHBoxLayout()
+        pending_header_row.setSpacing(8)
+        pending_title = QLabel("待审批申请")
+        pending_title.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none;")
+        self._pending_badge = QLabel("0")
+        self._pending_badge.setFixedSize(22, 22)
+        self._pending_badge.setAlignment(Qt.AlignCenter)
+        self._pending_badge.setStyleSheet(
+            f"background: {p.accent_soft}; color: {p.accent}; border-radius: 11px; "
+            f"font-size: 11px; font-weight: 700; border: none;"
+        )
+        pending_header_row.addWidget(pending_title)
+        pending_header_row.addWidget(self._pending_badge)
+        pending_header_row.addStretch()
+        right_layout.addLayout(pending_header_row)
 
         self._pending_scroll = QScrollArea()
         self._pending_scroll.setWidgetResizable(True)
         self._pending_scroll.setFrameShape(QFrame.NoFrame)
         self._pending_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._pending_container = QWidget()
-        self._pending_layout = QVBoxLayout()
-        self._pending_layout.setContentsMargins(0, 0, 0, 0)
-        self._pending_layout.setSpacing(8)
-        self._pending_layout.addStretch()
-        self._pending_container.setLayout(self._pending_layout)
-        self._pending_scroll.setWidget(self._pending_container)
+        self._pending_list = QWidget()
+        self._pending_list_layout = QVBoxLayout()
+        self._pending_list_layout.setContentsMargins(0, 0, 0, 0)
+        self._pending_list_layout.setSpacing(8)
+        self._pending_list_layout.addStretch()
+        self._pending_list.setLayout(self._pending_list_layout)
+        self._pending_scroll.setWidget(self._pending_list)
         right_layout.addWidget(self._pending_scroll, 1)
+
+        # 快速操作卡片（参考 HTML 的 gradient card）
+        quick_card = QFrame()
+        quick_card.setStyleSheet(
+            f"QFrame {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            f"stop:0 {p.accent}, stop:1 {p.accent_hover}); border-radius: 12px; }}"
+        )
+        quick_layout = QVBoxLayout()
+        quick_layout.setContentsMargins(14, 14, 14, 14)
+        quick_layout.setSpacing(8)
+        q_title = QLabel("快速操作")
+        q_title.setStyleSheet("font-weight: 700; font-size: 13px; color: white; border: none;")
+        q_sub = QLabel("常用管理功能快捷入口")
+        q_sub.setStyleSheet(f"color: rgba(255,255,255,0.75); font-size: 11px; border: none;")
+        quick_layout.addWidget(q_title)
+        quick_layout.addWidget(q_sub)
+        for label in ["📤 导出成员名单", "📧 群发通知", "📊 查看统计报表"]:
+            btn = QPushButton(label)
+            btn.setStyleSheet(
+                "QPushButton { background: rgba(255,255,255,0.12); color: white; border: none; "
+                "border-radius: 8px; padding: 10px 12px; text-align: left; font-size: 12px; }"
+                "QPushButton:hover { background: rgba(255,255,255,0.22); }"
+            )
+            quick_layout.addWidget(btn)
+        quick_card.setLayout(quick_layout)
+        right_layout.addWidget(quick_card)
         right_panel.setLayout(right_layout)
         content.addWidget(right_panel, 1)
 
@@ -280,7 +331,6 @@ class GroupAdminPanel(QWidget):
         total = len(groups)
         total_members = 0
         pending_total = 0
-        active = 0
         for g in groups:
             members = self._repo.list_members(g["id"])
             total_members += len([m for m in members if m.get("status") == "approved"])
@@ -289,8 +339,14 @@ class GroupAdminPanel(QWidget):
         self._stat_total.set_value(str(total))
         self._stat_members.set_value(str(total_members))
         self._stat_pending.set_value(str(pending_total))
+        self._stat_pending.set_subtitle("需要尽快处理" if pending_total > 0 else "")
         self._stat_active.set_value(str(total))
         self._stat_active._title.setText("小组总数")
+
+        # 同步更新待审批徽章
+        pending_list = self._service.list_pending_applications(self._user)
+        self._pending_badge.setText(str(len(pending_list)))
+        self._pending_badge.setVisible(len(pending_list) > 0)
 
     def _apply_group_filters(self, *args) -> None:
         """搜索过滤小组列表。"""
@@ -311,11 +367,14 @@ class GroupAdminPanel(QWidget):
         p = _p()
         for i, g in enumerate(groups):
             self._group_table.setItem(i, 0, QTableWidgetItem(g["id"]))
-            self._group_table.setItem(i, 1, QTableWidgetItem(g["name"]))
+            # 名称列 — 首字母头像
+            name = g.get("name", "?")
+            name_item = QTableWidgetItem(f"  {name}")
+            self._group_table.setItem(i, 1, name_item)
             self._group_table.setItem(i, 2, QTableWidgetItem(g.get("description", "")))
             members = self._repo.list_members(g["id"])
             approved = len([m for m in members if m.get("status") == "approved"])
-            self._group_table.setItem(i, 3, QTableWidgetItem(str(approved)))
+            self._group_table.setItem(i, 3, QTableWidgetItem(f"{approved} 人"))
             owner = g.get("owner_id", "")
             self._group_table.setItem(i, 4, QTableWidgetItem(owner[:8] + "..."))
 
@@ -373,26 +432,41 @@ class GroupAdminPanel(QWidget):
     # ═══════════════════════════════════════════════════════════
 
     def _load_pending(self) -> None:
-        """加载待审批申请为卡片式列表。"""
+        """加载待审批申请为卡片式列表 — 使用 setParent(None) 即时清除，避免 deleteLater 延迟导致视觉残留。"""
         pending = self._service.list_pending_applications(self._user)
-        # 清除旧卡片
-        while self._pending_layout.count() > 0:
-            item = self._pending_layout.takeAt(0)
+
+        # 关键修复：用 setParent(None) + hide 即时清空，而非 deleteLater
+        for i in reversed(range(self._pending_list_layout.count())):
+            item = self._pending_list_layout.itemAt(i)
             if item.widget():
-                item.widget().deleteLater()
-        self._pending_layout.addStretch()
+                item.widget().hide()
+                item.widget().setParent(None)
+            elif item.layout():
+                # 清空子布局（如果有的话）
+                while item.layout().count():
+                    sub = item.layout().takeAt(0)
+                    if sub.widget():
+                        sub.widget().hide()
+                        sub.widget().setParent(None)
+            self._pending_list_layout.removeItem(item)
+
+        # 更新徽章
+        self._pending_badge.setText(str(len(pending)))
+        self._pending_badge.setVisible(len(pending) > 0)
 
         if not pending:
             p = _p()
             empty = QLabel("暂无待审批申请 ✓")
             empty.setStyleSheet(f"color: {p.text_tertiary}; font-size: 12px; padding: 16px; border: none;")
-            self._pending_layout.insertWidget(0, empty)
+            self._pending_list_layout.insertWidget(0, empty)
+            self._pending_list_layout.addStretch()
             return
 
         p = _p()
         for i, app in enumerate(pending):
             card = self._build_pending_card(app, p)
-            self._pending_layout.insertWidget(i, card)
+            self._pending_list_layout.insertWidget(i, card)
+        self._pending_list_layout.addStretch()
 
     def _build_pending_card(self, app: dict, p) -> QFrame:
         """构建单张待审批卡片。"""
@@ -504,7 +578,8 @@ class GroupAdminPanel(QWidget):
             self._selected_group_id = group_id
             self._selected_group_owner_id = group.get("owner_id", "")
             self._delete_btn.setEnabled(True)
-            self._member_label.setText(f"小组：{group['name']}（{len(self._repo.list_members(group_id))} 位成员）")
+            member_count = len(self._repo.list_members(group_id))
+            self._member_label.setText(f"小组：{group['name']}（{member_count} 位成员）")
             self._load_members(group_id)
 
     def _approve_member(self, member_user_id: str) -> None:
