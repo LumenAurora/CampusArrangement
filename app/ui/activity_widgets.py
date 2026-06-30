@@ -322,7 +322,10 @@ class ActivityPanel(QWidget):
         if use_guided:
             # 向导模式：创建活动用分步向导，添加选项用原表单
             self._guided_panel = GuidedActivityPanel(
-                self._service, self._user, self._group_repo, self
+                activity_service=self._service,
+                user=self._user,
+                group_repo=self._group_repo,
+                parent=self,
             )
             self._guided_panel.set_on_created(self.refresh)
             # 使用 QTabWidget 切换向导式创建 / 添加选项
