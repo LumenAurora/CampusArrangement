@@ -205,6 +205,10 @@ class ActivityCard(QFrame):
 class WorkflowTimeline(QWidget):
     """垂直工作流时间线 — 对应 HTML 右侧 step-item 列表。"""
 
+    add_slot_clicked = None  # 由父面板设置回调
+    submit_review_clicked = None
+    edit_config_clicked = None
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._activity: dict | None = None
@@ -292,6 +296,7 @@ class WorkflowTimeline(QWidget):
             f"border-radius: 6px; padding: 6px; font-size: 11px; color: {p.accent}; }}"
             f"QPushButton:hover {{ background: {p.accent_soft}; }}"
         )
+        edit_btn.clicked.connect(self._on_edit_config)
         layout.addWidget(edit_btn)
         card.setLayout(layout)
         return card
@@ -407,7 +412,12 @@ class WorkflowTimeline(QWidget):
             btn.setStyleSheet(
                 f"QPushButton {{ background: {p.accent}; color: white; border: none; border-radius: 6px; "
                 f"padding: 4px 10px; font-size: 11px; }}"
+                f"QPushButton:hover {{ background: {p.accent_hover}; }}"
             )
+            if key == "slots":
+                btn.clicked.connect(lambda: self._on_add_slot())
+            else:
+                btn.clicked.connect(lambda: self._on_submit_review())
             text_col.addWidget(btn)
 
         layout.addLayout(text_col, 1)
@@ -430,3 +440,15 @@ class WorkflowTimeline(QWidget):
             if item.widget():
                 item.widget().hide()
                 item.widget().setParent(None)
+
+    def _on_add_slot(self) -> None:
+        if callable(self.add_slot_clicked):
+            self.add_slot_clicked()
+
+    def _on_submit_review(self) -> None:
+        if callable(self.submit_review_clicked):
+            self.submit_review_clicked()
+
+    def _on_edit_config(self) -> None:
+        if callable(self.edit_config_clicked):
+            self.edit_config_clicked()

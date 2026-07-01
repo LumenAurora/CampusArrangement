@@ -284,10 +284,9 @@ class ActivityPanel(QWidget):
         slot_list_layout.addWidget(self._slot_tree)
         self._slot_list_group.setLayout(slot_list_layout)
 
-        # Left column: support both guided (default) and flat layouts
+        # Left column: always use guided (workflow) layout
         p = get_palette()
-        use_guided = get_form_layout_mode() == FORM_LAYOUT_GUIDED
-        self._layout_mode = FORM_LAYOUT_GUIDED if use_guided else FORM_LAYOUT_FLAT
+        self._layout_mode = FORM_LAYOUT_GUIDED
 
         # Build the flat-mode tab widget for backward compatibility
         self._flat_tab_widget = QTabWidget()
@@ -321,7 +320,7 @@ class ActivityPanel(QWidget):
         self._left_col_layout = QVBoxLayout()
         self._left_col_layout.setSpacing(12)
 
-        self._build_left_panel(use_guided)
+        self._build_left_panel(True)  # 始终使用工作流设计
 
         self._left_col_layout.addStretch(1)
         left_widget = QWidget()
@@ -339,21 +338,16 @@ class ActivityPanel(QWidget):
 
         # ── 右侧内容 ──────────────────────────────────────
         self._right_widget = QWidget()
-        self._build_right_panel(use_guided)
+        self._build_right_panel(True)  # 始终使用工作流设计
 
         # ── QSplitter 布局 ────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
         splitter.addWidget(self._right_widget)
-        if use_guided:
-            # 向导模式：6:4 比例
-            splitter.setStretchFactor(0, 6)
-            splitter.setStretchFactor(1, 4)
-            splitter.setSizes([600, 400])
-        else:
-            splitter.setStretchFactor(0, 1)
-            splitter.setStretchFactor(1, 2)
-            splitter.setSizes([360, 720])
+        # 工作流设计：6:4 比例
+        splitter.setStretchFactor(0, 6)
+        splitter.setStretchFactor(1, 4)
+        splitter.setSizes([600, 400])
 
         self._splitter = splitter  # 保存引用以便外部操作
 
@@ -479,6 +473,9 @@ class ActivityPanel(QWidget):
             content_row.addLayout(card_area, 2)
 
             self._workflow_timeline = WorkflowTimeline()
+            self._workflow_timeline.add_slot_clicked = self._focus_slot_form
+            self._workflow_timeline.submit_review_clicked = lambda: self._change_status("submit_review")
+            self._workflow_timeline.edit_config_clicked = self._focus_create_form
             content_row.addWidget(self._workflow_timeline, 1)
 
             right_col.addLayout(content_row)
@@ -499,10 +496,30 @@ class ActivityPanel(QWidget):
             elif item.layout():
                 ActivityPanel._clear_layout(item.layout())
 
+    def _focus_slot_form(self) -> None:
+        """聚焦到添加选项标签页。"""
+        for widget in self.findChildren(QTabWidget):
+            for i in range(widget.count()):
+                if "添加选项" in widget.tabText(i):
+                    widget.setCurrentIndex(i)
+                    return
+
+    def _focus_create_form(self) -> None:
+        """聚焦到创建活动标签页。"""
+        for widget in self.findChildren(QTabWidget):
+            for i in range(widget.count()):
+                if "创建活动" in widget.tabText(i):
+                    widget.setCurrentIndex(i)
+                    return
+
     def _on_activity_selection_changed(self) -> None:
-        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector。"""
+        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector + 更新时间线。"""
         self._update_status_buttons()
         activity_id, _ = self._get_selected_activity()
+        # 更新时间线
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None) if activity_id else None
+        if hasattr(self, '_workflow_timeline') and activity:
+            self._workflow_timeline.set_activity(activity)
         if not activity_id:
             return
         # 避免重复 setCurrentIndex 触发不必要刷新
