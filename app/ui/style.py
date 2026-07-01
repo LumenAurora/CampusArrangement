@@ -10,6 +10,8 @@ THEME_LIGHT = "light"
 THEME_DARK = "dark"
 DENSITY_COMFORTABLE = "comfortable"
 DENSITY_COMPACT = "compact"
+FORM_LAYOUT_FLAT = "flat"
+FORM_LAYOUT_GUIDED = "guided"  # 向导式分步布局（默认）
 
 
 def _get_palette(theme: str) -> Palette:
@@ -64,3 +66,15 @@ def set_default_page(page_key: str) -> None:
 def get_palette() -> Palette:
     """获取当前主题的调色板，供自定义绘制控件使用。"""
     return _get_palette(get_theme())
+
+
+def get_form_layout_mode() -> str:
+    """获取活动表单布局模式：guided（向导式，默认）| flat（平铺式）。"""
+    settings = QSettings("CampusScheduler", "CampusScheduler")
+    return settings.value("ui/form_layout", FORM_LAYOUT_GUIDED)
+
+
+def set_form_layout_mode(mode: str) -> None:
+    """设置活动表单布局模式。"""
+    settings = QSettings("CampusScheduler", "CampusScheduler")
+    settings.setValue("ui/form_layout", mode)

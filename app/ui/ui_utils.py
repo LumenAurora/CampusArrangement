@@ -6,19 +6,23 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from app.ui.style import get_palette
@@ -437,3 +441,193 @@ class ItemDetailDialog(QDialog):
         layout.addWidget(close_btn)
 
         self.setLayout(layout)
+
+
+class RadioCardGroup(QWidget):
+    """卡片式单选组件 — 使用 QWidget 卡片 + 隐藏 QRadioButton。
+
+    每个选项显示为可点选的卡片，QLabel 渲染富文本标题和说明。
+    解决 QRadioButton 不支持 HTML 富文本的问题。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        self.setLayout(self._layout)
+        self._cards: list[QWidget] = []
+        self._radios: list[QRadioButton] = []
+        self._labels: list[QLabel] = []
+        self._data: list = []
+
+    def add_card(self, title: str, description: str = "", data=None, tooltip: str = "") -> None:
+        """添加一张选项卡片。"""
+        p = get_palette()
+        # 外层容器
+        card = QWidget()
+        card.setCursor(Qt.PointingHandCursor)
+        card_layout = QHBoxLayout()
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(10)
+
+        # 隐藏的 radio button（只做选择逻辑）
+        radio = QRadioButton()
+        radio.setFixedSize(0, 0)
+
+        # 富文本标签
+        text = f"<b style='color: {p.text_primary};'>{title}</b>"
+        if description:
+            text += f"<br><span style='color: {p.text_tertiary}; font-size: 11px;'>{description}</span>"
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("border: none; background: transparent;")
+        if tooltip:
+            label.setToolTip(tooltip)
+
+        card_layout.addWidget(radio)
+        card_layout.addWidget(label, 1)
+        card.setLayout(card_layout)
+        # 卡片样式
+        card.setStyleSheet(f"""
+            QWidget {{
+                background: {p.bg_input};
+                border: 1.5px solid {p.border_light};
+                border-radius: 10px;
+            }}
+        """)
+        # hover 和 checked 样式通过 eventFilter 或 paintEvent 实现
+        # 简化：用 mousePressEvent 连接 radio 的 click
+        card.mousePressEvent = lambda e, r=radio: r.click()
+        label.mousePressEvent = lambda e, r=radio: r.click()
+
+        # 监听 radio 状态变化来更新样式
+        radio.toggled.connect(lambda checked, c=card, p=p: self._update_card_style(c, checked, p))
+
+        self._layout.addWidget(card)
+        self._group.addButton(radio)
+        self._cards.append(card)
+        self._radios.append(radio)
+        self._labels.append(label)
+        self._data.append(data)
+
+    @staticmethod
+    def _update_card_style(card: QWidget, checked: bool, p) -> None:
+        if checked:
+            card.setStyleSheet(
+                f"QWidget {{ background: {p.accent_soft}; border: 2px solid {p.accent}; border-radius: 10px; }}"
+            )
+        else:
+            card.setStyleSheet(
+                f"QWidget {{ background: {p.bg_input}; border: 1.5px solid {p.border_light}; border-radius: 10px; }}"
+                f"QWidget:hover {{ border-color: {p.accent}; background: {p.accent_soft}; }}"
+            )
+
+    def current_data(self):
+        checked = self._group.checkedButton()
+        if checked is None:
+            return None
+        try:
+            idx = self._radios.index(checked)
+            return self._data[idx] if idx < len(self._data) else None
+        except ValueError:
+            return None
+
+    def card_text(self, index: int) -> str:
+        """返回指定索引卡片的纯文本。"""
+        if 0 <= index < len(self._labels):
+            return self._labels[index].text().replace("&", "").strip()
+        return ""
+
+    def current_index(self) -> int:
+        checked = self._group.checkedButton()
+        if checked is None:
+            return -1
+        try:
+            return self._radios.index(checked)
+        except ValueError:
+            return -1
+
+    def set_current_by_data(self, data) -> None:
+        try:
+            idx = self._data.index(data)
+            self._radios[idx].setChecked(True)
+        except (ValueError, IndexError):
+            pass
+
+    def set_current_index(self, index: int) -> None:
+        if 0 <= index < len(self._radios):
+            self._radios[index].setChecked(True)
+
+
+class StepIndicator(QWidget):
+    """步骤指示器 — 水平步骤条，显示当前进度。
+
+    用法：StepIndicator(["基本信息", "报名规则", "时段岗位"], current=0)
+    """
+
+    def __init__(self, steps: list[str], current: int = 0, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._steps = steps
+        self._current = current
+        self._labels: list[QLabel] = []
+        self._build()
+
+    def _build(self) -> None:
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        p = get_palette()
+        for i, step in enumerate(self._steps):
+            # 步骤圆点 + 文字
+            is_active = i <= self._current
+            is_current = i == self._current
+            color = p.accent if is_active else p.text_tertiary
+            bg = p.accent if is_active else p.border_light
+
+            dot = QLabel()
+            dot.setFixedSize(28, 28)
+            dot.setAlignment(Qt.AlignCenter)
+            dot.setText(str(i + 1))
+            dot.setStyleSheet(
+                f"background: {bg}; color: {p.text_on_accent if is_active else p.text_secondary}; "
+                f"border-radius: 14px; font-weight: bold; font-size: 13px;"
+            )
+            layout.addWidget(dot)
+
+            label = QLabel(step)
+            label.setStyleSheet(
+                f"color: {color}; font-weight: {'700' if is_current else '400'}; "
+                f"font-size: 12px; margin: 0 8px;"
+            )
+            self._labels.append(label)
+            layout.addWidget(label)
+
+            if i < len(self._steps) - 1:
+                # 连接线
+                line = QFrame()
+                line.setFrameShape(QFrame.HLine)
+                line.setFixedHeight(2)
+                line.setMinimumWidth(24)
+                line.setStyleSheet(
+                    f"background: {p.accent if i < self._current else p.border_light}; "
+                    f"border: none; margin: 0 4px;"
+                )
+                line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                layout.addWidget(line)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def set_current(self, index: int) -> None:
+        """更新当前步骤索引并刷新样式。"""
+        self._current = max(0, min(index, len(self._steps) - 1))
+        # 清除并重建
+        while self.layout().count():
+            item = self.layout().takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._labels.clear()
+        self._build()

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -179,12 +180,35 @@ class NavigationWindow(QMainWindow):
         self._toggle_btn.setText("☰" if self._nav_expanded else "≫")
 
     def _on_sidebar_anim_finished(self) -> None:
-        """侧边栏收起/展开动画结束后，通知当前页面重排几何。"""
+        """侧边栏收起/展开动画结束后，递归重排所有内部组件几何。
+
+        仅调用 updateGeometry + layout.activate 对嵌套的 QSplitter/QScrollArea 无效，
+        需递归遍历子 widget，强制 QSplitter 重算尺寸、QScrollArea 更新视口、
+        QAbstractScrollArea 刷新几何，避免「侧边栏收起后内容区仍可横向滚动」的系统性 bug。
+        """
         current = self._stack.currentWidget()
         if current is not None:
             current.updateGeometry()
             if current.layout() is not None:
                 current.layout().activate()
+            # 递归强制内部 QSplitter 和 QScrollArea 重排
+            self._recursive_relayout(current)
+
+    @staticmethod
+    def _recursive_relayout(widget: QWidget) -> None:
+        """递归遍历子组件树，强制 QSplitter 重算尺寸、QScrollArea 刷新视口。"""
+        from PySide6.QtWidgets import QAbstractScrollArea, QSplitter
+        widget.updateGeometry()
+        for child in widget.findChildren(QWidget):
+            if isinstance(child, QSplitter):
+                # QSplitter 需要逐个刷新子 widget 尺寸来消除横向溢出
+                sizes = child.sizes()
+                if sizes:
+                    child.setSizes(sizes)
+                child.updateGeometry()
+            elif isinstance(child, QAbstractScrollArea):
+                child.updateGeometry()
+                child.viewport().updateGeometry()
 
     def _apply_default_page(self) -> None:
         if not self._page_keys:
@@ -382,9 +406,7 @@ class NavigationWindow(QMainWindow):
 
         # 关于
         about_action = QAction("关于", menu)
-        about_action.triggered.connect(
-            lambda: self.statusBar().showMessage("Campus Scheduler · 校园报名与排班系统", 5000)
-        )
+        about_action.triggered.connect(self._show_about)
         menu.addAction(about_action)
 
         # 登出
@@ -427,3 +449,10 @@ class NavigationWindow(QMainWindow):
         dialog.exec()
         # 对话框关闭后刷新顶栏头像（用户可能上传了新头像或修改了偏好）
         self._refresh_topbar_avatar()
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "关于 Campus Scheduler",
+            "Campus Scheduler — 校园先到先得报名与智能排班系统\n\nDeveloped by GoF\n\n© 2026",
+        )

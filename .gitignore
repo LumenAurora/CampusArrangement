@@ -263,3 +263,7 @@ build_*.bat.tmp
 desktop.ini
 Thumbs.db
 ehthumbs.db
+
+# WorkBuddy project data (AI assistant working files)
+.workbuddy/
+.trae/

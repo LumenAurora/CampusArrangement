@@ -5,15 +5,18 @@ import threading
 import requests
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
+from app.infrastructure.notifications import get_smtp_config, send_email, set_smtp_config
 from app.infrastructure.runtime_config import (
     DATA_MODE_LOCAL,
     DATA_MODE_REMOTE,
@@ -26,15 +29,19 @@ from app.infrastructure.runtime_config import (
 from app.ui.style import (
     DENSITY_COMFORTABLE,
     DENSITY_COMPACT,
+    FORM_LAYOUT_FLAT,
+    FORM_LAYOUT_GUIDED,
     THEME_DARK,
     THEME_LIGHT,
     apply_app_style,
     get_default_page,
     get_density,
+    get_form_layout_mode,
     get_palette,
     get_theme,
     set_default_page,
     set_density,
+    set_form_layout_mode,
     set_theme,
 )
 from app.ui.ui_utils import StyledComboBox
@@ -72,6 +79,13 @@ class SettingsDialog(QDialog):
             if index >= 0:
                 self._default_page.setCurrentIndex(index)
 
+        self._form_layout = StyledComboBox()
+        self._form_layout.addItem("向导式（分步引导，推荐）", FORM_LAYOUT_GUIDED)
+        self._form_layout.addItem("平铺式（极客高效，所有字段一览）", FORM_LAYOUT_FLAT)
+        current_layout = get_form_layout_mode()
+        idx = 0 if current_layout == FORM_LAYOUT_GUIDED else 1
+        self._form_layout.setCurrentIndex(idx)
+
         appearance_form = QFormLayout()
         appearance_form.setHorizontalSpacing(16)
         appearance_form.setVerticalSpacing(10)
@@ -79,6 +93,7 @@ class SettingsDialog(QDialog):
         appearance_form.addRow("主题", self._theme)
         appearance_form.addRow("密度", self._density)
         appearance_form.addRow("默认页面", self._default_page)
+        appearance_form.addRow("创建活动布局", self._form_layout)
 
         # ── 数据设置 ──────────────────────────────────────────
         data_header = self._make_section_header("数据设置", p)
@@ -111,6 +126,46 @@ class SettingsDialog(QDialog):
         data_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         data_form.addRow("数据源", self._data_mode)
         data_form.addRow("服务端地址", url_row)
+
+        # ── 邮件设置 ──────────────────────────────────────────
+        email_header = self._make_section_header("邮件提醒设置", p)
+
+        smtp_cfg = get_smtp_config()
+        self._email_host = QLineEdit()
+        self._email_host.setPlaceholderText("例如：smtp.qq.com")
+        self._email_host.setText(smtp_cfg.get("host", ""))
+
+        self._email_port = QSpinBox()
+        self._email_port.setRange(1, 65535)
+        self._email_port.setValue(smtp_cfg.get("port", 587))
+
+        self._email_username = QLineEdit()
+        self._email_username.setPlaceholderText("例如：yourname@qq.com")
+        self._email_username.setText(smtp_cfg.get("username", ""))
+
+        self._email_password = QLineEdit()
+        self._email_password.setPlaceholderText("SMTP 授权码（非邮箱密码）")
+        self._email_password.setEchoMode(QLineEdit.Password)
+        self._email_password.setText(smtp_cfg.get("password", ""))
+
+        self._email_tls = QCheckBox("使用 TLS 加密")
+        self._email_tls.setChecked(smtp_cfg.get("use_tls", True))
+
+        self._email_test_btn = QPushButton("发送测试邮件")
+        self._email_test_btn.setObjectName("secondaryButton")
+        self._email_test_btn.setFixedWidth(120)
+        self._email_test_btn.clicked.connect(self._test_email)
+
+        email_form = QFormLayout()
+        email_form.setHorizontalSpacing(16)
+        email_form.setVerticalSpacing(10)
+        email_form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        email_form.addRow("SMTP 服务器", self._email_host)
+        email_form.addRow("端口", self._email_port)
+        email_form.addRow("邮箱账号", self._email_username)
+        email_form.addRow("授权码", self._email_password)
+        email_form.addRow("", self._email_tls)
+        email_form.addRow("", self._email_test_btn)
 
         # ── 重启警告横幅 ──────────────────────────────────────
         self._restart_banner = QLabel("⚠ 数据源已更改，保存后需重启应用方可生效")
@@ -145,6 +200,8 @@ class SettingsDialog(QDialog):
         layout.addLayout(appearance_form)
         layout.addWidget(data_header)
         layout.addLayout(data_form)
+        layout.addWidget(email_header)
+        layout.addLayout(email_form)
         layout.addWidget(self._restart_banner)
         layout.addSpacing(4)
         layout.addLayout(buttons)
@@ -205,6 +262,50 @@ class SettingsDialog(QDialog):
         self._test_btn.setStyleSheet("")
         self._test_btn.setEnabled(self._data_mode.currentData() == DATA_MODE_REMOTE)
 
+    def _test_email(self) -> None:
+        """发送测试邮件到配置的邮箱地址，验证 SMTP 配置是否有效。"""
+        host = self._email_host.text().strip()
+        port = self._email_port.value()
+        username = self._email_username.text().strip()
+        password = self._email_password.text()
+        use_tls = self._email_tls.isChecked()
+
+        if not host or not username or not password:
+            self._email_test_btn.setText("请完善配置")
+            self._email_test_btn.setStyleSheet("color: #c62828; font-weight: 600;")
+            QTimer.singleShot(3000, self._reset_email_test_btn)
+            return
+
+        self._email_test_btn.setEnabled(False)
+        self._email_test_btn.setText("发送中…")
+
+        def _do_test() -> None:
+            ok, msg = send_email(
+                to=username,
+                subject="[CampusArrangement] 邮件配置测试",
+                body="✅ 如果您收到此邮件，说明 SMTP 配置正确。\n\n—— CampusArrangement 校园先到先得报名系统",
+                host=host, port=port, username=username, password=password, use_tls=use_tls,
+            )
+
+            def _update() -> None:
+                self._email_test_btn.setText(msg[:12])
+                p = get_palette()
+                color = p.success_fg if ok else p.error_fg
+                self._email_test_btn.setStyleSheet(
+                    f"color: {color}; font-weight: 600; border: 1px solid {color}; "
+                    f"border-radius: 6px; padding: 5px 8px;"
+                )
+                QTimer.singleShot(4000, self._reset_email_test_btn)
+
+            QTimer.singleShot(0, _update)
+
+        threading.Thread(target=_do_test, daemon=True).start()
+
+    def _reset_email_test_btn(self) -> None:
+        self._email_test_btn.setText("发送测试邮件")
+        self._email_test_btn.setStyleSheet("")
+        self._email_test_btn.setEnabled(True)
+
     def _reset_defaults(self) -> None:
         self._theme.setCurrentIndex(0)
         self._density.setCurrentIndex(0)
@@ -217,7 +318,16 @@ class SettingsDialog(QDialog):
         set_theme(self._theme.currentData())
         set_density(self._density.currentData())
         set_default_page(self._default_page.currentData())
+        set_form_layout_mode(self._form_layout.currentData())
         set_data_mode(self._data_mode.currentData())
         set_api_base_url(self._base_url.text().strip() or get_api_base_url())
+        # 保存邮件设置
+        set_smtp_config(
+            host=self._email_host.text().strip(),
+            port=self._email_port.value(),
+            username=self._email_username.text().strip(),
+            password=self._email_password.text(),
+            use_tls=self._email_tls.isChecked(),
+        )
         apply_app_style(self._app, get_theme())
         self.accept()

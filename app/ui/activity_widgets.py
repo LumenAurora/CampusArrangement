@@ -41,7 +41,9 @@ from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, SignupMode, SlotType, User
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
-from app.ui.style import get_palette
+from app.ui.activity_guided import GuidedActivityPanel
+from app.ui.activity_workflow import ActivityCard, WorkflowTimeline
+from app.ui.style import FORM_LAYOUT_FLAT, FORM_LAYOUT_GUIDED, get_form_layout_mode, get_palette
 from app.ui.ui_utils import (
     ItemDetailDialog,
     ModeSelector,
@@ -115,6 +117,8 @@ class ActivityPanel(QWidget):
         self._activity_repo = activity_repo
         self._group_repo = group_repo
 
+        self._guided_panel = None  # 仅在向导模式下初始化
+
         self._activity_table = QTableWidget(0, 9)
         self._activity_table.setHorizontalHeaderLabels(["ID", "名称", "报名开始", "报名截止", "名额显示", "分配策略", "地点", "状态", "操作"])
         configure_table(self._activity_table)
@@ -179,8 +183,8 @@ class ActivityPanel(QWidget):
 
         activity_list_layout.addWidget(self._activity_table)
 
-        status_btn_layout = QHBoxLayout()
-        status_btn_layout.setSpacing(6)
+        self._status_btn_row = QHBoxLayout()
+        self._status_btn_row.setSpacing(6)
         self._submit_review_btn = QPushButton("提交审核")
         self._submit_review_btn.setObjectName("secondaryButton")
         self._submit_review_btn.clicked.connect(lambda: self._change_status("submit_review"))
@@ -201,8 +205,8 @@ class ActivityPanel(QWidget):
         self._delete_btn.clicked.connect(self._delete_activity)
 
         # Review group
-        status_btn_layout.addWidget(self._submit_review_btn)
-        status_btn_layout.addWidget(self._publish_btn)
+        self._status_btn_row.addWidget(self._submit_review_btn)
+        self._status_btn_row.addWidget(self._publish_btn)
         # Separator
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.VLine)
@@ -210,21 +214,20 @@ class ActivityPanel(QWidget):
         sep1.setFixedWidth(1)
         p = get_palette()
         sep1.setStyleSheet(f"color: {p.border_light};")
-        status_btn_layout.addWidget(sep1)
+        self._status_btn_row.addWidget(sep1)
         # Moderation group
-        status_btn_layout.addWidget(self._reject_btn)
-        status_btn_layout.addWidget(self._close_btn)
-        status_btn_layout.addWidget(self._archive_btn)
+        self._status_btn_row.addWidget(self._reject_btn)
+        self._status_btn_row.addWidget(self._close_btn)
+        self._status_btn_row.addWidget(self._archive_btn)
         # Spacer + separator + destructive
-        status_btn_layout.addStretch(1)
+        self._status_btn_row.addStretch(1)
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.VLine)
         sep2.setFrameShadow(QFrame.Sunken)
         sep2.setFixedWidth(1)
         sep2.setStyleSheet(f"color: {p.border_light};")
-        status_btn_layout.addWidget(sep2)
-        status_btn_layout.addWidget(self._delete_btn)
-        activity_list_layout.addLayout(status_btn_layout)
+        self._status_btn_row.addWidget(sep2)
+        self._status_btn_row.addWidget(self._delete_btn)
 
         self._activity_list_group.setLayout(activity_list_layout)
 
@@ -280,76 +283,44 @@ class ActivityPanel(QWidget):
         slot_list_layout.addWidget(self._slot_tree)
         self._slot_list_group.setLayout(slot_list_layout)
 
-        # Left column: tab-based layout to reduce visual clutter
+        # Left column: always use guided (workflow) layout
         p = get_palette()
-        tab_widget = QTabWidget()
-        tab_widget.addTab(self._activity_group, "创建活动")
-        tab_widget.addTab(self._slot_group, "添加选项")
-        tab_widget.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: none;
-                background: transparent;
-            }}
-            QTabBar::tab {{
-                background: {p.btn_secondary_bg};
-                color: {p.btn_secondary_fg};
-                border: none;
-                border-radius: 8px;
-                padding: 8px 20px;
-                margin: 2px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QTabBar::tab:selected {{
-                background: {p.accent};
-                color: {p.text_on_accent};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {p.btn_secondary_hover};
-            }}
-        """)
+        self._layout_mode = FORM_LAYOUT_GUIDED
 
-        left_col = QVBoxLayout()
-        left_col.setSpacing(12)
-        left_col.addWidget(tab_widget)
-        left_col.addStretch(1)
-        left_widget = QWidget()
-        left_widget.setLayout(left_col)
-        left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-
-        left_scroll = QScrollArea()
-        left_scroll.setWidget(left_widget)
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # 降低最小宽度：原 280px 与右侧 tree 软下限 780px 叠加，窗口 <1200px 必然溢出。
-        # 改为 220px，配合 configure_tree 的 Stretch 模式，整体可压缩到 ~700px。
-        left_scroll.setMinimumWidth(220)
-        left_scroll.setMaximumWidth(520)
-        left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-
-        right_col = QVBoxLayout()
-        right_col.setSpacing(12)
-        right_col.addWidget(self._activity_list_group, 1)
-        right_col.addWidget(self._slot_list_group, 1)
-        right_widget = QWidget()
-        right_widget.setLayout(right_col)
-
-        # 使用 QSplitter 替代固定比例，解决宽度显示不全问题
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_scroll)
-        splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([360, 720])
+        # ── 主内容区（卡片列表 + 工作流时间线）─────────────────
+        self._right_widget = QWidget()
+        self._build_right_panel(True)
 
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
+
+        # ── 顶部工具栏（创建按钮 + 搜索筛选）─────────────────
+        p_tb = get_palette()
+        top_toolbar = QFrame()
+        top_toolbar.setStyleSheet(
+            f"QFrame {{ background: {p_tb.bg_card}; border: 1px solid {p_tb.border_light}; "
+            f"border-radius: 10px; }}"
+        )
+        tb_layout = QHBoxLayout()
+        tb_layout.setContentsMargins(12, 10, 12, 10)
+        tb_layout.setSpacing(12)
+
+        create_btn = QPushButton("+ 创建活动")
+        create_btn.setObjectName("primaryButton")
+        create_btn.setMinimumHeight(40)
+        create_btn.clicked.connect(self._open_create_dialog)
+        tb_layout.addWidget(create_btn)
+
+        tb_layout.addWidget(self._search_box, 1)
+        tb_layout.addWidget(self._status_filter)
+        tb_layout.addWidget(self._time_filter)
+        top_toolbar.setLayout(tb_layout)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(header)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(top_toolbar)
+        layout.addWidget(self._right_widget, 1)
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_slots)
@@ -359,15 +330,116 @@ class ActivityPanel(QWidget):
         self._activity_table.cellDoubleClicked.connect(self._on_activity_double_clicked)
         self.refresh()
 
-    def _on_activity_selection_changed(self) -> None:
-        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector。
+    # ═══════════════════════════════════════════════════════════
+    # 左侧面板构建 / 热切换
+    # ═══════════════════════════════════════════════════════════
 
-        关键修复：原代码 itemSelectionChanged 只连 _update_status_buttons，
-        导致「添加选项」子页面的活动下拉框不会跟随列表选中变化，
-        用户必须在下拉框里手动再选一次。现在自动同步。
-        """
+    def _open_create_dialog(self) -> None:
+        """打开创建活动弹窗（模态对话框）。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("创建新活动")
+        dialog.setMinimumWidth(580)
+        dialog.setMinimumHeight(600)
+        p = get_palette()
+        dialog.setStyleSheet(f"QDialog {{ background: {p.bg_card}; }}")
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 嵌入 GuidedActivityPanel
+        guided = GuidedActivityPanel(
+            activity_service=self._service,
+            user=self._user,
+            group_repo=self._group_repo,
+            parent=dialog,
+        )
+
+        # 创建成功后关闭弹窗并刷新
+        def _on_created() -> None:
+            self.refresh()
+            dialog.accept()
+
+        guided.set_on_created(_on_created)
+        layout.addWidget(guided)
+        dialog.setLayout(layout)
+        dialog.exec()
+
+    def _build_right_panel(self, use_guided: bool) -> None:
+        """根据模式构建右侧面板（卡片+时间线或表格+选项）。"""
+        # 清除旧布局
+        old_layout = self._right_widget.layout()
+        if old_layout:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget():
+                    item.widget().setParent(None)
+                elif item.layout():
+                    # 递归清理子布局
+                    self._clear_layout(item.layout())
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(12)
+
+        if use_guided:
+            # 活动卡片 + 工作流时间线
+            content_row = QHBoxLayout()
+            content_row.setSpacing(12)
+
+            # 活动卡片列表
+            self._card_scroll = QScrollArea()
+            self._card_scroll.setWidgetResizable(True)
+            self._card_scroll.setFrameShape(QFrame.NoFrame)
+            self._card_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._card_container = QWidget()
+            self._card_layout = QVBoxLayout()
+            self._card_layout.setContentsMargins(0, 0, 0, 0)
+            self._card_layout.setSpacing(8)
+            self._card_layout.addStretch()
+            self._card_container.setLayout(self._card_layout)
+            self._card_scroll.setWidget(self._card_container)
+
+            card_area = QVBoxLayout()
+            card_area.setSpacing(8)
+            card_area.addWidget(self._card_scroll, 1)
+            card_area.addLayout(self._status_btn_row)
+
+            content_row.addLayout(card_area, 2)
+
+            self._workflow_timeline = WorkflowTimeline()
+            self._workflow_timeline.add_slot_clicked = lambda: QMessageBox.information(
+                self, "添加时段", "请在活动列表中选择一个活动，然后使用下方的选项列表添加时段。")
+            self._workflow_timeline.submit_review_clicked = lambda: self._change_status("submit_review")
+            self._workflow_timeline.edit_config_clicked = self._open_create_dialog
+            content_row.addWidget(self._workflow_timeline, 1)
+
+            right_col.addLayout(content_row)
+        else:
+            # 平铺模式：原有布局
+            right_col.addWidget(self._activity_list_group, 1)
+            right_col.addWidget(self._slot_list_group, 1)
+
+        self._right_widget.setLayout(right_col)
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        """递归清理布局中的所有子项。"""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                ActivityPanel._clear_layout(item.layout())
+
+    def _on_activity_selection_changed(self) -> None:
+        """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector + 更新时间线。"""
         self._update_status_buttons()
         activity_id, _ = self._get_selected_activity()
+        # 更新时间线
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None) if activity_id else None
+        if hasattr(self, '_workflow_timeline') and activity:
+            self._workflow_timeline.set_activity(activity)
         if not activity_id:
             return
         # 避免重复 setCurrentIndex 触发不必要刷新
@@ -747,21 +819,31 @@ class ActivityPanel(QWidget):
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
         self._apply_filters()
-        # 更新小组选择器
-        if self._group_repo:
-            current = self._group_selector.currentData()
-            self._group_selector.blockSignals(True)
-            self._group_selector.clear()
-            self._group_selector.addItem("公开（全体用户）", None)
-            for g in self._group_repo.list_all():
-                self._group_selector.addItem(g["name"], g["id"])
-            # 恢复之前的选中项
-            if current:
-                for i in range(self._group_selector.count()):
-                    if self._group_selector.itemData(i) == current:
-                        self._group_selector.setCurrentIndex(i)
-                        break
-            self._group_selector.blockSignals(False)
+        # 更新小组选择器 — 区分向导/平铺模式
+        if self._group_repo and self._guided_panel is not None:
+            guided_gs = getattr(self._guided_panel, "_group_selector", None)
+            if guided_gs is not None:
+                self._update_group_selector(guided_gs)
+        elif self._group_repo:
+            self._update_group_selector(self._group_selector)
+
+    def _update_group_selector(self, selector) -> None:
+        """安全更新小组下拉选择器，保留当前选中项。"""
+        try:
+            current = selector.currentData()
+        except RuntimeError:
+            return  # Widget 已被销毁
+        selector.blockSignals(True)
+        selector.clear()
+        selector.addItem("公开（全体用户）", None)
+        for g in self._group_repo.list_all():
+            selector.addItem(g["name"], g["id"])
+        if current:
+            for i in range(selector.count()):
+                if selector.itemData(i) == current:
+                    selector.setCurrentIndex(i)
+                    break
+        selector.blockSignals(False)
 
     def _on_activity_double_clicked(self, row: int, _col: int) -> None:
         id_item = self._activity_table.item(row, 0)
@@ -886,8 +968,10 @@ class ActivityPanel(QWidget):
             )
             location_label.setAlignment(Qt.AlignCenter)
             self._activity_table.setCellWidget(row_index, 6, location_label)
+            # 状态徽章：dot + 文字（参考 HTML 设计）
             status_text = format_activity_status(activity)
-            self._activity_table.setItem(row_index, 7, make_status_item(status_text))
+            status_item = make_status_item(status_text)
+            self._activity_table.setItem(row_index, 7, status_item)
             # 行内操作：复制 + 更多下拉（详情/归档/删除）
             self._activity_table.setCellWidget(row_index, 8, self._make_row_actions(activity, p))
 
@@ -907,6 +991,51 @@ class ActivityPanel(QWidget):
 
         self._activity_table.setColumnHidden(0, True)
         self._update_status_buttons()
+
+        # 渲染活动卡片列表
+        self._render_activity_cards(activities)
+
+    def _render_activity_cards(self, activities: list[dict]) -> None:
+        """在向导模式下渲染活动卡片列表。"""
+        if not hasattr(self, '_card_layout'):
+            return
+        # 清除旧卡片
+        for i in reversed(range(self._card_layout.count())):
+            item = self._card_layout.itemAt(i)
+            if item.widget():
+                item.widget().hide()
+                item.widget().setParent(None)
+                self._card_layout.removeItem(item)
+            elif item.layout():
+                self._card_layout.removeItem(item)
+
+        if not activities:
+            p = get_palette()
+            empty = QLabel("暂无活动，请先创建活动")
+            empty.setStyleSheet(f"color: {p.text_tertiary}; font-size: 13px; padding: 24px; border: none;")
+            empty.setAlignment(Qt.AlignCenter)
+            self._card_layout.insertWidget(0, empty)
+            self._card_layout.addStretch()
+            return
+
+        for i, a in enumerate(activities):
+            card = ActivityCard(a)
+            card.mousePressEvent = lambda e, aid=a["id"]: self._on_card_clicked(aid)
+            self._card_layout.insertWidget(i, card)
+        self._card_layout.addStretch()
+
+    def _on_card_clicked(self, activity_id: str) -> None:
+        """活动卡片点击：在表格中选中对应行并更新工作流时间线。"""
+        # 同步表格选择
+        for row in range(self._activity_table.rowCount()):
+            item = self._activity_table.item(row, 0)
+            if item and item.text() == activity_id:
+                self._activity_table.selectRow(row)
+                break
+        # 更新工作流时间线
+        activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
+        if hasattr(self, '_workflow_timeline') and activity:
+            self._workflow_timeline.set_activity(activity)
 
     def _select_activity_by_id(self, activity_id: str) -> None:
         """在活动选择器中选中指定 ID 的活动并加载其时段。
@@ -1199,7 +1328,10 @@ class ActivityPanel(QWidget):
                 set_banner(self._activity_message, "error", str(exc))
 
     def _get_selected_activity(self) -> tuple[str | None, str | None]:
-        rows = self._activity_table.selectionModel().selectedRows()
+        sel = self._activity_table.selectionModel()
+        if sel is None:
+            return None, None
+        rows = sel.selectedRows()
         if not rows:
             return None, None
         row = rows[0].row()
@@ -1210,7 +1342,10 @@ class ActivityPanel(QWidget):
         return id_item.text(), name_item.text()
 
     def _get_selected_activity_status(self) -> str:
-        rows = self._activity_table.selectionModel().selectedRows()
+        sel = self._activity_table.selectionModel()
+        if sel is None:
+            return ""
+        rows = sel.selectedRows()
         if not rows:
             return ""
         row = rows[0].row()
