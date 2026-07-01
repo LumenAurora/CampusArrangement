@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QDialog,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -33,7 +35,9 @@ from PySide6.QtWidgets import (
 from app.application.group_service import GroupService
 from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import MemberStatus, User
-from app.infrastructure.repositories import GroupRepository
+from app.infrastructure.exporter import export_to_excel
+from app.infrastructure.notifications import notify_by_preference
+from app.infrastructure.repositories import ActivityRepository, GroupRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
     SearchBox,
@@ -542,12 +546,187 @@ class GroupAdminPanel(QWidget):
 
     def _quick_action(self, action: str) -> None:
         """快速操作按钮回调。"""
-        messages = {
-            "export": "导出成员名单功能即将上线，敬请期待。",
-            "notify": "群发通知功能即将上线，您可以通过邮件提醒设置配置 SMTP 后使用。",
-            "stats": "统计报表功能即将上线，敬请期待。",
-        }
-        QMessageBox.information(self, "快速操作", messages.get(action, "功能开发中"))
+        if action == "export":
+            self._handle_export()
+        elif action == "notify":
+            self._handle_notify()
+        elif action == "stats":
+            self._handle_stats()
+
+    def _handle_export(self) -> None:
+        """导出成员名单到 Excel。"""
+        rows: list[dict] = []
+
+        if self._selected_group_id:
+            group = self._repo.get(self._selected_group_id)
+            members = self._repo.list_members(self._selected_group_id)
+            group_name = group.get("name", "") if group else ""
+            for m in members:
+                rows.append({
+                    "小组名称": group_name,
+                    "用户名": m.get("username", ""),
+                    "角色": "组长" if m.get("role") == "admin" else "成员",
+                    "状态": m.get("status", ""),
+                    "加入时间": (m.get("joined_at", "")[:19] if m.get("joined_at") else ""),
+                })
+        else:
+            for g in self._all_groups:
+                members = self._repo.list_members(g["id"])
+                for m in members:
+                    rows.append({
+                        "小组名称": g.get("name", ""),
+                        "用户名": m.get("username", ""),
+                        "角色": "组长" if m.get("role") == "admin" else "成员",
+                        "状态": m.get("status", ""),
+                        "加入时间": (m.get("joined_at", "")[:19] if m.get("joined_at") else ""),
+                    })
+
+        if not rows:
+            QMessageBox.information(self, "导出", "没有可导出的成员数据。")
+            return
+
+        default_name = f"{(self._selected_group_id or 'all_groups')}_members.xlsx"
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "导出成员名单", default_name, "Excel 文件 (*.xlsx)",
+        )
+        if not filepath:
+            return
+
+        try:
+            export_to_excel(rows, filepath)
+            QMessageBox.information(self, "导出成功", f"已导出 {len(rows)} 条成员记录到：\n{filepath}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出失败：{exc}")
+
+    def _handle_notify(self) -> None:
+        """群发通知 — 打开编写对话框，向小组成员发送通知。"""
+        if not self._selected_group_id:
+            QMessageBox.information(self, "提示", "请先在左侧选择一个小组。")
+            return
+
+        group = self._repo.get(self._selected_group_id)
+        if not group:
+            return
+
+        members = self._repo.list_members(self._selected_group_id)
+        approved_members = [m for m in members if m.get("status") == "approved"]
+        if not approved_members:
+            QMessageBox.information(self, "提示", "该小组暂无已通过的成员。")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"群发通知 - {group.get('name', '')}")
+        dialog.setMinimumWidth(450)
+        dialog_layout = QVBoxLayout(dialog)
+        dialog_layout.setSpacing(10)
+
+        info_label = QLabel(f"将通知发送给 {len(approved_members)} 位成员")
+        info_label.setStyleSheet("font-weight: 600; font-size: 13px;")
+        dialog_layout.addWidget(info_label)
+
+        form = QFormLayout()
+        subject_input = QLineEdit()
+        subject_input.setPlaceholderText("通知标题")
+        form.addRow("标题", subject_input)
+        body_input = QTextEdit()
+        body_input.setPlaceholderText("通知内容")
+        body_input.setMinimumHeight(120)
+        form.addRow("内容", body_input)
+        dialog_layout.addLayout(form)
+
+        btn_row = QHBoxLayout()
+        send_btn = QPushButton("发送")
+        send_btn.setObjectName("primaryButton")
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setObjectName("secondaryButton")
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(send_btn)
+        dialog_layout.addLayout(btn_row)
+
+        def on_send() -> None:
+            subject = subject_input.text().strip()
+            body = body_input.toPlainText().strip()
+            if not subject:
+                QMessageBox.warning(dialog, "提示", "请输入通知标题。")
+                return
+            if not body:
+                QMessageBox.warning(dialog, "提示", "请输入通知内容。")
+                return
+
+            sent_count = 0
+            for m in approved_members:
+                notify_by_preference("", "in_app", subject, body)
+                sent_count += 1
+
+            dialog.accept()
+            QMessageBox.information(self, "发送完成", f"已向 {sent_count} 位成员发送通知。")
+
+        send_btn.clicked.connect(on_send)
+        dialog.exec()
+
+    def _handle_stats(self) -> None:
+        """查看统计报表 — 成员数量、待审批数、活动参与情况。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("小组统计报表")
+        dialog.setMinimumSize(520, 420)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+
+        title = QLabel("小组统计报表")
+        title.setStyleSheet("font-weight: 700; font-size: 16px;")
+        layout.addWidget(title)
+
+        groups = self._all_groups
+        total_members = 0
+        total_pending = 0
+        group_stats: list[dict] = []
+
+        for g in groups:
+            members = self._repo.list_members(g["id"])
+            approved = [m for m in members if m.get("status") == "approved"]
+            pending = [m for m in members if m.get("status") == "pending"]
+            total_members += len(approved)
+            total_pending += len(pending)
+
+            activity_repo = ActivityRepository()
+            all_activities = activity_repo.list_all()
+            group_activities = [a for a in all_activities if a.get("group_id") == g["id"]]
+
+            group_stats.append({
+                "name": g.get("name", ""),
+                "approved": len(approved),
+                "pending": len(pending),
+                "activities": len(group_activities),
+            })
+
+        summary = QLabel(
+            f"小组总数：{len(groups)}  |  已通过成员：{total_members}  |  待审批：{total_pending}"
+        )
+        summary.setStyleSheet("font-size: 12px; color: gray; margin-bottom: 8px;")
+        layout.addWidget(summary)
+
+        from app.ui.ui_utils import configure_table
+        table = QTableWidget(len(group_stats), 4)
+        table.setHorizontalHeaderLabels(["小组名称", "成员数", "待审批", "关联活动"])
+        configure_table(table)
+        for i, gs in enumerate(group_stats):
+            table.setItem(i, 0, QTableWidgetItem(gs["name"]))
+            table.setItem(i, 1, QTableWidgetItem(str(gs["approved"])))
+            table.setItem(i, 2, QTableWidgetItem(str(gs["pending"])))
+            table.setItem(i, 3, QTableWidgetItem(str(gs["activities"])))
+        layout.addWidget(table, 1)
+
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(dialog.accept)
+        close_btn.setObjectName("primaryButton")
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dialog.exec()
 
     def _create_group(self) -> None:
         try:

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -405,9 +406,7 @@ class NavigationWindow(QMainWindow):
 
         # 关于
         about_action = QAction("关于", menu)
-        about_action.triggered.connect(
-            lambda: self.statusBar().showMessage("Campus Scheduler · 校园报名与排班系统", 5000)
-        )
+        about_action.triggered.connect(self._show_about)
         menu.addAction(about_action)
 
         # 登出
@@ -450,3 +449,10 @@ class NavigationWindow(QMainWindow):
         dialog.exec()
         # 对话框关闭后刷新顶栏头像（用户可能上传了新头像或修改了偏好）
         self._refresh_topbar_avatar()
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "关于 Campus Scheduler",
+            "Campus Scheduler — 校园先到先得报名与智能排班系统\n\nDeveloped by GoF\n\n© 2026",
+        )
