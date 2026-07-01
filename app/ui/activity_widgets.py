@@ -344,10 +344,10 @@ class ActivityPanel(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
         splitter.addWidget(self._right_widget)
-        # 工作流设计：6:4 比例
-        splitter.setStretchFactor(0, 6)
-        splitter.setStretchFactor(1, 4)
-        splitter.setSizes([600, 400])
+        # 工作流设计：左右比例适配弹窗模式
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 7)
+        splitter.setSizes([320, 680])
 
         self._splitter = splitter  # 保存引用以便外部操作
 
@@ -372,56 +372,74 @@ class ActivityPanel(QWidget):
     # ═══════════════════════════════════════════════════════════
 
     def _build_left_panel(self, use_guided: bool) -> None:
-        """根据模式构建左侧面板（向导式或平铺式）。"""
+        """构建左侧面板 — 创建按钮 + 选项管理。"""
         while self._left_col_layout.count() > 0:
             item = self._left_col_layout.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
 
-        if use_guided:
-            for i in range(self._flat_tab_widget.count()):
-                if self._flat_tab_widget.widget(i) is self._slot_group:
-                    self._flat_tab_widget.removeTab(i)
-                    break
+        # 创建按钮区域
+        create_bar = QFrame()
+        p = get_palette()
+        create_bar.setStyleSheet(
+            f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
+            f"border-radius: 10px; padding: 12px 14px; }}"
+        )
+        bar_layout = QVBoxLayout()
+        bar_layout.setContentsMargins(10, 10, 10, 10)
+        bar_layout.setSpacing(8)
 
-            if self._guided_panel is None:
-                self._guided_panel = GuidedActivityPanel(
-                    activity_service=self._service,
-                    user=self._user,
-                    group_repo=self._group_repo,
-                    parent=self,
-                )
-                self._guided_panel.set_on_created(self.refresh)
+        desc = QLabel("创建新的活动，配置时段与报名策略")
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
 
-            guided_tab = QTabWidget()
-            guided_tab.addTab(self._guided_panel, "创建活动")
-            guided_tab.addTab(self._slot_group, "添加选项")
-            guided_tab.setStyleSheet(self._flat_tab_widget.styleSheet())
-            self._left_col_layout.addWidget(guided_tab)
-            if hasattr(self, '_splitter'):
-                self._splitter.setSizes([600, 400])
-        else:
-            found = False
-            for i in range(self._flat_tab_widget.count()):
-                if self._flat_tab_widget.widget(i) is self._slot_group:
-                    found = True
-                    break
-            if not found:
-                self._flat_tab_widget.addTab(self._slot_group, "添加选项")
-            self._left_col_layout.addWidget(self._flat_tab_widget)
-            if hasattr(self, '_splitter'):
-                self._splitter.setSizes([360, 720])
+        create_btn = QPushButton("+ 创建活动")
+        create_btn.setObjectName("primaryButton")
+        create_btn.setMinimumHeight(44)
+        create_btn.clicked.connect(self._open_create_dialog)
+
+        bar_layout.addWidget(create_btn)
+        bar_layout.addWidget(desc)
+        create_bar.setLayout(bar_layout)
+        self._left_col_layout.addWidget(create_bar)
+
+        # 选项管理（添加时段/岗位）
+        self._left_col_layout.addWidget(self._slot_group, 1)
 
     def _check_layout_mode(self) -> None:
-        """检测设置中的布局模式是否变更，如变更则热切换左右面板。"""
-        current = get_form_layout_mode()
-        if current != self._layout_mode:
-            self._layout_mode = current
-            use_guided = current == FORM_LAYOUT_GUIDED
-            self._build_left_panel(use_guided)
-            self._build_right_panel(use_guided)
-            # 重新渲染数据
-            self._apply_filters()
+        """已废弃：布局模式固定为工作流设计，不再支持热切换。"""
+        pass
+
+    def _open_create_dialog(self) -> None:
+        """打开创建活动弹窗（模态对话框）。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("创建新活动")
+        dialog.setMinimumWidth(580)
+        dialog.setMinimumHeight(600)
+        p = get_palette()
+        dialog.setStyleSheet(f"QDialog {{ background: {p.bg_card}; }}")
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 嵌入 GuidedActivityPanel
+        guided = GuidedActivityPanel(
+            activity_service=self._service,
+            user=self._user,
+            group_repo=self._group_repo,
+            parent=dialog,
+        )
+
+        # 创建成功后关闭弹窗并刷新
+        def _on_created() -> None:
+            self.refresh()
+            dialog.accept()
+
+        guided.set_on_created(_on_created)
+        layout.addWidget(guided)
+        dialog.setLayout(layout)
+        dialog.exec()
 
     def _build_right_panel(self, use_guided: bool) -> None:
         """根据模式构建右侧面板（卡片+时间线或表格+选项）。"""
@@ -897,7 +915,6 @@ class ActivityPanel(QWidget):
         return ok
 
     def refresh(self) -> None:
-        self._check_layout_mode()
         self._all_activities = self._service.list_activities()
         self._apply_filters()
         # 更新小组选择器 — 区分向导/平铺模式
@@ -1073,9 +1090,8 @@ class ActivityPanel(QWidget):
         self._activity_table.setColumnHidden(0, True)
         self._update_status_buttons()
 
-        # 向导模式：额外渲染活动卡片
-        if self._layout_mode == FORM_LAYOUT_GUIDED:
-            self._render_activity_cards(activities)
+        # 渲染活动卡片列表
+        self._render_activity_cards(activities)
 
     def _render_activity_cards(self, activities: list[dict]) -> None:
         """在向导模式下渲染活动卡片列表。"""

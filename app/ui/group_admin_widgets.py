@@ -290,13 +290,18 @@ class GroupAdminPanel(QWidget):
         q_sub.setStyleSheet(f"color: rgba(255,255,255,0.75); font-size: 11px; border: none;")
         quick_layout.addWidget(q_title)
         quick_layout.addWidget(q_sub)
-        for label in ["📤 导出成员名单", "📧 群发通知", "📊 查看统计报表"]:
+        for label, action in [
+            ("📤 导出成员名单", "export"),
+            ("📧 群发通知", "notify"),
+            ("📊 查看统计报表", "stats"),
+        ]:
             btn = QPushButton(label)
             btn.setStyleSheet(
                 "QPushButton { background: rgba(255,255,255,0.12); color: white; border: none; "
                 "border-radius: 8px; padding: 10px 12px; text-align: left; font-size: 12px; }"
                 "QPushButton:hover { background: rgba(255,255,255,0.22); }"
             )
+            btn.clicked.connect(lambda checked, a=action: self._quick_action(a))
             quick_layout.addWidget(btn)
         quick_card.setLayout(quick_layout)
         right_layout.addWidget(quick_card)
@@ -534,6 +539,15 @@ class GroupAdminPanel(QWidget):
     # ═══════════════════════════════════════════════════════════
     # 操作
     # ═══════════════════════════════════════════════════════════
+
+    def _quick_action(self, action: str) -> None:
+        """快速操作按钮回调。"""
+        messages = {
+            "export": "导出成员名单功能即将上线，敬请期待。",
+            "notify": "群发通知功能即将上线，您可以通过邮件提醒设置配置 SMTP 后使用。",
+            "stats": "统计报表功能即将上线，敬请期待。",
+        }
+        QMessageBox.information(self, "快速操作", messages.get(action, "功能开发中"))
 
     def _create_group(self) -> None:
         try:
