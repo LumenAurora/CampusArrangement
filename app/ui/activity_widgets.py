@@ -408,10 +408,9 @@ class ActivityPanel(QWidget):
             content_row.addLayout(card_area, 2)
 
             self._workflow_timeline = WorkflowTimeline()
-            self._workflow_timeline.add_slot_clicked = lambda: QMessageBox.information(
-                self, "添加时段", "请在活动列表中选择一个活动，然后使用下方的选项列表添加时段。")
+            self._workflow_timeline.add_slot_clicked = self._on_workflow_add_slot
             self._workflow_timeline.submit_review_clicked = lambda: self._change_status("submit_review")
-            self._workflow_timeline.edit_config_clicked = self._open_create_dialog
+            self._workflow_timeline.edit_config_clicked = self._on_workflow_edit_config
             content_row.addWidget(self._workflow_timeline, 1)
 
             right_col.addLayout(content_row)
@@ -450,6 +449,192 @@ class ActivityPanel(QWidget):
             if self._activity_selector.itemData(i) == activity_id:
                 self._activity_selector.setCurrentIndex(i)
                 break
+
+    def _on_workflow_add_slot(self) -> None:
+        """工作流中点击「添加时段」：弹出简洁的时段添加对话框。"""
+        activity = self._workflow_timeline._activity if hasattr(self, '_workflow_timeline') else None
+        if not activity:
+            QMessageBox.information(self, "添加时段", "请先在左侧选择一个活动")
+            return
+        activity_id = activity.get("id", "")
+        is_time_slot = activity.get("activity_type") != ActivityType.NON_TIME_SLOT.value
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("添加时段")
+        dlg.setMinimumWidth(400)
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText("如：周一上午")
+        layout.addWidget(QLabel("名称"))
+        layout.addWidget(name_edit)
+
+        if is_time_slot:
+            start = QDateTimeEdit(QDateTime.currentDateTime())
+            start.setCalendarPopup(True)
+            start.setDisplayFormat("yyyy-MM-dd HH:mm")
+            end = QDateTimeEdit(QDateTime.currentDateTime().addSecs(3600))
+            end.setCalendarPopup(True)
+            end.setDisplayFormat("yyyy-MM-dd HH:mm")
+            layout.addWidget(QLabel("开始时间"))
+            layout.addWidget(start)
+            layout.addWidget(QLabel("结束时间"))
+            layout.addWidget(end)
+
+        cap = QSpinBox()
+        cap.setRange(1, 10000)
+        cap.setValue(30)
+        layout.addWidget(QLabel("容量"))
+        layout.addWidget(cap)
+
+        err = QLabel("")
+        err.setStyleSheet("color: #e53e3e; font-size: 11px;")
+        err.setVisible(False)
+        layout.addWidget(err)
+
+        btn_row = QHBoxLayout()
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(dlg.reject)
+        ok = QPushButton("添加")
+        ok.setObjectName("primaryButton")
+
+        def _do_add():
+            name = name_edit.text().strip()
+            capacity = cap.value()
+            try:
+                if is_time_slot:
+                    s = start.dateTime().toPython()
+                    e = end.dateTime().toPython()
+                    if e <= s:
+                        err.setText("结束时间必须晚于开始时间")
+                        err.setVisible(True)
+                        return
+                    self._service.add_slot(
+                        user=self._user, activity_id=activity_id,
+                        start_time=s, end_time=e, capacity=capacity, name=name,
+                    )
+                else:
+                    self._service.add_slot_generic(
+                        user=self._user, activity_id=activity_id,
+                        slot_type=SlotType.CUSTOM_OPTION, name=name,
+                        capacity=capacity, metadata="",
+                    )
+                self.refresh()
+                dlg.accept()
+            except (PermissionDenied, ValidationError) as exc:
+                err.setText(str(exc))
+                err.setVisible(True)
+            except Exception as exc:
+                err.setText(f"添加失败：{exc}")
+                err.setVisible(True)
+
+        ok.clicked.connect(_do_add)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel)
+        btn_row.addWidget(ok)
+        layout.addLayout(btn_row)
+
+        dlg.setLayout(layout)
+        dlg.exec()
+
+    def _on_workflow_edit_config(self) -> None:
+        """工作流中点击「编辑配置」：弹出编辑对话框修改活动基本信息。"""
+        activity = self._workflow_timeline._activity if hasattr(self, '_workflow_timeline') else None
+        if not activity:
+            QMessageBox.information(self, "编辑配置", "请先在左侧选择一个活动")
+            return
+        activity_id = activity.get("id", "")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("编辑活动配置")
+        dlg.setMinimumWidth(450)
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+
+        name_edit = QLineEdit(activity.get("name", ""))
+        layout.addWidget(QLabel("活动名称"))
+        layout.addWidget(name_edit)
+
+        details_edit = QLineEdit(activity.get("details", ""))
+        layout.addWidget(QLabel("活动描述"))
+        layout.addWidget(details_edit)
+
+        loc_edit = QLineEdit(activity.get("location", ""))
+        layout.addWidget(QLabel("地点"))
+        layout.addWidget(loc_edit)
+
+        signup_start_str = activity.get("signup_start", "")
+        signup_end_str = activity.get("signup_end", "")
+        try:
+            ss = datetime.fromisoformat(str(signup_start_str)) if signup_start_str else datetime.now()
+            se = datetime.fromisoformat(str(signup_end_str)) if signup_end_str else datetime.now()
+        except (ValueError, TypeError):
+            ss = datetime.now()
+            se = datetime.now()
+
+        start_edit = QDateTimeEdit(QDateTime(ss.year, ss.month, ss.day, ss.hour, ss.minute, ss.second))
+        start_edit.setCalendarPopup(True)
+        start_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        end_edit = QDateTimeEdit(QDateTime(se.year, se.month, se.day, se.hour, se.minute, se.second))
+        end_edit.setCalendarPopup(True)
+        end_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
+        layout.addWidget(QLabel("报名开始时间"))
+        layout.addWidget(start_edit)
+        layout.addWidget(QLabel("报名截止时间"))
+        layout.addWidget(end_edit)
+
+        err = QLabel("")
+        err.setStyleSheet("color: #e53e3e; font-size: 11px;")
+        err.setVisible(False)
+        layout.addWidget(err)
+
+        btn_row = QHBoxLayout()
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(dlg.reject)
+        save_btn = QPushButton("保存")
+        save_btn.setObjectName("primaryButton")
+
+        def _do_save():
+            name = name_edit.text().strip()
+            if not name:
+                err.setText("活动名称不能为空")
+                err.setVisible(True)
+                return
+            s = start_edit.dateTime().toPython()
+            e = end_edit.dateTime().toPython()
+            if e <= s:
+                err.setText("报名截止时间必须晚于开始时间")
+                err.setVisible(True)
+                return
+            try:
+                repo = self._activity_repo
+                if not repo:
+                    raise ValidationError("当前模式下不支持编辑活动配置")
+                repo.update(activity_id, {
+                    "name": name,
+                    "details": details_edit.text().strip(),
+                    "location": loc_edit.text().strip(),
+                    "signup_start": s.isoformat(),
+                    "signup_end": e.isoformat(),
+                })
+                self.refresh()
+                dlg.accept()
+            except (PermissionDenied, ValidationError) as exc:
+                err.setText(str(exc))
+                err.setVisible(True)
+            except Exception as exc:
+                err.setText(f"保存失败：{exc}")
+                err.setVisible(True)
+
+        save_btn.clicked.connect(_do_save)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+        dlg.setLayout(layout)
+        dlg.exec()
 
     def _init_activity_form(self) -> None:
         self._activity_name = QLineEdit()

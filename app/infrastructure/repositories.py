@@ -286,6 +286,21 @@ class ActivityRepository:
         finally:
             conn.close()
 
+    def update(self, activity_id: str, fields: dict) -> None:
+        """更新活动的基本字段（name, details, location, signup_start, signup_end）。"""
+        allowed = {"name", "details", "location", "signup_start", "signup_end"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not updates:
+            return
+        conn = get_connection()
+        try:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [activity_id]
+            conn.execute(f"UPDATE activities SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class TimeSlotRepository:
     def get(self, slot_id: str) -> dict | None:
