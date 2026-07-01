@@ -6,7 +6,7 @@ import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QObject, QSettings, Signal
 
 _logger = logging.getLogger(__name__)
 
@@ -21,14 +21,15 @@ def _settings() -> QSettings:
 # ── SMTP 配置持久化 ────────────────────────────────────────────
 
 def get_smtp_config() -> dict:
-    """从 QSettings 读取 SMTP 配置。"""
+    """从 QSettings 读取 SMTP 配置（仅限主线程调用）。"""
     s = _settings()
+    raw_use_tls = str(s.value("email/use_tls", True)).lower()
     return {
         "host": s.value("email/host", ""),
         "port": int(s.value("email/port", 587)),
         "username": s.value("email/username", ""),
         "password": s.value("email/password", ""),
-        "use_tls": s.value("email/use_tls", True) in (True, "true", "1"),
+        "use_tls": raw_use_tls in ("true", "1", "yes"),
     }
 
 
@@ -38,7 +39,7 @@ def set_smtp_config(host: str, port: int, username: str, password: str, use_tls:
     s.setValue("email/host", host)
     s.setValue("email/port", port)
     s.setValue("email/username", username)
-    s.setValue("email/password", password)  # 注意：明文存储，生产环境建议加密
+    s.setValue("email/password", password)
     s.setValue("email/use_tls", use_tls)
     s.sync()
 
@@ -57,19 +58,14 @@ def send_email(
     use_tls: bool | None = None,
     html: bool = False,
 ) -> tuple[bool, str]:
-    """发送邮件。返回 (成功, 消息)。
+    """发送邮件（线程安全 — 不访问 QSettings）。
 
-    如未提供 SMTP 参数，从 QSettings 读取已保存的配置。
+    所有 SMTP 参数必须显式传入，本函数不从 QSettings 读取。
     """
-    cfg = get_smtp_config()
-    host = host or cfg["host"]
-    port = port or cfg["port"]
-    username = username or cfg["username"]
-    password = password or cfg["password"]
-    use_tls = use_tls if use_tls is not None else cfg["use_tls"]
-
     if not host or not username or not password:
         return False, "邮件服务器未配置，请在设置中填写 SMTP 信息"
+
+    tls = use_tls if use_tls is not None else True
 
     try:
         msg = MIMEMultipart()
@@ -81,7 +77,7 @@ def send_email(
 
         with smtplib.SMTP(host, port, timeout=15) as server:
             server.ehlo()
-            if use_tls:
+            if tls:
                 server.starttls()
                 server.ehlo()
             server.login(username, password)
@@ -98,6 +94,13 @@ def send_email(
         return False, f"网络错误：{exc}"
 
 
+# ── 异步发送 ──────────────────────────────────────────────────
+
+class _EmailSignals(QObject):
+    """邮件发送结果信号 — 用于跨线程回调到主线程。"""
+    done = Signal(bool, str)
+
+
 def send_email_async(
     to: str,
     subject: str,
@@ -106,19 +109,39 @@ def send_email_async(
     html: bool = False,
     on_done: callable | None = None,
 ) -> None:
-    """异步发送邮件（不阻塞 UI 线程）。on_done(success, message) 在主线程回调。"""
+    """异步发送邮件（不阻塞 UI 线程）。
+
+    在启动工作线程前从 QSettings 读取 SMTP 配置（主线程安全），
+    使用 Qt Signal 将结果安全地回调到主线程。
+    """
+    # 在主线程中读取配置（QSettings 不是线程安全的）
+    cfg = get_smtp_config()
+    host = cfg["host"]
+    port = cfg["port"]
+    username = cfg["username"]
+    password = cfg["password"]
+    use_tls = cfg["use_tls"]
+
+    signals = _EmailSignals()
+
+    if on_done:
+        signals.done.connect(on_done)
 
     def _worker() -> None:
-        ok, msg = send_email(to, subject, body, html=html)
+        try:
+            ok, msg = send_email(
+                to, subject, body,
+                host=host, port=port, username=username, password=password,
+                use_tls=use_tls, html=html,
+            )
+        except Exception as exc:
+            ok, msg = False, f"邮件发送异常：{exc}"
+            _logger.exception("邮件发送异常: %s", exc)
+
         _logger.info("邮件发送%s: %s → %s: %s", "成功" if ok else "失败", subject, to, msg)
-        if on_done:
-            # 结果回主线程
-            from PySide6.QtCore import QTimer
 
-            def _callback() -> None:
-                on_done(ok, msg)
-
-            QTimer.singleShot(0, _callback)
+        # 通过 Signal 回调主线程（Qt 自动处理跨线程调度）
+        signals.done.emit(ok, msg)
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -136,11 +159,13 @@ def notify_by_preference(user_email: str, user_notification_mode: str, subject: 
 
     user_notification_mode: "in_app" | "email" | "none"
     """
-    if user_notification_mode == "email":
+    mode = (user_notification_mode or "").lower().strip()
+    if mode == "email":
         if not user_email:
             _logger.warning("用户未设置邮箱，无法发送邮件通知")
             return
         send_email_async(user_email, subject, body)
-    elif user_notification_mode == "in_app":
+    elif mode == "in_app":
         notify(f"[{subject}] {body}")
-    # "none" 不发送任何通知
+    elif mode not in ("", "none"):
+        _logger.warning("未知通知模式: %s，跳过通知", user_notification_mode)

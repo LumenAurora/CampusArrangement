@@ -150,7 +150,7 @@ def generate_recurring_activities(
                 allocation_mode=AllocationMode(template.allocation_mode),
                 location="",
                 activity_type=ActivityType(template.activity_type),
-                checkin_mode=template.checkin_mode,
+                checkin_mode=CheckInMode(template.checkin_mode).value,
                 checkin_start=signup_start,
                 checkin_end=signup_end,
                 group_id=None,

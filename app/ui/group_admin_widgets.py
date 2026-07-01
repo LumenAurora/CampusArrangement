@@ -100,6 +100,7 @@ class GroupAdminPanel(QWidget):
         self._repo = group_repo
         self._user = user
         self._selected_group_id: str | None = None
+        self._selected_group_owner_id: str | None = None
         self._all_groups: list[dict] = []
         self._init_ui()
         self.refresh()
@@ -341,7 +342,7 @@ class GroupAdminPanel(QWidget):
         self._stat_pending.set_value(str(pending_total))
         self._stat_pending.set_subtitle("需要尽快处理" if pending_total > 0 else "")
         self._stat_active.set_value(str(total))
-        self._stat_active._title.setText("小组总数")
+        # 不覆盖 _title — 保持"活跃小组"标签
 
         # 同步更新待审批徽章
         pending_list = self._service.list_pending_applications(self._user)
@@ -351,9 +352,9 @@ class GroupAdminPanel(QWidget):
     def _apply_group_filters(self, *args) -> None:
         """搜索过滤小组列表。"""
         query = self._search_box.text().strip().lower()
-        groups = self._all_activities if hasattr(self, '_all_activities') else self._all_groups
+        groups = self._all_groups
         if query:
-            groups = [g for g in self._all_groups
+            groups = [g for g in groups
                       if query in g.get("name", "").lower()
                       or query in g.get("description", "").lower()]
         self._render_group_table(groups)
@@ -405,7 +406,6 @@ class GroupAdminPanel(QWidget):
             role_text = "组长" if role == "admin" else "成员"
             role_color = "#7c3aed" if role == "admin" else "#2563eb"
             role_item = QTableWidgetItem(role_text)
-            role_item.setForeground(QTableWidgetItem().foreground())  # use default
             self._member_table.setItem(i, 1, role_item)
             # 状态徽章
             status = m.get("status", "")
@@ -579,7 +579,7 @@ class GroupAdminPanel(QWidget):
             self._selected_group_owner_id = group.get("owner_id", "")
             self._delete_btn.setEnabled(True)
             member_count = len(self._repo.list_members(group_id))
-            self._member_label.setText(f"小组：{group['name']}（{member_count} 位成员）")
+            self._member_label.setText(f"小组：{group.get('name', 'Unknown')}（{member_count} 位成员）")
             self._load_members(group_id)
 
     def _approve_member(self, member_user_id: str) -> None:

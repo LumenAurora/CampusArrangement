@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
-from PySide6.QtCore import QDate, QDateTime, Qt
+from PySide6.QtCore import QDate, QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCalendarWidget,
     QCheckBox,
@@ -62,7 +62,7 @@ from app.ui.ui_utils import (
 class GuidedActivityPanel(QWidget):
     """向导式活动创建面板 v2。"""
 
-    activity_created = None  # Qt Signal 替代 — 由父面板在 __init__ 后连接
+    activity_created = Signal()
 
     def __init__(
         self,
@@ -763,8 +763,7 @@ class GuidedActivityPanel(QWidget):
         if is_ts:
             lines.append(f"📍 地点：{self._location.text() or '—'}")
             ck_idx = self._checkin_mode.current_index()
-            ck_text = "手动" if ck_idx < 0 else self._checkin_mode._cards[ck_idx].text()
-            ck_text = re.sub(r'<[^>]+>', '', ck_text).strip()
+            ck_text = self._checkin_mode.card_text(ck_idx) if ck_idx >= 0 else "手动"
             lines.append(f"✅ 签到：{ck_text}")
 
         if self._slot_name.text().strip():
@@ -829,7 +828,7 @@ class GuidedActivityPanel(QWidget):
                 allocation_mode=AllocationMode(self._allocation_mode.current_data()),
                 location=self._location.text().strip() if is_ts else "",
                 activity_type=ActivityType(self._activity_type.current_data()),
-                checkin_mode=self._checkin_mode.current_data() if is_ts else CheckInMode.MANUAL.value,
+                checkin_mode=CheckInMode(self._checkin_mode.current_data()) if is_ts else CheckInMode.MANUAL.value,
                 checkin_start=self._checkin_start.dateTime().toPython() if is_ts else None,
                 checkin_end=self._checkin_end.dateTime().toPython() if is_ts else None,
                 group_id=self._group_selector.currentData(),
@@ -860,8 +859,12 @@ class GuidedActivityPanel(QWidget):
                         end_time=slot_end,
                         capacity=self._slot_capacity.value(),
                     )
+                except (ValidationError, PermissionDenied):
+                    import logging as _log
+                    _log.getLogger(__name__).warning("自动添加初始时段失败，活动已创建", exc_info=True)
                 except Exception:
-                    pass
+                    import logging as _log
+                    _log.getLogger(__name__).exception("自动添加初始时段异常")
 
             set_banner(self._message, "success", f"活动「{name}」创建成功")
             if hasattr(self, "_on_created") and callable(self._on_created):

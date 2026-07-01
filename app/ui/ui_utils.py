@@ -511,6 +511,13 @@ class RadioCardGroup(QWidget):
         idx = self._cards.index(checked)
         return self._data[idx] if idx < len(self._data) else None
 
+    def card_text(self, index: int) -> str:
+        """返回指定索引卡片的纯文本（去除 HTML 标签）。"""
+        import re
+        if 0 <= index < len(self._cards):
+            return re.sub(r'<[^>]+>', '', self._cards[index].text()).strip()
+        return ""
+
     def current_index(self) -> int:
         """返回当前选中卡片的索引，-1 表示无选中。"""
         checked = self._group.checkedButton()
