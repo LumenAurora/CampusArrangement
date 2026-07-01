@@ -515,20 +515,18 @@ class ActivityPanel(QWidget):
                 ActivityPanel._clear_layout(item.layout())
 
     def _focus_slot_form(self) -> None:
-        """聚焦到添加选项标签页。"""
-        for widget in self.findChildren(QTabWidget):
-            for i in range(widget.count()):
-                if "添加选项" in widget.tabText(i):
-                    widget.setCurrentIndex(i)
+        """聚焦到添加选项区域（在左侧面板中滚动到 _slot_group）。"""
+        if hasattr(self, '_slot_group') and self._slot_group.isVisible():
+            # 确保左侧面板可见
+            for scroll in self.findChildren(QScrollArea):
+                if scroll.widget() and scroll.widget().findChild(type(self._slot_group)):
+                    scroll.ensureWidgetVisible(self._slot_group)
                     return
 
     def _focus_create_form(self) -> None:
-        """聚焦到创建活动标签页。"""
-        for widget in self.findChildren(QTabWidget):
-            for i in range(widget.count()):
-                if "创建活动" in widget.tabText(i):
-                    widget.setCurrentIndex(i)
-                    return
+        """打开创建活动弹窗。"""
+        if hasattr(self, '_open_create_dialog'):
+            self._open_create_dialog()
 
     def _on_activity_selection_changed(self) -> None:
         """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector + 更新时间线。"""
@@ -1103,6 +1101,7 @@ class ActivityPanel(QWidget):
             if item.widget():
                 item.widget().hide()
                 item.widget().setParent(None)
+                self._card_layout.removeItem(item)
             elif item.layout():
                 self._card_layout.removeItem(item)
 
@@ -1425,7 +1424,10 @@ class ActivityPanel(QWidget):
                 set_banner(self._activity_message, "error", str(exc))
 
     def _get_selected_activity(self) -> tuple[str | None, str | None]:
-        rows = self._activity_table.selectionModel().selectedRows()
+        sel = self._activity_table.selectionModel()
+        if sel is None:
+            return None, None
+        rows = sel.selectedRows()
         if not rows:
             return None, None
         row = rows[0].row()
@@ -1436,7 +1438,10 @@ class ActivityPanel(QWidget):
         return id_item.text(), name_item.text()
 
     def _get_selected_activity_status(self) -> str:
-        rows = self._activity_table.selectionModel().selectedRows()
+        sel = self._activity_table.selectionModel()
+        if sel is None:
+            return ""
+        rows = sel.selectedRows()
         if not rows:
             return ""
         row = rows[0].row()

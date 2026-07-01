@@ -18,23 +18,19 @@
 
 from __future__ import annotations
 
-import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from PySide6.QtCore import QDate, QDateTime, Qt, Signal
+from PySide6.QtCore import QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCalendarWidget,
     QCheckBox,
-    QComboBox,
     QDateTimeEdit,
-    QDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -305,6 +301,8 @@ class GuidedActivityPanel(QWidget):
         self._activity_type.add_card("时段模式", "排班/志愿/签到", ActivityType.TIME_SLOT)
         self._activity_type.add_card("非时段模式", "选课/选题/名额分配", ActivityType.NON_TIME_SLOT)
         self._activity_type.set_current_index(0)
+        # 连接信号：切换活动类型时更新地点/签到字段可见性
+        self._activity_type._group.buttonClicked.connect(self._update_fields_by_mode)
         layout.addWidget(self._activity_type)
 
         # 地点
@@ -869,6 +867,8 @@ class GuidedActivityPanel(QWidget):
             set_banner(self._message, "success", f"活动「{name}」创建成功")
             if hasattr(self, "_on_created") and callable(self._on_created):
                 self._on_created()
+            # 发射 Signal 通知所有监听者
+            self.activity_created.emit()
 
             self._name.clear()
             self._details.clear()

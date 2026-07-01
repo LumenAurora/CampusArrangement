@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGraphicsDropShadowEffect,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -657,7 +656,9 @@ class GroupAdminPanel(QWidget):
 
             sent_count = 0
             for m in approved_members:
-                notify_by_preference("", "in_app", subject, body)
+                email = m.get("email", "")
+                pref = m.get("notification_mode", "in_app")
+                notify_by_preference(email, pref, subject, body)
                 sent_count += 1
 
             dialog.accept()

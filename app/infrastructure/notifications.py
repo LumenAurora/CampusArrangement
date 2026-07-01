@@ -24,9 +24,13 @@ def get_smtp_config() -> dict:
     """从 QSettings 读取 SMTP 配置（仅限主线程调用）。"""
     s = _settings()
     raw_use_tls = str(s.value("email/use_tls", True)).lower()
+    try:
+        port = int(s.value("email/port", 587))
+    except (ValueError, TypeError):
+        port = 587
     return {
         "host": s.value("email/host", ""),
-        "port": int(s.value("email/port", 587)),
+        "port": port,
         "username": s.value("email/username", ""),
         "password": s.value("email/password", ""),
         "use_tls": raw_use_tls in ("true", "1", "yes"),
