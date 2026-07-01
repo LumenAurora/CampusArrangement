@@ -287,68 +287,9 @@ class ActivityPanel(QWidget):
         p = get_palette()
         self._layout_mode = FORM_LAYOUT_GUIDED
 
-        # Build the flat-mode tab widget for backward compatibility
-        self._flat_tab_widget = QTabWidget()
-        self._flat_tab_widget.addTab(self._activity_group, "创建活动")
-        self._flat_tab_widget.addTab(self._slot_group, "添加选项")
-        self._flat_tab_widget.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: none;
-                background: transparent;
-            }}
-            QTabBar::tab {{
-                background: {p.btn_secondary_bg};
-                color: {p.btn_secondary_fg};
-                border: none;
-                border-radius: 8px;
-                padding: 8px 20px;
-                margin: 2px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QTabBar::tab:selected {{
-                background: {p.accent};
-                color: {p.text_on_accent};
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {p.btn_secondary_hover};
-            }}
-        """)
-
-        # ── 构建左侧内容 ──────────────────────────────────
-        self._left_col_layout = QVBoxLayout()
-        self._left_col_layout.setSpacing(12)
-
-        self._build_left_panel(True)  # 始终使用工作流设计
-
-        self._left_col_layout.addStretch(1)
-        left_widget = QWidget()
-        left_widget.setLayout(self._left_col_layout)
-        left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-
-        left_scroll = QScrollArea()
-        left_scroll.setWidget(left_widget)
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setMinimumWidth(220)
-        left_scroll.setMaximumWidth(520)
-        left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-
-        # ── 右侧内容 ──────────────────────────────────────
+        # ── 主内容区（卡片列表 + 工作流时间线）─────────────────
         self._right_widget = QWidget()
-        self._build_right_panel(True)  # 始终使用工作流设计
-
-        # ── QSplitter 布局 ────────────────────────────────
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_scroll)
-        splitter.addWidget(self._right_widget)
-        # 左侧仅供选项管理，右侧为主要内容区
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 8)
-        splitter.setSizes([240, 760])
-
-        self._splitter = splitter
+        self._build_right_panel(True)
 
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
 
@@ -379,7 +320,7 @@ class ActivityPanel(QWidget):
         layout.setSpacing(12)
         layout.addWidget(header)
         layout.addWidget(top_toolbar)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(self._right_widget, 1)
         self.setLayout(layout)
 
         self._activity_selector.currentIndexChanged.connect(self._load_slots)
@@ -392,27 +333,6 @@ class ActivityPanel(QWidget):
     # ═══════════════════════════════════════════════════════════
     # 左侧面板构建 / 热切换
     # ═══════════════════════════════════════════════════════════
-
-    def _build_left_panel(self, use_guided: bool) -> None:
-        """构建左侧面板 — 仅显示选项管理（时段/岗位）。"""
-        while self._left_col_layout.count() > 0:
-            item = self._left_col_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-
-        # 选项管理标题
-        p = get_palette()
-        title = QLabel("选项管理")
-        title.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none; "
-                            f"padding: 8px 0 4px 0;")
-        self._left_col_layout.addWidget(title)
-
-        # 添加选项表单
-        self._left_col_layout.addWidget(self._slot_group, 1)
-
-    def _check_layout_mode(self) -> None:
-        """已废弃：布局模式固定为工作流设计，不再支持热切换。"""
-        pass
 
     def _open_create_dialog(self) -> None:
         """打开创建活动弹窗（模态对话框）。"""
@@ -488,9 +408,10 @@ class ActivityPanel(QWidget):
             content_row.addLayout(card_area, 2)
 
             self._workflow_timeline = WorkflowTimeline()
-            self._workflow_timeline.add_slot_clicked = self._focus_slot_form
+            self._workflow_timeline.add_slot_clicked = lambda: QMessageBox.information(
+                self, "添加时段", "请在活动列表中选择一个活动，然后使用下方的选项列表添加时段。")
             self._workflow_timeline.submit_review_clicked = lambda: self._change_status("submit_review")
-            self._workflow_timeline.edit_config_clicked = self._focus_create_form
+            self._workflow_timeline.edit_config_clicked = self._open_create_dialog
             content_row.addWidget(self._workflow_timeline, 1)
 
             right_col.addLayout(content_row)
@@ -510,20 +431,6 @@ class ActivityPanel(QWidget):
                 item.widget().setParent(None)
             elif item.layout():
                 ActivityPanel._clear_layout(item.layout())
-
-    def _focus_slot_form(self) -> None:
-        """聚焦到添加选项区域（在左侧面板中滚动到 _slot_group）。"""
-        if hasattr(self, '_slot_group') and self._slot_group.isVisible():
-            # 确保左侧面板可见
-            for scroll in self.findChildren(QScrollArea):
-                if scroll.widget() and scroll.widget().findChild(type(self._slot_group)):
-                    scroll.ensureWidgetVisible(self._slot_group)
-                    return
-
-    def _focus_create_form(self) -> None:
-        """打开创建活动弹窗。"""
-        if hasattr(self, '_open_create_dialog'):
-            self._open_create_dialog()
 
     def _on_activity_selection_changed(self) -> None:
         """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector + 更新时间线。"""
