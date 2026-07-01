@@ -228,7 +228,6 @@ class ActivityPanel(QWidget):
         sep2.setStyleSheet(f"color: {p.border_light};")
         self._status_btn_row.addWidget(sep2)
         self._status_btn_row.addWidget(self._delete_btn)
-        activity_list_layout.addLayout(self._status_btn_row)
 
         self._activity_list_group.setLayout(activity_list_layout)
 
