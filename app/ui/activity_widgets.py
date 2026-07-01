@@ -344,19 +344,42 @@ class ActivityPanel(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
         splitter.addWidget(self._right_widget)
-        # 工作流设计：左右比例适配弹窗模式
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 7)
-        splitter.setSizes([320, 680])
+        # 左侧仅供选项管理，右侧为主要内容区
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 8)
+        splitter.setSizes([240, 760])
 
-        self._splitter = splitter  # 保存引用以便外部操作
+        self._splitter = splitter
 
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
+
+        # ── 顶部工具栏（创建按钮 + 搜索筛选）─────────────────
+        p_tb = get_palette()
+        top_toolbar = QFrame()
+        top_toolbar.setStyleSheet(
+            f"QFrame {{ background: {p_tb.bg_card}; border: 1px solid {p_tb.border_light}; "
+            f"border-radius: 10px; }}"
+        )
+        tb_layout = QHBoxLayout()
+        tb_layout.setContentsMargins(12, 10, 12, 10)
+        tb_layout.setSpacing(12)
+
+        create_btn = QPushButton("+ 创建活动")
+        create_btn.setObjectName("primaryButton")
+        create_btn.setMinimumHeight(40)
+        create_btn.clicked.connect(self._open_create_dialog)
+        tb_layout.addWidget(create_btn)
+
+        tb_layout.addWidget(self._search_box, 1)
+        tb_layout.addWidget(self._status_filter)
+        tb_layout.addWidget(self._time_filter)
+        top_toolbar.setLayout(tb_layout)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(header)
+        layout.addWidget(top_toolbar)
         layout.addWidget(splitter, 1)
         self.setLayout(layout)
 
@@ -372,38 +395,20 @@ class ActivityPanel(QWidget):
     # ═══════════════════════════════════════════════════════════
 
     def _build_left_panel(self, use_guided: bool) -> None:
-        """构建左侧面板 — 创建按钮 + 选项管理。"""
+        """构建左侧面板 — 仅显示选项管理（时段/岗位）。"""
         while self._left_col_layout.count() > 0:
             item = self._left_col_layout.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
 
-        # 创建按钮区域
-        create_bar = QFrame()
+        # 选项管理标题
         p = get_palette()
-        create_bar.setStyleSheet(
-            f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
-            f"border-radius: 10px; padding: 12px 14px; }}"
-        )
-        bar_layout = QVBoxLayout()
-        bar_layout.setContentsMargins(10, 10, 10, 10)
-        bar_layout.setSpacing(8)
+        title = QLabel("选项管理")
+        title.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none; "
+                            f"padding: 8px 0 4px 0;")
+        self._left_col_layout.addWidget(title)
 
-        desc = QLabel("创建新的活动，配置时段与报名策略")
-        desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
-
-        create_btn = QPushButton("+ 创建活动")
-        create_btn.setObjectName("primaryButton")
-        create_btn.setMinimumHeight(44)
-        create_btn.clicked.connect(self._open_create_dialog)
-
-        bar_layout.addWidget(create_btn)
-        bar_layout.addWidget(desc)
-        create_bar.setLayout(bar_layout)
-        self._left_col_layout.addWidget(create_bar)
-
-        # 选项管理（添加时段/岗位）
+        # 添加选项表单
         self._left_col_layout.addWidget(self._slot_group, 1)
 
     def _check_layout_mode(self) -> None:
@@ -459,7 +464,7 @@ class ActivityPanel(QWidget):
         right_col.setSpacing(12)
 
         if use_guided:
-            # 向导模式：活动卡片 + 工作流时间线
+            # 活动卡片 + 工作流时间线
             content_row = QHBoxLayout()
             content_row.setSpacing(12)
 
@@ -476,15 +481,8 @@ class ActivityPanel(QWidget):
             self._card_container.setLayout(self._card_layout)
             self._card_scroll.setWidget(self._card_container)
 
-            card_toolbar = QHBoxLayout()
-            card_toolbar.setSpacing(8)
-            card_toolbar.addWidget(self._search_box, 1)
-            card_toolbar.addWidget(self._status_filter)
-            card_toolbar.addWidget(self._time_filter)
-
             card_area = QVBoxLayout()
             card_area.setSpacing(8)
-            card_area.addLayout(card_toolbar)
             card_area.addWidget(self._card_scroll, 1)
             card_area.addLayout(self._status_btn_row)
 

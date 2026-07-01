@@ -120,20 +120,36 @@ class GuidedActivityPanel(QWidget):
         nav_layout.setSpacing(10)
 
         self._prev_btn = QPushButton("← 上一步")
-        self._prev_btn.setObjectName("secondaryButton")
+        self._prev_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.btn_secondary_bg}; color: {p.btn_secondary_fg}; "
+            f"border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.btn_secondary_hover}; }}"
+        )
         self._prev_btn.clicked.connect(self._go_prev)
 
         self._save_tpl_btn = QPushButton("💾 保存模板")
-        self._save_tpl_btn.setObjectName("secondaryButton")
+        self._save_tpl_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.btn_secondary_bg}; color: {p.btn_secondary_fg}; "
+            f"border: none; border-radius: 8px; padding: 8px 14px; font-weight: 600; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {p.btn_secondary_hover}; }}"
+        )
         self._save_tpl_btn.clicked.connect(self._save_as_template)
         self._save_tpl_btn.setVisible(False)
 
         self._next_btn = QPushButton("下一步 →")
-        self._next_btn.setObjectName("primaryButton")
+        self._next_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.accent}; color: {p.text_on_accent}; "
+            f"border: none; border-radius: 8px; padding: 8px 20px; font-weight: 600; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.accent_hover}; }}"
+        )
         self._next_btn.clicked.connect(self._go_next)
 
         self._create_btn = QPushButton("✓ 创建活动")
-        self._create_btn.setObjectName("primaryButton")
+        self._create_btn.setStyleSheet(
+            f"QPushButton {{ background: {p.accent}; color: {p.text_on_accent}; "
+            f"border: none; border-radius: 8px; padding: 8px 20px; font-weight: 600; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {p.accent_hover}; }}"
+        )
         self._create_btn.clicked.connect(self._create_activity)
         self._create_btn.setVisible(False)
 
