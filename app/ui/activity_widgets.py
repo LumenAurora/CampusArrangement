@@ -338,66 +338,13 @@ class ActivityPanel(QWidget):
         left_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         # ── 右侧内容 ──────────────────────────────────────
-        right_col = QVBoxLayout()
-        right_col.setSpacing(12)
-
-        if use_guided:
-            # 向导模式：活动卡片 + 工作流时间线
-            content_row = QHBoxLayout()
-            content_row.setSpacing(12)
-
-            # 活动卡片列表（替换表格）
-            self._card_scroll = QScrollArea()
-            self._card_scroll.setWidgetResizable(True)
-            self._card_scroll.setFrameShape(QFrame.NoFrame)
-            self._card_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self._card_container = QWidget()
-            self._card_layout = QVBoxLayout()
-            self._card_layout.setContentsMargins(0, 0, 0, 0)
-            self._card_layout.setSpacing(8)
-            self._card_layout.addStretch()
-            self._card_container.setLayout(self._card_layout)
-            self._card_scroll.setWidget(self._card_container)
-
-            # 搜索+筛选工具栏
-            card_toolbar = QHBoxLayout()
-            card_toolbar.setSpacing(8)
-            card_toolbar.addWidget(self._search_box, 1)
-            card_toolbar.addWidget(self._status_filter)
-            card_toolbar.addWidget(self._time_filter)
-            self._create_btn_toolbar = QPushButton("+ 创建活动")
-            self._create_btn_toolbar.setObjectName("primaryButton")
-            self._create_btn_toolbar.clicked.connect(lambda: self._guided_panel and None)
-            card_toolbar.addWidget(self._create_btn_toolbar)
-
-            card_area = QVBoxLayout()
-            card_area.setSpacing(8)
-            card_area.addLayout(card_toolbar)
-            card_area.addWidget(self._card_scroll, 1)
-
-            # 状态按钮行
-            status_btns = self._status_btn_row
-            card_area.addLayout(status_btns)
-
-            content_row.addLayout(card_area, 2)
-
-            # 工作流时间线
-            self._workflow_timeline = WorkflowTimeline()
-            content_row.addWidget(self._workflow_timeline, 1)
-
-            right_col.addLayout(content_row)
-        else:
-            # 平铺模式：原有布局
-            right_col.addWidget(self._activity_list_group, 1)
-            right_col.addWidget(self._slot_list_group, 1)
-
-        right_widget = QWidget()
-        right_widget.setLayout(right_col)
+        self._right_widget = QWidget()
+        self._build_right_panel(use_guided)
 
         # ── QSplitter 布局 ────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_scroll)
-        splitter.addWidget(right_widget)
+        splitter.addWidget(self._right_widget)
         if use_guided:
             # 向导模式：6:4 比例
             splitter.setStretchFactor(0, 6)
@@ -472,11 +419,85 @@ class ActivityPanel(QWidget):
                 self._splitter.setSizes([360, 720])
 
     def _check_layout_mode(self) -> None:
-        """检测设置中的布局模式是否变更，如变更则热切换左侧面板。"""
+        """检测设置中的布局模式是否变更，如变更则热切换左右面板。"""
         current = get_form_layout_mode()
         if current != self._layout_mode:
             self._layout_mode = current
-            self._build_left_panel(current == FORM_LAYOUT_GUIDED)
+            use_guided = current == FORM_LAYOUT_GUIDED
+            self._build_left_panel(use_guided)
+            self._build_right_panel(use_guided)
+            # 重新渲染数据
+            self._apply_filters()
+
+    def _build_right_panel(self, use_guided: bool) -> None:
+        """根据模式构建右侧面板（卡片+时间线或表格+选项）。"""
+        # 清除旧布局
+        old_layout = self._right_widget.layout()
+        if old_layout:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget():
+                    item.widget().setParent(None)
+                elif item.layout():
+                    # 递归清理子布局
+                    self._clear_layout(item.layout())
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(12)
+
+        if use_guided:
+            # 向导模式：活动卡片 + 工作流时间线
+            content_row = QHBoxLayout()
+            content_row.setSpacing(12)
+
+            # 活动卡片列表
+            self._card_scroll = QScrollArea()
+            self._card_scroll.setWidgetResizable(True)
+            self._card_scroll.setFrameShape(QFrame.NoFrame)
+            self._card_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._card_container = QWidget()
+            self._card_layout = QVBoxLayout()
+            self._card_layout.setContentsMargins(0, 0, 0, 0)
+            self._card_layout.setSpacing(8)
+            self._card_layout.addStretch()
+            self._card_container.setLayout(self._card_layout)
+            self._card_scroll.setWidget(self._card_container)
+
+            card_toolbar = QHBoxLayout()
+            card_toolbar.setSpacing(8)
+            card_toolbar.addWidget(self._search_box, 1)
+            card_toolbar.addWidget(self._status_filter)
+            card_toolbar.addWidget(self._time_filter)
+
+            card_area = QVBoxLayout()
+            card_area.setSpacing(8)
+            card_area.addLayout(card_toolbar)
+            card_area.addWidget(self._card_scroll, 1)
+            card_area.addLayout(self._status_btn_row)
+
+            content_row.addLayout(card_area, 2)
+
+            self._workflow_timeline = WorkflowTimeline()
+            content_row.addWidget(self._workflow_timeline, 1)
+
+            right_col.addLayout(content_row)
+        else:
+            # 平铺模式：原有布局
+            right_col.addWidget(self._activity_list_group, 1)
+            right_col.addWidget(self._slot_list_group, 1)
+
+        self._right_widget.setLayout(right_col)
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        """递归清理布局中的所有子项。"""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                ActivityPanel._clear_layout(item.layout())
 
     def _on_activity_selection_changed(self) -> None:
         """活动列表选中变化时：更新按钮状态 + 同步 _activity_selector。"""
