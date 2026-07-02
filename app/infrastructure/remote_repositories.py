@@ -261,7 +261,11 @@ class RemoteUserRepository:
         try:
             return self._api.get(f"/users/{user_id}")
         except Exception:
-            return None
+            try:
+                current_user = self._api.get("/users/me")
+            except Exception:
+                return None
+            return current_user if current_user.get("id") == user_id else None
 
     def update_avatar(self, user_id: str, avatar_path: str) -> None:
         upload_root = Path(__file__).resolve().parent.parent / "resources" / "uploads"

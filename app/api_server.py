@@ -301,6 +301,12 @@ def list_users(
 
 @app.get("/users/{user_id}")
 def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    if user_id == "me":
+        record = user_repo.get_by_id(current_user.id)
+        stripped = _strip_secrets(record)
+        if not stripped:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        return stripped
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     user = user_repo.get_by_id(user_id)
     stripped = _strip_secrets(user)
