@@ -134,7 +134,11 @@ def to_utc(value: str | datetime) -> datetime:
 
     这是整个应用中时间解析的唯一标准入口。
     """
-    dt = datetime.fromisoformat(str(value)) if isinstance(value, str) else value
+    if isinstance(value, str):
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        dt = datetime.fromisoformat(normalized)
+    else:
+        dt = value
     return dt.astimezone(timezone.utc)
 
 

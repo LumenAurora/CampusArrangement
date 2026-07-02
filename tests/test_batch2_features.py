@@ -318,6 +318,21 @@ class RemoteRepoMethodTests(unittest.TestCase):
         repo = RemoteActivityRepository(api, MetricsCache(api))
         self.assertTrue(hasattr(repo, "update_checkin_closed"))
 
+    def test_remote_slot_repo_positions_uses_parent_alias(self) -> None:
+        from app.infrastructure.remote_repositories import MetricsCache, RemoteTimeSlotRepository
+
+        class FakeApi:
+            path = ""
+
+            def get(self, path: str, params: dict | None = None) -> list:
+                self.path = path
+                return []
+
+        api = FakeApi()
+        repo = RemoteTimeSlotRepository(api, MetricsCache(api))  # type: ignore[arg-type]
+        self.assertEqual(repo.list_positions("parent1"), [])
+        self.assertEqual(api.path, "/slots/parent1/positions")
+
     def test_remote_checkin_service_has_close_reopen(self) -> None:
         from app.infrastructure.api_client import ApiClient
         from app.application.remote_services import RemoteCheckInService
@@ -325,6 +340,36 @@ class RemoteRepoMethodTests(unittest.TestCase):
         svc = RemoteCheckInService(ApiClient("http://localhost:9999"))
         self.assertTrue(hasattr(svc, "close_checkin"))
         self.assertTrue(hasattr(svc, "reopen_checkin"))
+
+    def test_remote_registration_service_sends_points(self) -> None:
+        from app.application.remote_services import RemoteRegistrationService
+
+        class FakeApi:
+            payload: dict | None = None
+
+            def post(self, path: str, json: dict) -> dict:
+                self.payload = json
+                return {
+                    "id": "reg1",
+                    "user_id": "user1",
+                    "activity_id": json["activity_id"],
+                    "slot_id": json["slot_id"],
+                    "priority": json["priority"],
+                    "points": json["points"],
+                    "status": RegistrationStatus.PENDING.value,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+        api = FakeApi()
+        svc = RemoteRegistrationService(api)  # type: ignore[arg-type]
+        reg = svc.register("user1", "act1", "slot1", priority=1, points=42)
+        self.assertEqual(api.payload["points"], 42)
+        self.assertEqual(reg.points, 42)
+
+    def test_api_registration_service_has_group_repo(self) -> None:
+        from app.api_server import registration_service
+
+        self.assertIsNotNone(registration_service._group_repo)
 
 
 class FormatActivityStatusTests(unittest.TestCase):

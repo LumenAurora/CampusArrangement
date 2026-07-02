@@ -295,10 +295,10 @@ class RemoteRegistrationService:
     def __init__(self, api_client: ApiClient) -> None:
         self._api = api_client
 
-    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int) -> Registration:
+    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int, points: int = 0) -> Registration:
         payload = self._api.post(
             "/registrations",
-            json={"activity_id": activity_id, "slot_id": slot_id, "priority": priority},
+            json={"activity_id": activity_id, "slot_id": slot_id, "priority": priority, "points": points},
         )
         return Registration(
             id=payload["id"],
@@ -308,6 +308,7 @@ class RemoteRegistrationService:
             priority=payload["priority"],
             status=RegistrationStatus(payload["status"]),
             created_at=datetime.fromisoformat(payload["created_at"]),
+            points=int(payload.get("points", 0)),
         )
 
     def cancel(self, user_id: str, registration_id: str) -> None:

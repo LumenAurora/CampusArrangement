@@ -24,6 +24,7 @@ from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
+    GroupRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -49,10 +50,11 @@ slot_repo = TimeSlotRepository()
 reg_repo = RegistrationRepository()
 schedule_repo = ScheduleRepository()
 checkin_repo = CheckInRepository()
+group_repo = GroupRepository()
 
 user_service = UserService(user_repo)
 activity_service = ActivityService(activity_repo, slot_repo)
-registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
+registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
 scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
 checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
 
@@ -605,6 +607,12 @@ def list_slots(activity_id: str, _: User = Depends(_get_current_user)) -> list[d
 @app.get("/activities/{activity_id}/slots/{parent_slot_id}/positions")
 def list_positions(activity_id: str, parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
     """获取某时段下的所有子岗位"""
+    return slot_repo.list_positions(parent_slot_id)
+
+
+@app.get("/slots/{parent_slot_id}/positions")
+def list_positions_by_parent(parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+    """获取某时段下的所有子岗位（无需活动ID的兼容入口）。"""
     return slot_repo.list_positions(parent_slot_id)
 
 

@@ -574,8 +574,15 @@ class RegistrationRepository:
         finally:
             conn.close()
 
-    def list_by_user_activity(self, user_id: str, activity_id: str) -> list[dict]:
-        conn = get_connection()
+    def list_by_user_activity(
+        self,
+        user_id: str,
+        activity_id: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> list[dict]:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             rows = conn.execute(
                 "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ? AND status != ?",
@@ -583,7 +590,8 @@ class RegistrationRepository:
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def list_by_user_slot(self, user_id: str, slot_id: str) -> list[dict]:
         """查询用户在指定 slot 下的所有未取消报名记录（用于兼报模式下的重复校验）。"""

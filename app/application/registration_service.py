@@ -109,7 +109,7 @@ class RegistrationService:
 
     def _validate_points_total_in_txn(self, conn, user_id: str, activity_id: str, points: int) -> None:
         """事务内校验意愿点总数。必须在 BEGIN IMMEDIATE 事务内调用以防止竞态。"""
-        txn_existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
+        txn_existing = self._reg_repo.list_by_user_activity(user_id, activity_id, conn=conn)
         txn_active = [r for r in txn_existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
         total_used = sum(int(r.get("points", 0)) for r in txn_active) + points
         if total_used > MAX_POINTS:
