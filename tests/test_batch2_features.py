@@ -310,6 +310,24 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertTrue(hasattr(repo, "update_avatar"))
         self.assertTrue(hasattr(repo, "update_notification_mode"))
 
+    def test_remote_user_repo_uploads_avatar_file(self) -> None:
+        from app.infrastructure.remote_repositories import RemoteUserRepository
+
+        class FakeApi:
+            upload: tuple[str, str, str] | None = None
+
+            def post_file(self, path: str, field_name: str, file_path: str) -> dict:
+                self.upload = (path, field_name, file_path)
+                return {"ok": True}
+
+        api = FakeApi()
+        repo = RemoteUserRepository(api)  # type: ignore[arg-type]
+        repo.update_avatar("user1", "avatars/user1.png")
+        self.assertIsNotNone(api.upload)
+        self.assertEqual(api.upload[0], "/users/me/avatar")
+        self.assertEqual(api.upload[1], "file")
+        self.assertTrue(api.upload[2].endswith("resources/uploads/avatars/user1.png"))
+
     def test_remote_activity_repo_has_checkin_closed(self) -> None:
         from app.infrastructure.api_client import ApiClient
         from app.infrastructure.remote_repositories import MetricsCache, RemoteActivityRepository

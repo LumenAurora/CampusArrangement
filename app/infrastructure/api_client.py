@@ -40,12 +40,17 @@ class ApiClient:
     def put(self, path: str, json: dict | None = None, require_auth: bool = True) -> Any:
         return self._request("PUT", path, json=json, require_auth=require_auth)
 
+    def post_file(self, path: str, field_name: str, file_path: str, require_auth: bool = True) -> Any:
+        with open(file_path, "rb") as fh:
+            return self._request("POST", path, files={field_name: fh}, require_auth=require_auth)
+
     def _request(
         self,
         method: str,
         path: str,
         json: dict | None = None,
         params: dict | None = None,
+        files: dict | None = None,
         require_auth: bool = True,
     ) -> Any:
         url = f"{self._base_url}{path}"
@@ -60,6 +65,7 @@ class ApiClient:
                 url,
                 json=json,
                 params=params,
+                files=files,
                 headers=headers,
                 timeout=8,
             )
