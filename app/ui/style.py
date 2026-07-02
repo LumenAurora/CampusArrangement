@@ -30,7 +30,7 @@ QPushButton { padding: 5px 14px; }
 QListWidget#navList::item { padding: 8px 14px; }
 """
     app.setStyleSheet(build_stylesheet(p) + overrides)
-    app.setFont(QFont(".AppleSystemUIFont", 13))
+    app.setFont(QFont("Helvetica Neue", 13))
 
 
 def get_theme() -> str:
