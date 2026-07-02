@@ -326,6 +326,36 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertTrue(hasattr(svc, "close_checkin"))
         self.assertTrue(hasattr(svc, "reopen_checkin"))
 
+    def test_remote_registration_service_sends_points(self) -> None:
+        from app.application.remote_services import RemoteRegistrationService
+
+        class FakeApi:
+            payload: dict | None = None
+
+            def post(self, path: str, json: dict) -> dict:
+                self.payload = json
+                return {
+                    "id": "reg1",
+                    "user_id": "user1",
+                    "activity_id": json["activity_id"],
+                    "slot_id": json["slot_id"],
+                    "priority": json["priority"],
+                    "points": json["points"],
+                    "status": RegistrationStatus.PENDING.value,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+        api = FakeApi()
+        svc = RemoteRegistrationService(api)  # type: ignore[arg-type]
+        reg = svc.register("user1", "act1", "slot1", priority=1, points=42)
+        self.assertEqual(api.payload["points"], 42)
+        self.assertEqual(reg.points, 42)
+
+    def test_api_registration_service_has_group_repo(self) -> None:
+        from app.api_server import registration_service
+
+        self.assertIsNotNone(registration_service._group_repo)
+
 
 class FormatActivityStatusTests(unittest.TestCase):
     """format_activity_status 对 checkin_closed 的处理。"""

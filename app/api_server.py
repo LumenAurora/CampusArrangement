@@ -24,6 +24,7 @@ from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
+    GroupRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -49,10 +50,11 @@ slot_repo = TimeSlotRepository()
 reg_repo = RegistrationRepository()
 schedule_repo = ScheduleRepository()
 checkin_repo = CheckInRepository()
+group_repo = GroupRepository()
 
 user_service = UserService(user_repo)
 activity_service = ActivityService(activity_repo, slot_repo)
-registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
+registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
 scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
 checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
 
