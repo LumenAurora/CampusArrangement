@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import time
 
 from app.infrastructure.api_client import ApiClient
@@ -263,10 +264,9 @@ class RemoteUserRepository:
             return None
 
     def update_avatar(self, user_id: str, avatar_path: str) -> None:
-        # 远程模式头像应通过 POST /users/me/avatar (multipart) 上传；
-        # 此方法保留为占位，避免远程模式下 AttributeError。
-        # 远程头像上传的完整实现在 api_server 的专用端点处理。
-        pass
+        upload_root = Path(__file__).resolve().parent.parent / "resources" / "uploads"
+        full_path = upload_root / avatar_path
+        self._api.post_file("/users/me/avatar", "file", str(full_path))
 
     def update_notification_mode(self, user_id: str, mode) -> None:
         # 远程模式：调用 PUT /users/me/settings 更新通知偏好
