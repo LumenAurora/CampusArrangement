@@ -610,6 +610,12 @@ def list_positions(activity_id: str, parent_slot_id: str, _: User = Depends(_get
     return slot_repo.list_positions(parent_slot_id)
 
 
+@app.get("/slots/{parent_slot_id}/positions")
+def list_positions_by_parent(parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+    """获取某时段下的所有子岗位（无需活动ID的兼容入口）。"""
+    return slot_repo.list_positions(parent_slot_id)
+
+
 @app.post("/activities/{activity_id}/positions")
 def add_position(
     activity_id: str,

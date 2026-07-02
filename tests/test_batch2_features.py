@@ -318,6 +318,21 @@ class RemoteRepoMethodTests(unittest.TestCase):
         repo = RemoteActivityRepository(api, MetricsCache(api))
         self.assertTrue(hasattr(repo, "update_checkin_closed"))
 
+    def test_remote_slot_repo_positions_uses_parent_alias(self) -> None:
+        from app.infrastructure.remote_repositories import MetricsCache, RemoteTimeSlotRepository
+
+        class FakeApi:
+            path = ""
+
+            def get(self, path: str, params: dict | None = None) -> list:
+                self.path = path
+                return []
+
+        api = FakeApi()
+        repo = RemoteTimeSlotRepository(api, MetricsCache(api))  # type: ignore[arg-type]
+        self.assertEqual(repo.list_positions("parent1"), [])
+        self.assertEqual(api.path, "/slots/parent1/positions")
+
     def test_remote_checkin_service_has_close_reopen(self) -> None:
         from app.infrastructure.api_client import ApiClient
         from app.application.remote_services import RemoteCheckInService
