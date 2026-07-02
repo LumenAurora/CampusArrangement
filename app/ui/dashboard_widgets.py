@@ -372,10 +372,15 @@ class DashboardPanel(QWidget):
         self._refresh_history_tab()
 
     def _clear_layout(self, layout) -> None:
-        for i in reversed(range(layout.count())):
-            item = layout.itemAt(i)
-            if item and item.widget():
-                item.widget().setParent(None)
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+            elif child_layout is not None:
+                self._clear_layout(child_layout)
 
     def _refresh_current_tab(self) -> None:
         self._clear_layout(self._current_grid)

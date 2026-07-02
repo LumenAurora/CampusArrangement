@@ -191,6 +191,17 @@ class CheckInPanel(QWidget):
 
         self.refresh()
 
+    def _clear_layout(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+            elif child_layout is not None:
+                self._clear_layout(child_layout)
+
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
         self._activity_selector.blockSignals(True)
@@ -319,11 +330,7 @@ class CheckInPanel(QWidget):
 
     def _load_activity_info(self, activity: dict | None) -> None:
         """Display activity metadata: location, checkin mode, checkin time range."""
-        # Clear existing
-        for i in reversed(range(self._activity_info_layout.count())):
-            item = self._activity_info_layout.itemAt(i)
-            if item and item.widget():
-                item.widget().setParent(None)
+        self._clear_layout(self._activity_info_layout)
 
         if not activity:
             self._activity_info_frame.setVisible(False)
@@ -412,11 +419,7 @@ class CheckInPanel(QWidget):
 
     def _load_stats(self, activity_id: str) -> None:
         """Load and display check-in statistics with progress bars and percentages."""
-        # Clear existing stats
-        for i in reversed(range(self._stats_layout.count())):
-            item = self._stats_layout.itemAt(i)
-            if item and item.widget():
-                item.widget().setParent(None)
+        self._clear_layout(self._stats_layout)
 
         try:
             stats = self._checkin_service.get_checkin_stats(activity_id)
