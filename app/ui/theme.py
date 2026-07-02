@@ -134,7 +134,7 @@ def build_stylesheet(p: Palette) -> str:
     return f"""
 /* ===== 全局 ===== */
 * {{
-    font-family: "SF Pro Text", "Helvetica Neue", ".AppleSystemUIFont", "Segoe UI", sans-serif;
+    font-family: "Helvetica Neue", "Arial";
     font-size: 13px;
     color: {p.text_primary};
     border: none;

@@ -439,24 +439,24 @@ class GroupAdminPanel(QWidget):
     # 待审批 — 卡片式列表（参考 HTML）
     # ═══════════════════════════════════════════════════════════
 
+    @staticmethod
+    def _clear_layout(layout: QVBoxLayout | QHBoxLayout) -> None:
+        """Remove all items from a layout without reusing invalid QLayoutItems."""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+            elif child_layout is not None:
+                GroupAdminPanel._clear_layout(child_layout)
+
     def _load_pending(self) -> None:
-        """加载待审批申请为卡片式列表 — 使用 setParent(None) 即时清除，避免 deleteLater 延迟导致视觉残留。"""
+        """加载待审批申请为卡片式列表。"""
         pending = self._service.list_pending_applications(self._user)
 
-        # 关键修复：用 setParent(None) + hide 即时清空，而非 deleteLater
-        for i in reversed(range(self._pending_list_layout.count())):
-            item = self._pending_list_layout.itemAt(i)
-            if item.widget():
-                item.widget().hide()
-                item.widget().setParent(None)
-            elif item.layout():
-                # 清空子布局（如果有的话）
-                while item.layout().count():
-                    sub = item.layout().takeAt(0)
-                    if sub.widget():
-                        sub.widget().hide()
-                        sub.widget().setParent(None)
-            self._pending_list_layout.removeItem(item)
+        self._clear_layout(self._pending_list_layout)
 
         # 更新徽章
         self._pending_badge.setText(str(len(pending)))

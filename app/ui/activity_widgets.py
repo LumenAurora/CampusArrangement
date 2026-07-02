@@ -1185,14 +1185,7 @@ class ActivityPanel(QWidget):
         if not hasattr(self, '_card_layout'):
             return
         # 清除旧卡片
-        for i in reversed(range(self._card_layout.count())):
-            item = self._card_layout.itemAt(i)
-            if item.widget():
-                item.widget().hide()
-                item.widget().setParent(None)
-                self._card_layout.removeItem(item)
-            elif item.layout():
-                self._card_layout.removeItem(item)
+        self._clear_layout(self._card_layout)
 
         if not activities:
             p = get_palette()
