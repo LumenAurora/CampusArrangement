@@ -304,7 +304,7 @@ def list_users(
         user = user_repo.get_by_username(username)
         stripped = _strip_secrets(user)
         return [stripped] if stripped else []
-    return user_repo.list_all()
+    return [_strip_secrets(user) for user in user_repo.list_all()]
 
 
 @app.get("/users/pending")
