@@ -62,10 +62,12 @@ class ActivityService:
                 raise ValidationError("位置签到模式的地点必须为坐标格式，如：30.1234,120.5678")
             try:
                 parts = location_stripped.split(",")
-                float(parts[0].strip())
-                float(parts[1].strip())
+                lat = float(parts[0].strip())
+                lon = float(parts[1].strip())
             except (ValueError, IndexError):
                 raise ValidationError("位置签到模式的地点坐标格式无效，应为：纬度,经度")
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                raise ValidationError("位置签到坐标超出有效范围（纬度 ±90，经度 ±180）")
         activity = Activity.create(
             name=name,
             owner_id=user.id,
