@@ -417,6 +417,51 @@ def test_client_window_opens_after_full_signup_schedule_checkin_flow(qapp: QAppl
         window.close()
 
 
+def test_admin_window_opens_after_full_signup_schedule_checkin_flow(qapp: QApplication, services) -> None:
+    """主流程冒烟：有报名/排班/签到数据后管理端各页仍能打开刷新。"""
+    admin_user = services.user_service.authenticate("admin", "admin")
+    student = services.user_service.register(admin_user, "admin_smoke_student", "pass1234", Role.USER)
+    now = datetime.now(timezone.utc)
+    activity = Activity.create(
+        name="管理端验收主流程活动",
+        owner_id=admin_user.id,
+        signup_start=now,
+        signup_end=now + timedelta(days=1),
+        details="管理端主流程冒烟",
+    )
+    services.activity_repo.create(activity)
+    slot = TimeSlot.create_time_slot(
+        activity_id=activity.id,
+        start_time=now + timedelta(hours=2),
+        end_time=now + timedelta(hours=3),
+        capacity=3,
+    )
+    services.slot_repo.create(slot)
+
+    services.activity_service.publish_activity(admin_user, activity.id)
+    services.registration_service.register(student.id, activity.id, slot.id, priority=1)
+    services.activity_service.close_activity(admin_user, activity.id)
+    assert services.scheduling_service.run(activity.id) == 1
+    services.checkin_service.check_in(admin_user, activity.id, student.id, slot.id)
+
+    window = _build_admin_window(services, qapp)
+    try:
+        assert window.isVisible()
+        for key in ("dashboard", "activities", "scheduling", "checkin", "users"):
+            assert key in window._page_keys
+        for i in range(len(window._page_keys)):
+            window._nav.setCurrentRow(i)
+            qapp.processEvents()
+            current = window._stack.currentWidget()
+            if hasattr(current, "refresh"):
+                current.refresh()
+                qapp.processEvents()
+        assert services.schedule_repo.count_all() == 1
+        assert services.checkin_repo.count_by_activity(activity.id) == 1
+    finally:
+        window.close()
+
+
 # ── 3. 学生端登录路径（通过拒绝状态验证） ─────────────────────────────────
 
 
