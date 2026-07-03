@@ -63,6 +63,12 @@ from app.ui.ui_utils import (
 )
 
 
+def _next_monday_after(date: QDate) -> QDate:
+    """Return the Monday after the current ISO week."""
+    days_until_next_monday = 8 - date.dayOfWeek()
+    return date.addDays(days_until_next_monday)
+
+
 class _CapacityBar(QWidget):
     """A compact visual capacity bar colored by usage ratio."""
 
@@ -1993,9 +1999,8 @@ class CopyActivityDialog(QDialog):
         self.resize(400, 300)
 
     def _on_quick_select(self, index: int) -> None:
-        from PySide6.QtCore import QDate
         today = QDate.currentDate()
-        next_monday = today.addDays((7 - today.dayOfWeek() + 1) % 7)
+        next_monday = _next_monday_after(today)
 
         if index == 1:
             self._new_signup_start.setDate(next_monday)
