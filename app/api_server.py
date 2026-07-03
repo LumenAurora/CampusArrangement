@@ -483,6 +483,10 @@ def _filter_visible_activities_for_user(user: User, activities: list[dict]) -> l
     return [activity for activity in activities if activity.get("status") in visible_statuses]
 
 
+def _is_activity_visible_to_user(user: User, activity: dict) -> bool:
+    return bool(_filter_visible_activities_for_user(user, [activity]))
+
+
 @app.get("/activities")
 def list_activities(status: Optional[str] = None, current_user: User = Depends(_get_current_user)) -> list[dict]:
     if status:
@@ -494,9 +498,9 @@ def list_activities(status: Optional[str] = None, current_user: User = Depends(_
 
 
 @app.get("/activities/{activity_id}")
-def get_activity(activity_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_activity(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     activity = activity_repo.get(activity_id)
-    if not activity:
+    if not activity or not _is_activity_visible_to_user(current_user, activity):
         raise HTTPException(status_code=404, detail="活动不存在")
     return activity
 
@@ -642,7 +646,10 @@ def update_activity_status(
 
 
 @app.get("/activities/{activity_id}/slots")
-def list_slots(activity_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_slots(activity_id: str, current_user: User = Depends(_get_current_user)) -> list[dict]:
+    activity = activity_repo.get(activity_id)
+    if not activity or not _is_activity_visible_to_user(current_user, activity):
+        raise HTTPException(status_code=404, detail="活动不存在")
     return slot_repo.list_by_activity(activity_id)
 
 

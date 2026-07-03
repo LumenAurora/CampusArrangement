@@ -532,6 +532,29 @@ class RemoteRepoMethodTests(unittest.TestCase):
         )
         self.assertEqual([activity["id"] for activity in visible_to_admin], [activity["id"] for activity in activities])
 
+    def test_activity_detail_and_slots_hide_unpublished_activities_from_regular_users(self) -> None:
+        from fastapi import HTTPException
+
+        from app.api_server import get_activity, list_slots
+
+        draft = {"id": "draft1", "name": "草稿", "status": ActivityStatus.DRAFT.value}
+        regular_user = User.create("student", Role.USER)
+        admin = User.create("admin", Role.SUPER_ADMIN)
+
+        with patch("app.api_server.activity_repo") as fake_activity_repo, patch("app.api_server.slot_repo") as fake_slot_repo:
+            fake_activity_repo.get.return_value = draft
+            fake_slot_repo.list_by_activity.return_value = [{"id": "slot1"}]
+
+            with self.assertRaises(HTTPException) as detail_err:
+                get_activity("draft1", current_user=regular_user)
+            with self.assertRaises(HTTPException) as slots_err:
+                list_slots("draft1", current_user=regular_user)
+
+            self.assertEqual(detail_err.exception.status_code, 404)
+            self.assertEqual(slots_err.exception.status_code, 404)
+            self.assertEqual(get_activity("draft1", current_user=admin), draft)
+            self.assertEqual(list_slots("draft1", current_user=admin), [{"id": "slot1"}])
+
     def test_remote_user_repo_uploads_avatar_file(self) -> None:
         from app.infrastructure.remote_repositories import RemoteUserRepository
 
