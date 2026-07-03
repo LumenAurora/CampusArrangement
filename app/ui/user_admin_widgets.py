@@ -155,7 +155,7 @@ class UserAdminPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
         left_layout.addWidget(self._create_group)
-        if self._current_user.role != Role.USER:
+        if self._current_user.role == Role.SUPER_ADMIN:
             left_layout.addWidget(self._pending_group)
 
         body_layout = QHBoxLayout()
@@ -290,7 +290,7 @@ class UserAdminPanel(QWidget):
 
     def _refresh_pending(self) -> None:
         """刷新待审批用户列表"""
-        if self._current_user.role == Role.USER:
+        if self._current_user.role != Role.SUPER_ADMIN:
             return
         try:
             pending_users = self._user_service.list_pending_users(self._current_user)
