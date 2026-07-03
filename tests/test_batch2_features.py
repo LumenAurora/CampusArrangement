@@ -387,6 +387,30 @@ class ActivityUpdateServiceTests(_IsolatedDBTestCase):
         self.assertIsNotNone(updated)
         self.assertEqual(updated["location"], "31.0000,121.0000")
 
+    def test_create_location_checkin_activity_rejects_out_of_range_coordinates(self) -> None:
+        now = datetime.now(timezone.utc)
+        with self.assertRaises(ValidationError):
+            self.service.create_activity(
+                user=self.owner,
+                name="越界位置签到",
+                signup_start=now,
+                signup_end=now + timedelta(days=1),
+                details="bad coordinates",
+                location="999,999",
+                checkin_mode=CheckInMode.LOCATION.value,
+            )
+
+        created = self.service.create_activity(
+            user=self.owner,
+            name="合法位置签到",
+            signup_start=now,
+            signup_end=now + timedelta(days=1),
+            details="ok coordinates",
+            location="30.1234,120.5678",
+            checkin_mode=CheckInMode.LOCATION.value,
+        )
+        self.assertEqual(created.location, "30.1234,120.5678")
+
 
 class RemoteRepoMethodTests(unittest.TestCase):
     """确保远程仓储/服务保留批次 2 新增方法（防重构丢失）。"""
