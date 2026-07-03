@@ -5,7 +5,7 @@ from typing import Any
 import requests
 
 from app.domain.exceptions import ConflictError, PermissionDenied, ValidationError
-from app.domain.models import Role, User, UserStatus
+from app.domain.models import NotificationMode, Role, User, UserStatus
 
 
 class ApiClient:
@@ -28,8 +28,14 @@ class ApiClient:
         user = payload.get("user", {})
         if token:
             self.set_token(token)
-        return User(id=user["id"], username=user["username"], role=Role(user["role"]),
-                    status=UserStatus(user.get("status", "approved")))
+        return User(
+            id=user["id"],
+            username=user["username"],
+            role=Role(user["role"]),
+            status=UserStatus(user.get("status", "approved")),
+            avatar_path=user.get("avatar_path", ""),
+            notification_mode=NotificationMode(user.get("notification_mode", "in_app")),
+        )
 
     def get(self, path: str, params: dict | None = None) -> Any:
         return self._request("GET", path, params=params)
