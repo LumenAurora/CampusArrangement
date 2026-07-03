@@ -236,6 +236,17 @@ class CheckInCloseReopenTests(_IsolatedDBTestCase):
             self.checkin_service.check_in(self.admin, self.activity.id, self.normal_user.id, self.slot.id)
         self.assertIn("签到已结束", str(ctx.exception))
 
+    def test_location_checkin_rejects_out_of_range_submitted_coordinates(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.checkin_service.location_check_in(
+                user_id=self.normal_user.id,
+                activity_id=self.activity.id,
+                slot_id=self.slot.id,
+                latitude=999,
+                longitude=999,
+            )
+        self.assertIsNone(self.checkin_repo.get_by_user_slot(self.normal_user.id, self.slot.id))
+
 
 class UserSettingsTests(_IsolatedDBTestCase):
     """UserRepository 的 avatar / notification_mode 读写 + _to_user 映射。"""

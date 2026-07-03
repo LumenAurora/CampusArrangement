@@ -191,6 +191,8 @@ class CheckInService:
         longitude: float,
     ) -> CheckIn:
         """位置签到"""
+        if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+            raise ValidationError("签到坐标超出有效范围（纬度 ±90，经度 ±180）")
         activity = self._activity_repo.get(activity_id)
         if not activity:
             raise ValidationError("活动不存在")
