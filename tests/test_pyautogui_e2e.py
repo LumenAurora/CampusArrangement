@@ -318,6 +318,45 @@ def test_admin_window_page_switching_via_shortcut(qapp: QApplication, services) 
         window.close()
 
 
+def test_admin_activity_page_repeated_refresh_and_selection(qapp: QApplication, services) -> None:
+    """活动管理页重复刷新并重建行内按钮时，不应因选择信号重入而崩溃。"""
+    admin_user = services.user_service.authenticate("admin", "admin")
+    now = datetime.now(timezone.utc)
+    activity = Activity.create(
+        name="活动管理刷新回归",
+        owner_id=admin_user.id,
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(days=1),
+        details="验证活动表格重建稳定性",
+    )
+    services.activity_repo.create(activity)
+    slot = TimeSlot.create_time_slot(
+        activity_id=activity.id,
+        start_time=now + timedelta(hours=2),
+        end_time=now + timedelta(hours=3),
+        capacity=5,
+    )
+    services.slot_repo.create(slot)
+
+    window = _build_admin_window(services, qapp)
+    try:
+        activity_index = window._page_keys.index("activities")
+        window._nav.setCurrentRow(activity_index)
+        qapp.processEvents()
+        page = window._stack.currentWidget()
+
+        for _ in range(5):
+            page.refresh()
+            qapp.processEvents()
+            assert page._activity_table.rowCount() >= 1
+            page._activity_table.selectRow(0)
+            qapp.processEvents()
+            page._apply_filters()
+            qapp.processEvents()
+    finally:
+        window.close()
+
+
 def test_dashboard_renders_calendar_section_for_admin(qapp: QApplication, services) -> None:
     """管理端概览页应显示可视化日历区块（_CalendarSection 可见）。"""
     window = _build_admin_window(services, qapp)

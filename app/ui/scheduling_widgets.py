@@ -67,10 +67,24 @@ class _StatCard(QFrame):
 
         value_label = QLabel(str(value))
         value_label.setObjectName("statValue")
+        self._value_label = value_label
         layout.addWidget(value_label)
 
         layout.addStretch(1)
         self.setLayout(layout)
+
+    def update_value(self, value: str, accent_color: str) -> None:
+        self._value_label.setText(str(value))
+        p = get_palette()
+        color = getattr(p, accent_color, p.accent)
+        self.setStyleSheet(f"""
+            QFrame#statCard {{
+                background: {p.bg_card};
+                border: 1px solid {p.border_light};
+                border-left: 4px solid {color};
+                border-radius: 16px;
+            }}
+        """)
 
 
 class _ActivityInfoCard(QFrame):
@@ -382,20 +396,8 @@ class SchedulingPanel(QWidget):
         self._stat_fill = self._replace_stat_card(self._stat_fill, "填充率", fill_rate, "warning_fg")
 
     def _replace_stat_card(self, old_card: _StatCard, label: str, value: str, accent: str) -> _StatCard:
-        """Replace a stat card in the layout with an updated one."""
-        parent_layout = old_card.parent().layout()
-        # Find the stat layout (the QHBoxLayout containing the cards)
-        for i in range(parent_layout.count()):
-            item = parent_layout.itemAt(i)
-            if item is not None and item.layout() is not None:
-                sub_layout = item.layout()
-                for j in range(sub_layout.count()):
-                    if sub_layout.itemAt(j) and sub_layout.itemAt(j).widget() is old_card:
-                        new_card = _StatCard(label, value, accent)
-                        sub_layout.replaceWidget(old_card, new_card)
-                        old_card.deleteLater()
-                        return new_card
-        # Fallback: just update the old card visually
+        """Update a stat card in place, avoiding repeated QWidget replacement during refresh."""
+        old_card.update_value(value, accent)
         return old_card
 
     def _run(self) -> None:
