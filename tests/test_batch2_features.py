@@ -34,6 +34,7 @@ from app.domain.models import (
     Role,
     TimeSlot,
     User,
+    UserStatus,
 )
 from app.domain.services import schedule_registrations
 from app.infrastructure.db import init_db, transaction
@@ -285,6 +286,36 @@ class UserSettingsTests(_IsolatedDBTestCase):
             result = get_user("me", self.admin)
         self.assertEqual(result["id"], self.admin.id)
         self.assertNotIn("password_hash", result)
+
+
+class UserApprovalPermissionTests(_IsolatedDBTestCase):
+    """用户审批仅限超级管理员，避免组织者越权审批账号。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.user_repo = UserRepository()
+        from app.application.user_service import UserService
+
+        self.user_service = UserService(self.user_repo)
+        self.super_admin = self.user_service.register(None, "super_admin", "pass1234", Role.SUPER_ADMIN)
+        self.organizer = self.user_service.register(self.super_admin, "organizer", "pass1234", Role.ORGANIZER)
+        self.pending_user = self.user_service.self_register("pending_user", "pass1234")
+
+    def test_organizer_cannot_review_pending_users(self) -> None:
+        with self.assertRaises(PermissionDenied):
+            self.user_service.list_pending_users(self.organizer)
+        with self.assertRaises(PermissionDenied):
+            self.user_service.approve_user(self.organizer, self.pending_user.id)
+        with self.assertRaises(PermissionDenied):
+            self.user_service.reject_user(self.organizer, self.pending_user.id)
+
+    def test_super_admin_can_review_pending_user(self) -> None:
+        pending = self.user_service.list_pending_users(self.super_admin)
+        self.assertEqual([user["id"] for user in pending], [self.pending_user.id])
+
+        approved = self.user_service.approve_user(self.super_admin, self.pending_user.id)
+
+        self.assertEqual(approved.status, UserStatus.APPROVED)
 
 
 class RegistrationPointsRepositoryTests(_IsolatedDBTestCase):

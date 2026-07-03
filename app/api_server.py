@@ -310,7 +310,7 @@ def list_users(
 @app.get("/users/pending")
 def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
     """获取待审批用户列表"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _require_roles(current_user, {Role.SUPER_ADMIN})
     try:
         return user_service.list_pending_users(current_user)
     except Exception as exc:
@@ -366,7 +366,7 @@ def self_register(payload: SelfRegisterRequest) -> dict:
 @app.post("/users/{user_id}/approve")
 def approve_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     """审批通过用户注册"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _require_roles(current_user, {Role.SUPER_ADMIN})
     try:
         user = user_service.approve_user(current_user, user_id)
     except Exception as exc:
@@ -377,7 +377,7 @@ def approve_user(user_id: str, current_user: User = Depends(_get_current_user)) 
 @app.post("/users/{user_id}/reject")
 def reject_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     """拒绝用户注册"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _require_roles(current_user, {Role.SUPER_ADMIN})
     try:
         user_service.reject_user(current_user, user_id)
     except Exception as exc:
