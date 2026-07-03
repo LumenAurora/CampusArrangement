@@ -97,11 +97,18 @@ class _StatCard(QFrame):
 
 
 class GroupAdminPanel(QWidget):
-    def __init__(self, group_service: GroupService, group_repo: GroupRepository, user: User) -> None:
+    def __init__(
+        self,
+        group_service: GroupService,
+        group_repo: GroupRepository,
+        user: User,
+        activity_repo: ActivityRepository | None = None,
+    ) -> None:
         super().__init__()
         self._service = group_service
         self._repo = group_repo
         self._user = user
+        self._activity_repo = activity_repo
         self._selected_group_id: str | None = None
         self._selected_group_owner_id: str | None = None
         self._all_groups: list[dict] = []
@@ -691,7 +698,7 @@ class GroupAdminPanel(QWidget):
             total_members += len(approved)
             total_pending += len(pending)
 
-            activity_repo = ActivityRepository()
+            activity_repo = self._activity_repo or ActivityRepository()
             all_activities = activity_repo.list_all()
             group_activities = [a for a in all_activities if a.get("group_id") == g["id"]]
 

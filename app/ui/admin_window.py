@@ -41,8 +41,8 @@ class AdminWindow(NavigationWindow):
             ("activities", "活动管理", ActivityPanel(activity_service, user, scheduling_service, activity_repo, group_repo), load_icon("activities")),
             ("scheduling", "排班管理", SchedulingPanel(activity_service, scheduling_service, schedule_repo, user_repo), load_icon("scheduling")),
             ("checkin", "签到管理", CheckInPanel(checkin_service, activity_service, schedule_repo, user_repo, user), load_icon("checkin")),
-            ("users", "用户管理", UserAdminPanel(user_service, user_repo, user), load_icon("users")),
+            ("users", "用户管理", UserAdminPanel(user_service, user_repo, user, reg_repo, schedule_repo), load_icon("users")),
         ]
         if group_service is not None and group_repo is not None:
-            pages.append(("groups", "小组管理", GroupAdminPanel(group_service, group_repo, user), load_icon("users")))
+            pages.append(("groups", "小组管理", GroupAdminPanel(group_service, group_repo, user, activity_repo), load_icon("users")))
         self.set_pages(pages)

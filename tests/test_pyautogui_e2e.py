@@ -48,7 +48,9 @@ from app.infrastructure.repositories import (  # noqa: E402
     UserRepository,
 )
 from app.ui.admin_window import AdminWindow  # noqa: E402
+from app.ui.group_admin_widgets import GroupAdminPanel  # noqa: E402
 from app.ui.login_dialog import LoginDialog  # noqa: E402
+from app.ui.user_admin_widgets import UserAdminPanel  # noqa: E402
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────
@@ -249,6 +251,19 @@ def test_admin_window_opens_and_shows_dashboard(qapp: QApplication, services) ->
         # 当前页应为 DashboardPanel 实例
         current = window._stack.currentWidget()
         assert current.__class__.__name__ == "DashboardPanel"
+    finally:
+        window.close()
+
+
+def test_admin_window_injects_repositories_into_admin_pages(qapp: QApplication, services) -> None:
+    """管理端子页面应使用 main 注入的仓储，避免远程模式误读本地 SQLite。"""
+    window = _build_admin_window(services, qapp)
+    try:
+        user_panel = next(p for p in window._pages if isinstance(p, UserAdminPanel))
+        group_panel = next(p for p in window._pages if isinstance(p, GroupAdminPanel))
+        assert user_panel._reg_repo is services.reg_repo
+        assert user_panel._schedule_repo is services.schedule_repo
+        assert group_panel._activity_repo is services.activity_repo
     finally:
         window.close()
 

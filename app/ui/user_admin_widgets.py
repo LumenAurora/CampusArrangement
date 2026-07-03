@@ -103,13 +103,20 @@ class _StatCard(QFrame):
 # ─── 用户管理面板 ──────────────────────────────────────────────────
 
 class UserAdminPanel(QWidget):
-    def __init__(self, user_service: UserService, user_repo: UserRepository, current_user: User) -> None:
+    def __init__(
+        self,
+        user_service: UserService,
+        user_repo: UserRepository,
+        current_user: User,
+        reg_repo: RegistrationRepository | None = None,
+        schedule_repo: ScheduleRepository | None = None,
+    ) -> None:
         super().__init__()
         self._user_service = user_service
         self._user_repo = user_repo
         self._current_user = current_user
-        self._reg_repo = RegistrationRepository()
-        self._schedule_repo = ScheduleRepository()
+        self._reg_repo = reg_repo or RegistrationRepository()
+        self._schedule_repo = schedule_repo or ScheduleRepository()
 
         self._table = QTableWidget(0, 3)
         self._table.setHorizontalHeaderLabels(["ID", "用户名", "角色"])
