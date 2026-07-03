@@ -229,6 +229,9 @@ class RemoteActivityService:
     def get_activity(self, activity_id: str) -> dict | None:
         return self._api.get(f"/activities/{activity_id}")
 
+    def update_activity(self, user: User, activity_id: str, fields: dict) -> None:
+        self._api.put(f"/activities/{activity_id}", json=fields)
+
     def delete_activity(self, user: User, activity_id: str) -> bool:
         self._api.post(f"/activities/{activity_id}/delete", json={})
         return True
