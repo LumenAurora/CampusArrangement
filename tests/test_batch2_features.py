@@ -15,6 +15,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QDate
+
 from app.api_server import _to_user
 from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
@@ -42,6 +44,7 @@ from app.infrastructure.repositories import (
     TimeSlotRepository,
     UserRepository,
 )
+from app.ui.activity_widgets import _next_monday_after
 from app.ui.ui_utils import format_activity_status
 
 
@@ -531,6 +534,20 @@ class FormatActivityStatusTests(unittest.TestCase):
             "checkin_end": (now + timedelta(hours=1)).isoformat(),
         }
         self.assertEqual(format_activity_status(activity), "签到中")
+
+
+class CopyActivityDateShortcutTests(unittest.TestCase):
+    """复制活动快捷日期应始终跳到下一周。"""
+
+    def test_next_monday_after_monday_is_following_week(self) -> None:
+        monday = QDate(2026, 7, 6)
+
+        self.assertEqual(_next_monday_after(monday), QDate(2026, 7, 13))
+
+    def test_next_monday_after_sunday_is_next_day(self) -> None:
+        sunday = QDate(2026, 7, 5)
+
+        self.assertEqual(_next_monday_after(sunday), QDate(2026, 7, 6))
 
 
 if __name__ == "__main__":
