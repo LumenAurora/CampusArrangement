@@ -472,14 +472,25 @@ def reopen_checkin(activity_id: str, current_user: User = Depends(_get_current_u
     return {"ok": True}
 
 
+def _filter_visible_activities_for_user(user: User, activities: list[dict]) -> list[dict]:
+    if user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        return activities
+    visible_statuses = {
+        ActivityStatus.OPEN.value,
+        ActivityStatus.CLOSED.value,
+        ActivityStatus.ARCHIVED.value,
+    }
+    return [activity for activity in activities if activity.get("status") in visible_statuses]
+
+
 @app.get("/activities")
-def list_activities(status: Optional[str] = None, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_activities(status: Optional[str] = None, current_user: User = Depends(_get_current_user)) -> list[dict]:
     if status:
         valid_statuses = {s.value for s in ActivityStatus}
         if status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"无效的活动状态: {status}")
-        return activity_repo.list_by_status(ActivityStatus(status))
-    return activity_service.list_activities()
+        return _filter_visible_activities_for_user(current_user, activity_repo.list_by_status(ActivityStatus(status)))
+    return _filter_visible_activities_for_user(current_user, activity_service.list_activities())
 
 
 @app.get("/activities/{activity_id}")
