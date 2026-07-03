@@ -122,6 +122,22 @@ class ActivityService:
         if "location" in updates:
             updates["location"] = str(updates["location"]).strip()
 
+        checkin_mode = activity.get("checkin_mode", CheckInMode.MANUAL.value)
+        if checkin_mode == CheckInMode.LOCATION.value and "location" in updates:
+            location = updates["location"]
+            if not location:
+                raise ValidationError("位置签到模式必须填写活动地点坐标")
+            if "," not in location:
+                raise ValidationError("位置签到模式的地点必须为坐标格式，如：30.1234,120.5678")
+            try:
+                lat_raw, lon_raw = location.split(",", 1)
+                lat = float(lat_raw.strip())
+                lon = float(lon_raw.strip())
+            except ValueError as exc:
+                raise ValidationError("位置签到模式的地点坐标格式无效，应为：纬度,经度") from exc
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                raise ValidationError("位置签到坐标超出有效范围（纬度 ±90，经度 ±180）")
+
         self._activity_repo.update(activity_id, updates)
 
     def add_position(
