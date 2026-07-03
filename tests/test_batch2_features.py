@@ -262,6 +262,14 @@ class UserSettingsTests(_IsolatedDBTestCase):
         self.assertEqual(user.avatar_path, "/avatar.png")
         self.assertEqual(user.notification_mode, NotificationMode.NONE)
 
+    def test_api_get_user_me_alias_returns_current_user(self) -> None:
+        from app.api_server import get_user
+
+        with patch("app.api_server.user_repo", self.user_repo):
+            result = get_user("me", self.admin)
+        self.assertEqual(result["id"], self.admin.id)
+        self.assertNotIn("password_hash", result)
+
 
 class RegistrationPointsRepositoryTests(_IsolatedDBTestCase):
     """RegistrationRepository.to_models 保留 points 字段。"""
@@ -327,6 +335,21 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertEqual(api.upload[0], "/users/me/avatar")
         self.assertEqual(api.upload[1], "file")
         self.assertTrue(api.upload[2].endswith("resources/uploads/avatars/user1.png"))
+
+    def test_remote_user_repo_get_by_id_falls_back_to_me(self) -> None:
+        from app.domain.exceptions import PermissionDenied
+        from app.infrastructure.remote_repositories import RemoteUserRepository
+
+        class FakeApi:
+            def get(self, path: str, params: dict | None = None) -> dict:
+                if path == "/users/user1":
+                    raise PermissionDenied("权限不足")
+                if path == "/users/me":
+                    return {"id": "user1", "username": "alice"}
+                raise AssertionError(path)
+
+        repo = RemoteUserRepository(FakeApi())  # type: ignore[arg-type]
+        self.assertEqual(repo.get_by_id("user1")["username"], "alice")
 
     def test_remote_activity_repo_has_checkin_closed(self) -> None:
         from app.infrastructure.api_client import ApiClient
