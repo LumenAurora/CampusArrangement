@@ -101,6 +101,14 @@ class ActivityCreateRequest(BaseModel):
     allow_multiple_slots: bool = False
 
 
+class ActivityUpdateRequest(BaseModel):
+    name: str | None = None
+    signup_start: datetime | None = None
+    signup_end: datetime | None = None
+    details: str | None = None
+    location: str | None = None
+
+
 class SlotCreateRequest(BaseModel):
     start_time: datetime | None = None
     end_time: datetime | None = None
@@ -528,6 +536,23 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
 def delete_activity(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     try:
         activity_service.delete_activity(user=current_user, activity_id=activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True}
+
+
+@app.put("/activities/{activity_id}")
+def update_activity(
+    activity_id: str,
+    payload: ActivityUpdateRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    fields = payload.model_dump(exclude_unset=True)
+    for key in ("signup_start", "signup_end"):
+        if key in fields and fields[key] is not None:
+            fields[key] = fields[key].isoformat()
+    try:
+        activity_service.update_activity(user=current_user, activity_id=activity_id, fields=fields)
     except Exception as exc:
         _handle_domain_error(exc)
     return {"ok": True}

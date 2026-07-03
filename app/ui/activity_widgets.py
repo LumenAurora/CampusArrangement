@@ -608,10 +608,9 @@ class ActivityPanel(QWidget):
                 err.setVisible(True)
                 return
             try:
-                repo = self._activity_repo
-                if not repo:
+                if not hasattr(self._service, "update_activity"):
                     raise ValidationError("当前模式下不支持编辑活动配置")
-                repo.update(activity_id, {
+                self._service.update_activity(user=self._user, activity_id=activity_id, fields={
                     "name": name,
                     "details": details_edit.text().strip(),
                     "location": loc_edit.text().strip(),

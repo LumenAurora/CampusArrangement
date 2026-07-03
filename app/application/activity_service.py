@@ -85,6 +85,45 @@ class ActivityService:
         self._activity_repo.create(activity)
         return activity
 
+    def update_activity(
+        self,
+        user: User,
+        activity_id: str,
+        fields: dict,
+    ) -> None:
+        """更新活动基础配置。"""
+        activity = self._activity_repo.get(activity_id)
+        if not activity:
+            raise ValidationError("活动不存在")
+        self._check_owner_or_admin(user, activity)
+
+        updates = {
+            key: value
+            for key, value in fields.items()
+            if key in {"name", "details", "location", "signup_start", "signup_end"} and value is not None
+        }
+        if "name" in updates and not str(updates["name"]).strip():
+            raise ValidationError("活动名称不能为空")
+
+        start_raw = updates.get("signup_start", activity.get("signup_start"))
+        end_raw = updates.get("signup_end", activity.get("signup_end"))
+        try:
+            signup_start = datetime.fromisoformat(str(start_raw))
+            signup_end = datetime.fromisoformat(str(end_raw))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("报名时间格式无效") from exc
+        if signup_end <= signup_start:
+            raise ValidationError("报名截止时间必须晚于开始时间")
+
+        if "name" in updates:
+            updates["name"] = str(updates["name"]).strip()
+        if "details" in updates:
+            updates["details"] = str(updates["details"]).strip()
+        if "location" in updates:
+            updates["location"] = str(updates["location"]).strip()
+
+        self._activity_repo.update(activity_id, updates)
+
     def add_position(
         self,
         user: User,

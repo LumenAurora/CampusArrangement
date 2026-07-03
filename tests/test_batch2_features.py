@@ -16,6 +16,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from app.api_server import _to_user
+from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
 from app.application.registration_service import RegistrationService
 from app.domain.exceptions import PermissionDenied, ValidationError
@@ -307,6 +308,61 @@ class RegistrationPointsRepositoryTests(_IsolatedDBTestCase):
         self.assertEqual(models[0].points, 77)
 
 
+class ActivityUpdateServiceTests(_IsolatedDBTestCase):
+    """活动配置编辑入口支持本地/远程统一调用。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.user_repo = UserRepository()
+        self.activity_repo = ActivityRepository()
+        self.slot_repo = TimeSlotRepository()
+        self.service = ActivityService(self.activity_repo, self.slot_repo)
+        self.owner = User.create("activity_owner", Role.ORGANIZER)
+        self.user_repo.create(self.owner, "hash")
+        now = datetime.now(timezone.utc)
+        self.activity = Activity.create(
+            "待编辑活动",
+            self.owner.id,
+            now,
+            now + timedelta(days=1),
+            "old",
+            location="old-place",
+        )
+        self.activity_repo.create(self.activity)
+
+    def test_update_activity_changes_basic_fields(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.service.update_activity(
+            self.owner,
+            self.activity.id,
+            {
+                "name": "新活动名",
+                "details": "new details",
+                "location": "new-place",
+                "signup_start": now.isoformat(),
+                "signup_end": (now + timedelta(days=2)).isoformat(),
+            },
+        )
+
+        updated = self.activity_repo.get(self.activity.id)
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["name"], "新活动名")
+        self.assertEqual(updated["details"], "new details")
+        self.assertEqual(updated["location"], "new-place")
+
+    def test_update_activity_validates_signup_window(self) -> None:
+        now = datetime.now(timezone.utc)
+        with self.assertRaises(ValidationError):
+            self.service.update_activity(
+                self.owner,
+                self.activity.id,
+                {
+                    "signup_start": now.isoformat(),
+                    "signup_end": now.isoformat(),
+                },
+            )
+
+
 class RemoteRepoMethodTests(unittest.TestCase):
     """确保远程仓储/服务保留批次 2 新增方法（防重构丢失）。"""
 
@@ -385,6 +441,26 @@ class RemoteRepoMethodTests(unittest.TestCase):
         api = ApiClient("http://localhost:9999")
         repo = RemoteActivityRepository(api, MetricsCache(api))
         self.assertTrue(hasattr(repo, "update_checkin_closed"))
+
+    def test_remote_activity_service_updates_activity(self) -> None:
+        from app.application.remote_services import RemoteActivityService
+
+        class FakeApi:
+            call: tuple[str, dict] | None = None
+
+            def put(self, path: str, json: dict) -> dict:
+                self.call = (path, json)
+                return {"ok": True}
+
+        api = FakeApi()
+        service = RemoteActivityService(api)  # type: ignore[arg-type]
+        service.update_activity(
+            User.create("owner", Role.ORGANIZER),
+            "act1",
+            {"name": "新的活动名", "location": "A101"},
+        )
+
+        self.assertEqual(api.call, ("/activities/act1", {"name": "新的活动名", "location": "A101"}))
 
     def test_remote_slot_repo_positions_uses_parent_alias(self) -> None:
         from app.infrastructure.remote_repositories import MetricsCache, RemoteTimeSlotRepository
