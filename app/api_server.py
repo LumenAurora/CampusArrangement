@@ -307,6 +307,16 @@ def list_users(
     return user_repo.list_all()
 
 
+@app.get("/users/pending")
+def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
+    """获取待审批用户列表"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        return user_service.list_pending_users(current_user)
+    except Exception as exc:
+        _handle_domain_error(exc)
+
+
 @app.get("/users/{user_id}")
 def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     if user_id == "me":
@@ -351,16 +361,6 @@ def self_register(payload: SelfRegisterRequest) -> dict:
     except Exception as exc:
         _handle_domain_error(exc)
     return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
-
-
-@app.get("/users/pending")
-def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
-    """获取待审批用户列表"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
-    try:
-        return user_service.list_pending_users(current_user)
-    except Exception as exc:
-        _handle_domain_error(exc)
 
 
 @app.post("/users/{user_id}/approve")
