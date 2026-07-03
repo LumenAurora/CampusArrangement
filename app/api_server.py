@@ -783,10 +783,14 @@ def list_registrations(
 
 
 @app.get("/registrations/{registration_id}")
-def get_registration(registration_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_registration(registration_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     reg = reg_repo.get(registration_id)
     if not reg:
         raise HTTPException(status_code=404, detail="报名记录不存在")
+    if current_user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        _check_activity_access(current_user, reg.get("activity_id", ""))
+    elif reg.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="权限不足")
     return reg
 
 
@@ -872,10 +876,14 @@ def list_checkins(
 
 
 @app.get("/checkins/{checkin_id}")
-def get_checkin(checkin_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_checkin(checkin_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     ci = checkin_repo.get(checkin_id)
     if not ci:
         raise HTTPException(status_code=404, detail="签到记录不存在")
+    if current_user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        _check_activity_access(current_user, ci.get("activity_id", ""))
+    elif ci.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="权限不足")
     return ci
 
 
