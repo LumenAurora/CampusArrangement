@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -8,10 +10,24 @@ from app.domain.exceptions import ConflictError, PermissionDenied, ValidationErr
 from app.domain.models import NotificationMode, Role, User, UserStatus
 
 
+def is_loopback_api_url(base_url: str) -> bool:
+    host = urlparse(base_url).hostname
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class ApiClient:
     def __init__(self, base_url: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._session = requests.Session()
+        if is_loopback_api_url(self._base_url):
+            self._session.trust_env = False
         self._token: str | None = None
 
     def set_token(self, token: str) -> None:

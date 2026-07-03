@@ -461,6 +461,40 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertEqual(user.avatar_path, "avatars/user1.png")
         self.assertEqual(user.notification_mode, NotificationMode.EMAIL)
 
+    def test_api_client_bypasses_proxy_for_loopback_server(self) -> None:
+        from app.infrastructure.api_client import ApiClient, is_loopback_api_url
+
+        self.assertTrue(is_loopback_api_url("http://localhost:8000"))
+        self.assertTrue(is_loopback_api_url("http://127.0.0.1:8000"))
+        self.assertTrue(is_loopback_api_url("http://[::1]:8000"))
+        self.assertFalse(is_loopback_api_url("https://example.com"))
+
+        local_client = ApiClient("http://127.0.0.1:8000")
+        remote_client = ApiClient("https://example.com")
+
+        self.assertFalse(local_client._session.trust_env)
+        self.assertTrue(remote_client._session.trust_env)
+
+    def test_pending_users_route_is_not_captured_as_user_id(self) -> None:
+        from starlette.routing import Match
+
+        from app.api_server import app
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/users/pending",
+            "root_path": "",
+            "headers": [],
+        }
+        for route in app.router.routes:
+            match, _ = route.matches(scope)
+            if match == Match.FULL:
+                self.assertEqual(route.endpoint.__name__, "list_pending_users")
+                break
+        else:
+            self.fail("/users/pending route was not matched")
+
     def test_remote_user_repo_uploads_avatar_file(self) -> None:
         from app.infrastructure.remote_repositories import RemoteUserRepository
 

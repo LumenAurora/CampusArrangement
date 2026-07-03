@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.infrastructure.api_client import is_loopback_api_url
 from app.infrastructure.notifications import get_smtp_config, send_email, set_smtp_config
 from app.infrastructure.runtime_config import (
     DATA_MODE_LOCAL,
@@ -233,7 +234,10 @@ class SettingsDialog(QDialog):
             ok = False
             message = ""
             try:
-                resp = requests.get(f"{url.rstrip('/')}/health", timeout=5)
+                session = requests.Session()
+                if is_loopback_api_url(url):
+                    session.trust_env = False
+                resp = session.get(f"{url.rstrip('/')}/health", timeout=5)
                 ok = resp.status_code == 200
                 if ok:
                     message = "连接成功"
