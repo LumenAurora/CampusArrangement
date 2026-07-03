@@ -26,6 +26,7 @@ from app.domain.models import (
     Activity,
     ActivityStatus,
     AllocationMode,
+    CheckInMode,
     MAX_POINTS,
     NotificationMode,
     Registration,
@@ -364,6 +365,27 @@ class ActivityUpdateServiceTests(_IsolatedDBTestCase):
                     "signup_end": now.isoformat(),
                 },
             )
+
+    def test_update_location_checkin_activity_requires_coordinates(self) -> None:
+        now = datetime.now(timezone.utc)
+        activity = Activity.create(
+            "位置签到活动",
+            self.owner.id,
+            now,
+            now + timedelta(days=1),
+            "location test",
+            location="30.1234,120.5678",
+            checkin_mode=CheckInMode.LOCATION,
+        )
+        self.activity_repo.create(activity)
+
+        with self.assertRaises(ValidationError):
+            self.service.update_activity(self.owner, activity.id, {"location": "教学楼大厅"})
+
+        self.service.update_activity(self.owner, activity.id, {"location": "31.0000,121.0000"})
+        updated = self.activity_repo.get(activity.id)
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["location"], "31.0000,121.0000")
 
 
 class RemoteRepoMethodTests(unittest.TestCase):
