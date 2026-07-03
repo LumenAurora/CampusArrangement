@@ -48,6 +48,7 @@ from app.infrastructure.repositories import (  # noqa: E402
     UserRepository,
 )
 from app.ui.admin_window import AdminWindow  # noqa: E402
+from app.ui.client_window import ClientWindow  # noqa: E402
 from app.ui.group_admin_widgets import GroupAdminPanel  # noqa: E402
 from app.ui.login_dialog import LoginDialog  # noqa: E402
 from app.ui.user_admin_widgets import UserAdminPanel  # noqa: E402
@@ -240,6 +241,26 @@ def _build_admin_window(services, qapp) -> AdminWindow:
     return window
 
 
+def _build_client_window(services, user, qapp) -> ClientWindow:
+    """复用 main.py 的组装逻辑，构造一个学生端窗口。"""
+    window = ClientWindow(
+        user=user,
+        activity_service=services.activity_service,
+        registration_service=services.registration_service,
+        schedule_repo=services.schedule_repo,
+        activity_repo=services.activity_repo,
+        slot_repo=services.slot_repo,
+        reg_repo=services.reg_repo,
+        checkin_service=services.checkin_service,
+        checkin_repo=services.checkin_repo,
+        group_service=services.group_service,
+        group_repo=services.group_repo,
+    )
+    window.show()
+    qapp.processEvents()
+    return window
+
+
 def test_admin_window_opens_and_shows_dashboard(qapp: QApplication, services) -> None:
     """登录后进入管理端 → 默认显示概览页（dashboard）。"""
     window = _build_admin_window(services, qapp)
@@ -347,6 +368,51 @@ def test_dashboard_calendar_shows_activity_event(qapp: QApplication, services) -
         types = {e.get("type") for e in all_events}
         assert "activity" in types, f"未收集到报名开始事件: {types}"
         assert "schedule" in types, f"未收集到时段事件: {types}"
+    finally:
+        window.close()
+
+
+def test_client_window_opens_after_full_signup_schedule_checkin_flow(qapp: QApplication, services) -> None:
+    """主流程冒烟：报名、排班、签到后学生端各页仍能打开刷新。"""
+    admin_user = services.user_service.authenticate("admin", "admin")
+    student = services.user_service.register(admin_user, "student_smoke", "pass1234", Role.USER)
+    now = datetime.now(timezone.utc)
+    activity = Activity.create(
+        name="验收主流程活动",
+        owner_id=admin_user.id,
+        signup_start=now,
+        signup_end=now + timedelta(days=1),
+        details="学生端主流程冒烟",
+    )
+    services.activity_repo.create(activity)
+    slot = TimeSlot.create_time_slot(
+        activity_id=activity.id,
+        start_time=now + timedelta(hours=2),
+        end_time=now + timedelta(hours=3),
+        capacity=3,
+    )
+    services.slot_repo.create(slot)
+
+    services.activity_service.publish_activity(admin_user, activity.id)
+    services.registration_service.register(student.id, activity.id, slot.id, priority=1)
+    services.activity_service.close_activity(admin_user, activity.id)
+    assert services.scheduling_service.run(activity.id) == 1
+    services.checkin_service.check_in(admin_user, activity.id, student.id, slot.id)
+
+    window = _build_client_window(services, student, qapp)
+    try:
+        assert window.isVisible()
+        for key in ("dashboard", "signup", "results", "checkin", "calendar"):
+            assert key in window._page_keys
+        for i in range(len(window._page_keys)):
+            window._nav.setCurrentRow(i)
+            qapp.processEvents()
+            current = window._stack.currentWidget()
+            if hasattr(current, "refresh"):
+                current.refresh()
+                qapp.processEvents()
+        assert services.schedule_repo.count_by_user(student.id) == 1
+        assert services.checkin_repo.get_by_user_slot(student.id, slot.id) is not None
     finally:
         window.close()
 
