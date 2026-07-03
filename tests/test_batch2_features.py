@@ -495,6 +495,19 @@ class RemoteRepoMethodTests(unittest.TestCase):
         else:
             self.fail("/users/pending route was not matched")
 
+    def test_user_list_api_strips_password_hashes(self) -> None:
+        from app.api_server import list_users
+
+        admin = User.create("admin", Role.SUPER_ADMIN)
+        with patch("app.api_server.user_repo") as fake_repo:
+            fake_repo.list_all.return_value = [
+                {"id": "user1", "username": "alice", "password_hash": "secret-hash"},
+            ]
+
+            users = list_users(current_user=admin)
+
+        self.assertEqual(users, [{"id": "user1", "username": "alice"}])
+
     def test_remote_user_repo_uploads_avatar_file(self) -> None:
         from app.infrastructure.remote_repositories import RemoteUserRepository
 
