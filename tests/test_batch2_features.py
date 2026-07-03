@@ -555,6 +555,42 @@ class RemoteRepoMethodTests(unittest.TestCase):
             self.assertEqual(get_activity("draft1", current_user=admin), draft)
             self.assertEqual(list_slots("draft1", current_user=admin), [{"id": "slot1"}])
 
+    def test_registration_detail_requires_owner_or_activity_manager(self) -> None:
+        from fastapi import HTTPException
+
+        from app.api_server import get_registration
+
+        owner = User(id="owner1", username="owner", role=Role.USER)
+        other = User(id="other1", username="other", role=Role.USER)
+        reg = {"id": "reg1", "user_id": owner.id, "activity_id": "act1", "slot_id": "slot1"}
+
+        with patch("app.api_server.reg_repo") as fake_reg_repo:
+            fake_reg_repo.get.return_value = reg
+
+            self.assertEqual(get_registration("reg1", current_user=owner), reg)
+            with self.assertRaises(HTTPException) as err:
+                get_registration("reg1", current_user=other)
+
+        self.assertEqual(err.exception.status_code, 403)
+
+    def test_checkin_detail_requires_owner_or_activity_manager(self) -> None:
+        from fastapi import HTTPException
+
+        from app.api_server import get_checkin
+
+        owner = User(id="owner1", username="owner", role=Role.USER)
+        other = User(id="other1", username="other", role=Role.USER)
+        checkin = {"id": "ci1", "user_id": owner.id, "activity_id": "act1", "slot_id": "slot1"}
+
+        with patch("app.api_server.checkin_repo") as fake_checkin_repo:
+            fake_checkin_repo.get.return_value = checkin
+
+            self.assertEqual(get_checkin("ci1", current_user=owner), checkin)
+            with self.assertRaises(HTTPException) as err:
+                get_checkin("ci1", current_user=other)
+
+        self.assertEqual(err.exception.status_code, 403)
+
     def test_remote_user_repo_uploads_avatar_file(self) -> None:
         from app.infrastructure.remote_repositories import RemoteUserRepository
 
