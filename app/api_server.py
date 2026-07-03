@@ -487,6 +487,16 @@ def _is_activity_visible_to_user(user: User, activity: dict) -> bool:
     return bool(_filter_visible_activities_for_user(user, [activity]))
 
 
+def _ensure_slot_visible_to_user(user: User, slot_id: str) -> dict:
+    slot = slot_repo.get(slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="时段不存在")
+    activity = activity_repo.get(slot.get("activity_id", ""))
+    if not activity or not _is_activity_visible_to_user(user, activity):
+        raise HTTPException(status_code=404, detail="时段不存在")
+    return slot
+
+
 @app.get("/activities")
 def list_activities(status: Optional[str] = None, current_user: User = Depends(_get_current_user)) -> list[dict]:
     if status:
@@ -654,14 +664,23 @@ def list_slots(activity_id: str, current_user: User = Depends(_get_current_user)
 
 
 @app.get("/activities/{activity_id}/slots/{parent_slot_id}/positions")
-def list_positions(activity_id: str, parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_positions(
+    activity_id: str,
+    parent_slot_id: str,
+    current_user: User = Depends(_get_current_user),
+) -> list[dict]:
     """获取某时段下的所有子岗位"""
+    activity = activity_repo.get(activity_id)
+    if not activity or not _is_activity_visible_to_user(current_user, activity):
+        raise HTTPException(status_code=404, detail="活动不存在")
+    _ensure_slot_visible_to_user(current_user, parent_slot_id)
     return slot_repo.list_positions(parent_slot_id)
 
 
 @app.get("/slots/{parent_slot_id}/positions")
-def list_positions_by_parent(parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_positions_by_parent(parent_slot_id: str, current_user: User = Depends(_get_current_user)) -> list[dict]:
     """获取某时段下的所有子岗位（无需活动ID的兼容入口）。"""
+    _ensure_slot_visible_to_user(current_user, parent_slot_id)
     return slot_repo.list_positions(parent_slot_id)
 
 
@@ -696,11 +715,8 @@ def add_position(
 
 
 @app.get("/slots/{slot_id}")
-def get_slot(slot_id: str, _: User = Depends(_get_current_user)) -> dict:
-    slot = slot_repo.get(slot_id)
-    if not slot:
-        raise HTTPException(status_code=404, detail="时段不存在")
-    return slot
+def get_slot(slot_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    return _ensure_slot_visible_to_user(current_user, slot_id)
 
 
 @app.post("/activities/{activity_id}/slots")

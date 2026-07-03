@@ -555,6 +555,31 @@ class RemoteRepoMethodTests(unittest.TestCase):
             self.assertEqual(get_activity("draft1", current_user=admin), draft)
             self.assertEqual(list_slots("draft1", current_user=admin), [{"id": "slot1"}])
 
+    def test_direct_slot_routes_hide_unpublished_activity_slots_from_regular_users(self) -> None:
+        from fastapi import HTTPException
+
+        from app.api_server import get_slot, list_positions_by_parent
+
+        draft = {"id": "draft1", "name": "草稿", "status": ActivityStatus.DRAFT.value}
+        slot = {"id": "slot1", "activity_id": "draft1", "name": "隐藏时段"}
+        regular_user = User.create("student", Role.USER)
+        admin = User.create("admin", Role.SUPER_ADMIN)
+
+        with patch("app.api_server.activity_repo") as fake_activity_repo, patch("app.api_server.slot_repo") as fake_slot_repo:
+            fake_activity_repo.get.return_value = draft
+            fake_slot_repo.get.return_value = slot
+            fake_slot_repo.list_positions.return_value = [{"id": "pos1", "activity_id": "draft1"}]
+
+            with self.assertRaises(HTTPException) as slot_err:
+                get_slot("slot1", current_user=regular_user)
+            with self.assertRaises(HTTPException) as positions_err:
+                list_positions_by_parent("slot1", current_user=regular_user)
+
+            self.assertEqual(slot_err.exception.status_code, 404)
+            self.assertEqual(positions_err.exception.status_code, 404)
+            self.assertEqual(get_slot("slot1", current_user=admin), slot)
+            self.assertEqual(list_positions_by_parent("slot1", current_user=admin), [{"id": "pos1", "activity_id": "draft1"}])
+
     def test_registration_detail_requires_owner_or_activity_manager(self) -> None:
         from fastapi import HTTPException
 
