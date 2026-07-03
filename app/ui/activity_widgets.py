@@ -1115,67 +1115,70 @@ class ActivityPanel(QWidget):
 
         activities = [a for a in self._all_activities if _matches(a)]
 
-        if not activities:
-            # 区分两种空状态：完全没活动 vs 筛选条件导致为空
-            if not self._all_activities:
-                empty_msg = "暂无活动，请先创建活动"
-            else:
-                empty_msg = "无符合筛选条件的活动，请调整搜索/筛选条件"
-            set_table_empty(self._activity_table, 9, empty_msg)
-            self._activity_selector.blockSignals(True)
-            self._activity_selector.clear()
-            self._activity_selector.blockSignals(False)
-            self._load_slots()
-            return
-        self._activity_table.clearSpans()
-        self._activity_table.setRowCount(len(activities))
-        # 保留当前选中的活动 ID，refresh 后恢复选择，避免跳回列表第一个
-        preserved_activity_id = self._activity_selector.currentData()
+        self._activity_table.blockSignals(True)
         self._activity_selector.blockSignals(True)
-        self._activity_selector.clear()
-        p = get_palette()
-        for row_index, activity in enumerate(activities):
-            self._activity_table.setItem(row_index, 0, QTableWidgetItem(str(activity["id"])))
-            self._activity_table.setItem(row_index, 1, QTableWidgetItem(str(activity["name"])))
-            self._activity_table.setItem(row_index, 2, QTableWidgetItem(format_datetime(activity["signup_start"])))
-            self._activity_table.setItem(row_index, 3, QTableWidgetItem(format_datetime(activity["signup_end"])))
-            signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
-            allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value)
-            allocation_text = {
-                AllocationMode.GREEDY.value: "志愿优先",
-                AllocationMode.FIRST_COME.value: "先到先得",
-                AllocationMode.LOTTERY.value: "抽签",
-                AllocationMode.POINTS.value: "意愿点",
-            }.get(allocation_mode, "志愿优先")
-            self._activity_table.setItem(row_index, 4, QTableWidgetItem(signup_mode_text))
-            self._activity_table.setItem(row_index, 5, QTableWidgetItem(allocation_text))
-            # Location with prominent styling
-            location_text = activity.get("location") or "-"
-            location_label = QLabel(f"📍 {location_text}")
-            location_label.setStyleSheet(
-                f"color: {p.accent}; font-weight: 500; padding: 2px 6px; "
-                f"background: {p.accent_soft}; border-radius: 4px;"
-            )
-            location_label.setAlignment(Qt.AlignCenter)
-            self._activity_table.setCellWidget(row_index, 6, location_label)
-            # 状态徽章：dot + 文字（参考 HTML 设计）
-            status_text = format_activity_status(activity)
-            status_item = make_status_item(status_text)
-            self._activity_table.setItem(row_index, 7, status_item)
-            # 行内操作：复制 + 更多下拉（详情/归档/删除）
-            self._activity_table.setCellWidget(row_index, 8, self._make_row_actions(activity, p))
+        try:
+            if not activities:
+                # 区分两种空状态：完全没活动 vs 筛选条件导致为空
+                if not self._all_activities:
+                    empty_msg = "暂无活动，请先创建活动"
+                else:
+                    empty_msg = "无符合筛选条件的活动，请调整搜索/筛选条件"
+                set_table_empty(self._activity_table, 9, empty_msg)
+                self._activity_selector.clear()
+            else:
+                self._activity_table.clearSelection()
+                self._activity_table.clearContents()
+                self._activity_table.clearSpans()
+                self._activity_table.setRowCount(len(activities))
+                # 保留当前选中的活动 ID，refresh 后恢复选择，避免跳回列表第一个
+                preserved_activity_id = self._activity_selector.currentData()
+                self._activity_selector.clear()
+                p = get_palette()
+                for row_index, activity in enumerate(activities):
+                    self._activity_table.setItem(row_index, 0, QTableWidgetItem(str(activity["id"])))
+                    self._activity_table.setItem(row_index, 1, QTableWidgetItem(str(activity["name"])))
+                    self._activity_table.setItem(row_index, 2, QTableWidgetItem(format_datetime(activity["signup_start"])))
+                    self._activity_table.setItem(row_index, 3, QTableWidgetItem(format_datetime(activity["signup_end"])))
+                    signup_mode_text = "实时" if activity.get("signup_mode") == SignupMode.REALTIME.value else "非实时"
+                    allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value)
+                    allocation_text = {
+                        AllocationMode.GREEDY.value: "志愿优先",
+                        AllocationMode.FIRST_COME.value: "先到先得",
+                        AllocationMode.LOTTERY.value: "抽签",
+                        AllocationMode.POINTS.value: "意愿点",
+                    }.get(allocation_mode, "志愿优先")
+                    self._activity_table.setItem(row_index, 4, QTableWidgetItem(signup_mode_text))
+                    self._activity_table.setItem(row_index, 5, QTableWidgetItem(allocation_text))
+                    # Location with prominent styling
+                    location_text = activity.get("location") or "-"
+                    location_label = QLabel(f"📍 {location_text}")
+                    location_label.setStyleSheet(
+                        f"color: {p.accent}; font-weight: 500; padding: 2px 6px; "
+                        f"background: {p.accent_soft}; border-radius: 4px;"
+                    )
+                    location_label.setAlignment(Qt.AlignCenter)
+                    self._activity_table.setCellWidget(row_index, 6, location_label)
+                    # 状态徽章：dot + 文字（参考 HTML 设计）
+                    status_text = format_activity_status(activity)
+                    status_item = make_status_item(status_text)
+                    self._activity_table.setItem(row_index, 7, status_item)
+                    # 行内操作：复制 + 更多下拉（详情/归档/删除）
+                    self._activity_table.setCellWidget(row_index, 8, self._make_row_actions(activity, p))
 
-            # 活动选择器显示模式标签
-            at = activity.get("activity_type", "time_slot")
-            mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
-            self._activity_selector.addItem(f"{activity['name']} [{mode_tag}]", activity["id"])
-        # 恢复之前选中的活动，refresh 后用户仍停在原活动上
-        if preserved_activity_id:
-            for i in range(self._activity_selector.count()):
-                if self._activity_selector.itemData(i) == preserved_activity_id:
-                    self._activity_selector.setCurrentIndex(i)
-                    break
-        self._activity_selector.blockSignals(False)
+                    # 活动选择器显示模式标签
+                    at = activity.get("activity_type", "time_slot")
+                    mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
+                    self._activity_selector.addItem(f"{activity['name']} [{mode_tag}]", activity["id"])
+                # 恢复之前选中的活动，refresh 后用户仍停在原活动上
+                if preserved_activity_id:
+                    for i in range(self._activity_selector.count()):
+                        if self._activity_selector.itemData(i) == preserved_activity_id:
+                            self._activity_selector.setCurrentIndex(i)
+                            break
+        finally:
+            self._activity_selector.blockSignals(False)
+            self._activity_table.blockSignals(False)
         # 显式触发一次 _load_slots，因为重建期间信号被阻塞，未自动加载
         self._load_slots()
 
