@@ -508,6 +508,30 @@ class RemoteRepoMethodTests(unittest.TestCase):
 
         self.assertEqual(users, [{"id": "user1", "username": "alice"}])
 
+    def test_activity_list_hides_unpublished_activities_from_regular_users(self) -> None:
+        from app.api_server import list_activities
+
+        activities = [
+            {"id": "draft1", "name": "草稿", "status": ActivityStatus.DRAFT.value},
+            {"id": "review1", "name": "待审核", "status": ActivityStatus.PENDING_REVIEW.value},
+            {"id": "open1", "name": "开放", "status": ActivityStatus.OPEN.value},
+            {"id": "closed1", "name": "已关闭", "status": ActivityStatus.CLOSED.value},
+            {"id": "archived1", "name": "已归档", "status": ActivityStatus.ARCHIVED.value},
+        ]
+        regular_user = User.create("student", Role.USER)
+        admin = User.create("admin", Role.SUPER_ADMIN)
+
+        with patch("app.api_server.activity_service") as fake_service:
+            fake_service.list_activities.return_value = activities
+            visible_to_user = list_activities(current_user=regular_user)
+            visible_to_admin = list_activities(current_user=admin)
+
+        self.assertEqual(
+            [activity["id"] for activity in visible_to_user],
+            ["open1", "closed1", "archived1"],
+        )
+        self.assertEqual([activity["id"] for activity in visible_to_admin], [activity["id"] for activity in activities])
+
     def test_remote_user_repo_uploads_avatar_file(self) -> None:
         from app.infrastructure.remote_repositories import RemoteUserRepository
 
