@@ -318,6 +318,33 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertTrue(hasattr(repo, "update_avatar"))
         self.assertTrue(hasattr(repo, "update_notification_mode"))
 
+    def test_api_client_login_preserves_profile_fields(self) -> None:
+        from app.infrastructure.api_client import ApiClient
+
+        client = ApiClient("http://localhost:9999")
+
+        def fake_request(method: str, path: str, **kwargs) -> dict:
+            self.assertEqual(method, "POST")
+            self.assertEqual(path, "/auth/login")
+            return {
+                "token": "token1",
+                "user": {
+                    "id": "user1",
+                    "username": "alice",
+                    "role": Role.USER.value,
+                    "status": "approved",
+                    "avatar_path": "avatars/user1.png",
+                    "notification_mode": NotificationMode.EMAIL.value,
+                },
+            }
+
+        client._request = fake_request  # type: ignore[method-assign]
+
+        user = client.login("alice", "pw")
+
+        self.assertEqual(user.avatar_path, "avatars/user1.png")
+        self.assertEqual(user.notification_mode, NotificationMode.EMAIL)
+
     def test_remote_user_repo_uploads_avatar_file(self) -> None:
         from app.infrastructure.remote_repositories import RemoteUserRepository
 
