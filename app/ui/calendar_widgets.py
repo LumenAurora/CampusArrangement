@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +64,7 @@ class _CustomEventStore:
     """管理用户自定义日程的 JSON 持久化存储。"""
 
     _PATH = Path.home() / ".campus_arrangement" / "custom_events.json"
+    _lock = threading.Lock()
 
     @classmethod
     def _ensure_file(cls) -> None:
@@ -72,22 +74,24 @@ class _CustomEventStore:
 
     @classmethod
     def load(cls, user_id: str) -> list[dict]:
-        cls._ensure_file()
-        try:
-            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-        return data.get(user_id, {}).get("events", [])
+        with cls._lock:
+            cls._ensure_file()
+            try:
+                data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            return data.get(user_id, {}).get("events", [])
 
     @classmethod
     def save(cls, user_id: str, events: list[dict]) -> None:
-        cls._ensure_file()
-        try:
-            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-        data.setdefault(user_id, {})["events"] = events
-        cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with cls._lock:
+            cls._ensure_file()
+            try:
+                data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            data.setdefault(user_id, {})["events"] = events
+            cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @classmethod
     def add_event(cls, user_id: str, event: dict) -> None:
@@ -1312,7 +1316,7 @@ class CalendarPanel(QWidget):
         box.setText(msg)
         box.setIcon(QMessageBox.Information)
         box.setStandardButtons(QMessageBox.Ok)
-        box.show()
+        box.exec()
 
     @staticmethod
     def _parse_dt(value: str) -> datetime | None:

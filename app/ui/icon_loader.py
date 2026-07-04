@@ -11,6 +11,7 @@ ICON_USERS = "users"
 ICON_SIGNUP = "signup"
 ICON_RESULTS = "results"
 ICON_CHECKIN = "checkin"
+ICON_NOTIFICATION = "bell"
 
 ICON_NAMES = frozenset({
     ICON_DASHBOARD,
@@ -20,6 +21,7 @@ ICON_NAMES = frozenset({
     ICON_SIGNUP,
     ICON_RESULTS,
     ICON_CHECKIN,
+    ICON_NOTIFICATION,
 })
 
 

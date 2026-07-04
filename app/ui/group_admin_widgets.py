@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -35,7 +36,7 @@ from app.application.group_service import GroupService
 from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import MemberStatus, User
 from app.infrastructure.exporter import export_to_excel
-from app.infrastructure.notifications import notify_by_preference
+from app.infrastructure.notifications import notify_by_preference, notify_user, send_email_async
 from app.infrastructure.repositories import ActivityRepository, GroupRepository
 from app.ui.style import get_palette
 from app.ui.ui_utils import (
@@ -347,16 +348,20 @@ class GroupAdminPanel(QWidget):
         total = len(groups)
         total_members = 0
         pending_total = 0
+        active_groups = 0  # 至少有1个已批准成员的小组数
         for g in groups:
             members = self._repo.list_members(g["id"])
-            total_members += len([m for m in members if m.get("status") == "approved"])
+            approved = len([m for m in members if m.get("status") == "approved"])
+            total_members += approved
             pending_total += len([m for m in members if m.get("status") == "pending"])
+            if approved > 0:
+                active_groups += 1
 
         self._stat_total.set_value(str(total))
         self._stat_members.set_value(str(total_members))
         self._stat_pending.set_value(str(pending_total))
         self._stat_pending.set_subtitle("需要尽快处理" if pending_total > 0 else "")
-        self._stat_active.set_value(str(total))
+        self._stat_active.set_value(str(active_groups))
         # 不覆盖 _title — 保持"活跃小组"标签
 
         # 同步更新待审批徽章
@@ -640,6 +645,20 @@ class GroupAdminPanel(QWidget):
         form.addRow("内容", body_input)
         dialog_layout.addLayout(form)
 
+        # Channel selection
+        channel_group = QGroupBox("发送渠道")
+        channel_layout = QVBoxLayout()
+        channel_layout.setContentsMargins(12, 12, 12, 12)
+        channel_layout.setSpacing(6)
+        in_app_cb = QCheckBox("应用内通知")
+        in_app_cb.setChecked(True)
+        email_cb = QCheckBox("邮件通知")
+        email_cb.setChecked(False)
+        channel_layout.addWidget(in_app_cb)
+        channel_layout.addWidget(email_cb)
+        channel_group.setLayout(channel_layout)
+        dialog_layout.addWidget(channel_group)
+
         btn_row = QHBoxLayout()
         send_btn = QPushButton("发送")
         send_btn.setObjectName("primaryButton")
@@ -661,15 +680,36 @@ class GroupAdminPanel(QWidget):
                 QMessageBox.warning(dialog, "提示", "请输入通知内容。")
                 return
 
+            use_in_app = in_app_cb.isChecked()
+            use_email = email_cb.isChecked()
+
+            if not use_in_app and not use_email:
+                QMessageBox.warning(dialog, "提示", "请至少选择一种发送渠道。")
+                return
+
             sent_count = 0
             for m in approved_members:
-                email = m.get("email", "")
-                pref = m.get("notification_mode", "in_app")
-                notify_by_preference(email, pref, subject, body)
-                sent_count += 1
+                uid = m.get("user_id", "")
+                if use_in_app and uid:
+                    notify_user(
+                        user_id=uid,
+                        subject=subject,
+                        body=body,
+                        sender_id=self._user.id,
+                    )
+                    sent_count += 1
+                if use_email:
+                    email = m.get("email", "")
+                    if email:
+                        send_email_async(email, subject, body)
 
             dialog.accept()
-            QMessageBox.information(self, "发送完成", f"已向 {sent_count} 位成员发送通知。")
+            msg_parts = []
+            if use_in_app:
+                msg_parts.append(f"应用内通知已发送给 {sent_count} 位成员")
+            if use_email:
+                msg_parts.append("邮件已异步发送")
+            QMessageBox.information(self, "发送完成", "。".join(msg_parts))
 
         send_btn.clicked.connect(on_send)
         dialog.exec()

@@ -230,11 +230,15 @@ class SelfCheckInPanel(QWidget):
         activities = self._activity_service.list_activities()
         self._activity_selector.blockSignals(True)
         self._activity_selector.clear()
-        # 只显示已关闭或已归档且支持自助签到的活动（签到仅在排班完成后可用）
-        allowed_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value}
+        # Show CLOSED/ARCHIVED + OPEN with checkin window configured
+        allowed_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value, ActivityStatus.OPEN.value}
         for activity in activities:
-            if activity.get("status") not in allowed_statuses:
+            status = activity.get("status", "draft")
+            if status not in allowed_statuses:
                 continue
+            if status == ActivityStatus.OPEN.value:
+                if not activity.get("checkin_start") and not activity.get("checkin_end"):
+                    continue  # OPEN without checkin window — skip
             mode = activity.get("checkin_mode", "manual")
             try:
                 mode_enum = CheckInMode(mode)
