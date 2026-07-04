@@ -24,6 +24,7 @@ from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
     GroupRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -82,6 +83,7 @@ def main() -> int:
         # 远程模式暂不支持小组功能
         group_repo = None
         group_service = None
+        notification_repo = None
     else:
         activity_repo = ActivityRepository()
         slot_repo = TimeSlotRepository()
@@ -89,6 +91,7 @@ def main() -> int:
         schedule_repo = ScheduleRepository()
         checkin_repo = CheckInRepository()
         group_repo = GroupRepository()
+        notification_repo = NotificationRepository()
 
         activity_service = ActivityService(activity_repo, slot_repo)
         registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
@@ -124,6 +127,7 @@ def main() -> int:
             checkin_service=checkin_service,
             group_service=group_service,
             group_repo=group_repo,
+            notification_repo=notification_repo,
             checkin_repo=checkin_repo,
         )
     window.resize(1100, 700)

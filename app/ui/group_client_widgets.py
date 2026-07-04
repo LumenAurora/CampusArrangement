@@ -149,7 +149,7 @@ class GroupClientPanel(QWidget):
         if reply != QMessageBox.Yes:
             return
         try:
-            self._repo.remove_member(group_id, self._user.id)
+            self._service.leave_group(self._user.id, group_id)
             QMessageBox.information(self, "成功", "已退出小组")
             self.refresh()
         except Exception as exc:

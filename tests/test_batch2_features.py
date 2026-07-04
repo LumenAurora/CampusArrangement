@@ -663,7 +663,8 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertIsNotNone(api.upload)
         self.assertEqual(api.upload[0], "/users/me/avatar")
         self.assertEqual(api.upload[1], "file")
-        self.assertTrue(api.upload[2].endswith("resources/uploads/avatars/user1.png"))
+        from pathlib import Path
+        self.assertTrue(Path(api.upload[2]).as_posix().endswith("resources/uploads/avatars/user1.png"))
 
     def test_remote_user_repo_get_by_id_falls_back_to_me(self) -> None:
         from app.domain.exceptions import PermissionDenied

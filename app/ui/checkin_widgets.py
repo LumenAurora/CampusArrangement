@@ -210,11 +210,15 @@ class CheckInPanel(QWidget):
             set_table_empty(self._table, 6, "暂无活动")
             self._activity_selector.blockSignals(False)
             return
-        # Only show activities with status closed or later (排班完成后才有签到需求)
-        visible_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value}
+        # Show CLOSED/ARCHIVED activities, plus OPEN ones with a configured checkin window
+        visible_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value, ActivityStatus.OPEN.value}
         for activity in activities:
-            if activity.get("status", "draft") not in visible_statuses:
+            status = activity.get("status", "draft")
+            if status not in visible_statuses:
                 continue
+            if status == ActivityStatus.OPEN.value:
+                if not activity.get("checkin_start") and not activity.get("checkin_end"):
+                    continue  # OPEN without checkin window — skip
             status_text = format_activity_status(activity)
             self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
         self._activity_selector.blockSignals(False)
@@ -652,6 +656,8 @@ class CheckInPanel(QWidget):
                 user_id=user_id_item.text(),
                 slot_id=slot_id_item.text(),
             )
+            set_banner(self._message, "success", "已标记缺勤")
+            self._load_results()
         except PermissionDenied as exc:
             set_banner(self._message, "error", str(exc))
         except ValidationError as exc:

@@ -124,6 +124,18 @@ class GroupService:
             raise ValidationError("不能移除小组创建者")
         self._repo.remove_member(group_id, member_user_id)
 
+    def leave_group(self, user_id: str, group_id: str) -> None:
+        """用户主动退出小组。"""
+        group = self._repo.get(group_id)
+        if not group:
+            raise ValidationError("小组不存在")
+        member = self._repo.get_member(group_id, user_id)
+        if not member:
+            raise ValidationError("您不是该小组成员")
+        if user_id == group["owner_id"]:
+            raise ValidationError("小组创建者不能退出，请先转让或删除小组")
+        self._repo.remove_member(group_id, user_id)
+
     def list_members(self, group_id: str) -> list[dict]:
         return self._repo.list_members(group_id)
 
