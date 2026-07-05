@@ -8,6 +8,9 @@ from email.mime.text import MIMEText
 
 from PySide6.QtCore import QObject, QSettings, Signal
 
+from app.domain.models import Notification as NotificationModel
+from app.infrastructure.repositories import NotificationRepository
+
 _logger = logging.getLogger(__name__)
 
 _SETTINGS_ORG = "CampusScheduler"
@@ -158,18 +161,61 @@ def notify(message: str) -> None:
     print(message)
 
 
-def notify_by_preference(user_email: str, user_notification_mode: str, subject: str, body: str) -> None:
-    """根据用户通知偏好发送通知。
+def notify_by_preference(
+    user_id: str,
+    user_email: str,
+    user_notification_mode: str,
+    subject: str,
+    body: str,
+    sender_id: str = "",
+    related_link: str = "",
+) -> None:
+    """根据用户通知偏好发送通知并持久化应用内通知。
 
-    user_notification_mode: "in_app" | "email" | "none"
+    当偏好为 in_app 或 email 时，始终持久化一条应用内通知记录。
+    偏好为 email 时额外发送邮件。偏好为 none 时完全跳过。
     """
     mode = (user_notification_mode or "").lower().strip()
+    if mode == "none":
+        return
+
+    # 始终持久化应用内通知（除非偏好为 none）
+    notify_user(user_id, subject, body, sender_id, related_link)
+
     if mode == "email":
         if not user_email:
-            _logger.warning("用户未设置邮箱，无法发送邮件通知")
+            _logger.warning("用户 %s 未设置邮箱，无法发送邮件通知", user_id)
             return
         send_email_async(user_email, subject, body)
     elif mode == "in_app":
-        notify(f"[{subject}] {body}")
+        _logger.info("应用内通知: [%s] %s -> %s", subject, body[:50], user_id)
     elif mode not in ("", "none"):
         _logger.warning("未知通知模式: %s，跳过通知", user_notification_mode)
+
+
+def notify_user(
+    user_id: str,
+    subject: str,
+    body: str = "",
+    sender_id: str = "",
+    related_link: str = "",
+) -> NotificationModel | None:
+    """创建并持久化一条应用内通知。返回 Notification 对象，失败时返回 None。
+
+    这是所有应用内通知的单一入口：管理员群发、系统自动触发（报名成功/排班结果等）。
+    """
+    notification = NotificationModel.create(
+        user_id=user_id,
+        subject=subject,
+        body=body,
+        sender_id=sender_id,
+        related_link=related_link,
+    )
+    try:
+        repo = NotificationRepository()
+        repo.create(notification)
+        _logger.info("通知已保存: [%s] %s -> %s", subject, body[:50], user_id)
+        return notification
+    except Exception as exc:
+        _logger.exception("通知保存失败: %s", exc)
+        return None

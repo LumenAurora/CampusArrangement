@@ -972,3 +972,105 @@ class GroupRepository:
         """检查用户是否为已审批的小组成员"""
         row = self.get_member(group_id, user_id)
         return row is not None and row.get("status") == "approved"
+
+
+class NotificationRepository:
+    """通知数据访问"""
+
+    def create(self, notification) -> None:
+        """持久化一条通知。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO notifications (id, user_id, subject, body, created_at, "
+                "is_read, sender_id, related_link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    notification.id,
+                    notification.user_id,
+                    notification.subject,
+                    notification.body,
+                    notification.created_at.isoformat(),
+                    1 if notification.is_read else 0,
+                    notification.sender_id,
+                    notification.related_link,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get(self, notification_id: str) -> dict | None:
+        """按ID查询单条通知。"""
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM notifications WHERE id = ?", (notification_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_by_user(
+        self, user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[dict]:
+        """分页查询用户通知列表，按时间倒序。"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM notifications WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def count_unread(self, user_id: str) -> int:
+        """查询用户未读通知数。"""
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM notifications "
+                "WHERE user_id = ? AND is_read = 0",
+                (user_id,),
+            ).fetchone()
+            return int(row["total"]) if row else 0
+        finally:
+            conn.close()
+
+    def mark_as_read(self, notification_id: str) -> None:
+        """标记单条通知为已读。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE notifications SET is_read = 1 WHERE id = ?",
+                (notification_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def mark_all_as_read(self, user_id: str) -> None:
+        """标记用户所有通知为已读。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
+                (user_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_read_by_user(self, user_id: str) -> int:
+        """删除用户所有已读通知。返回删除条数。"""
+        conn = get_connection()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM notifications WHERE user_id = ? AND is_read = 1",
+                (user_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()

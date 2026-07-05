@@ -382,3 +382,35 @@ class GroupMember:
             status=status,
             joined_at=datetime.now(timezone.utc),
         )
+
+
+@dataclass(frozen=True)
+class Notification:
+    """系统通知记录：由管理员批量发送或系统自动生成，用户可在通知中心查看。"""
+    id: str
+    user_id: str           # 接收者
+    subject: str           # 标题
+    body: str              # 正文
+    created_at: datetime
+    is_read: bool = False
+    sender_id: str = ""    # 发送者用户ID（空白=系统）
+    related_link: str = ""  # 可选关联链接（如 activity_id）
+
+    @staticmethod
+    def create(
+        user_id: str,
+        subject: str,
+        body: str,
+        sender_id: str = "",
+        related_link: str = "",
+    ) -> "Notification":
+        return Notification(
+            id=str(uuid4()),
+            user_id=user_id,
+            subject=subject,
+            body=body,
+            created_at=datetime.now(timezone.utc),
+            is_read=False,
+            sender_id=sender_id,
+            related_link=related_link,
+        )

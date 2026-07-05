@@ -289,13 +289,14 @@ class ActivityPanel(QWidget):
         slot_list_layout.addWidget(self._slot_tree)
         self._slot_list_group.setLayout(slot_list_layout)
 
-        # Left column: always use guided (workflow) layout
+        # 读取用户布局偏好：向导式（默认）或平铺式
         p = get_palette()
-        self._layout_mode = FORM_LAYOUT_GUIDED
+        self._layout_mode = get_form_layout_mode()
 
-        # ── 主内容区（卡片列表 + 工作流时间线）─────────────────
+        # ── 主内容区（卡片列表 + 工作流时间线 / 平铺表格）─────
         self._right_widget = QWidget()
-        self._build_right_panel(True)
+        use_guided = self._layout_mode == FORM_LAYOUT_GUIDED
+        self._build_right_panel(use_guided)
 
         header = make_page_header("活动管理", "创建活动、配置时段与报名策略")
 
@@ -1008,6 +1009,14 @@ class ActivityPanel(QWidget):
 
     def refresh(self) -> None:
         self._all_activities = self._service.list_activities()
+
+        # 检测布局模式是否变更，需重建右侧面板（用户可能在设置中切换了平铺/向导模式）
+        current_mode = get_form_layout_mode()
+        if current_mode != self._layout_mode:
+            self._layout_mode = current_mode
+            use_guided = current_mode == FORM_LAYOUT_GUIDED
+            self._build_right_panel(use_guided)
+
         self._apply_filters()
         # 更新小组选择器 — 区分向导/平铺模式
         if self._group_repo and self._guided_panel is not None:
@@ -1600,7 +1609,10 @@ class ActivityPanel(QWidget):
                                        f"排班失败且回滚失败：{sched_err}（回滚错误：{reopen_err}）")
                             self.refresh()
                             return
-                        raise
+                        set_banner(self._activity_message, "warning",
+                                   f"排班失败，活动已重新开放：{sched_err}")
+                        self.refresh()
+                        return
             elif action == "archive":
                 self._service.archive_activity(user=self._user, activity_id=activity_id)
             self.refresh()

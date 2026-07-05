@@ -141,6 +141,20 @@ def init_db() -> None:
                 FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                sender_id TEXT NOT NULL DEFAULT '',
+                related_link TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+                ON notifications(user_id, created_at DESC);
             """
         )
         _ensure_column(conn, "activities", "signup_mode", "signup_mode TEXT NOT NULL DEFAULT 'realtime'")
@@ -189,7 +203,7 @@ def init_db() -> None:
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     # 使用白名单验证表名，防止SQL注入
-    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results", "checkins", "groups", "group_members"}
+    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results", "checkins", "groups", "group_members", "notifications"}
     if table not in allowed_tables:
         raise ValueError(f"不允许的表名: {table}")
     columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]

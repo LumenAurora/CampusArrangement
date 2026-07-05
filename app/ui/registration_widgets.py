@@ -604,7 +604,14 @@ class RegistrationPanel(QWidget):
         activity_status_map = {a["id"]: a.get("status", "") for a in raw_activities}
         # 构建 allocation_mode 映射：用于判断「意愿点」列是否显示数值
         activity_alloc_map = {a["id"]: a.get("allocation_mode", AllocationMode.GREEDY.value) for a in raw_activities}
-        slots = {s["id"]: s for s_list in [self._activity_service.list_slots(aid) for aid in activities] if s_list for s in s_list}
+        slots = {}
+        for aid in activities:
+            try:
+                sl = self._activity_service.list_slots(aid)
+            except Exception:
+                sl = []
+            for s in sl:
+                slots[s["id"]] = s
         self._my_reg_table.clearSpans()
         self._my_reg_table.setRowCount(len(regs))
         for row_index, reg in enumerate(regs):

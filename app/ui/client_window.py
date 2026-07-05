@@ -5,12 +5,13 @@ from app.application.checkin_service import CheckInService
 from app.application.group_service import GroupService
 from app.application.registration_service import RegistrationService
 from app.domain.models import User
-from app.infrastructure.repositories import ActivityRepository, CheckInRepository, GroupRepository, RegistrationRepository, ScheduleRepository, TimeSlotRepository
+from app.infrastructure.repositories import ActivityRepository, CheckInRepository, GroupRepository, NotificationRepository, RegistrationRepository, ScheduleRepository, TimeSlotRepository
 from app.ui.calendar_widgets import CalendarPanel
 from app.ui.dashboard_widgets import DashboardPanel
 from app.ui.group_client_widgets import GroupClientPanel
 from app.ui.icon_loader import load_icon
 from app.ui.my_results_widgets import MyResultsPanel
+from app.ui.notification_widgets import NotificationCenterPanel
 from app.ui.registration_widgets import RegistrationPanel
 from app.ui.self_checkin_widgets import SelfCheckInPanel
 from app.ui.shell import NavigationWindow
@@ -30,6 +31,7 @@ class ClientWindow(NavigationWindow):
         checkin_repo: CheckInRepository,
         group_service: GroupService | None = None,
         group_repo: GroupRepository | None = None,
+        notification_repo: NotificationRepository | None = None,
     ) -> None:
         super().__init__("校园报名与排班系统 - 客户端", user)
 
@@ -42,4 +44,6 @@ class ClientWindow(NavigationWindow):
         ]
         if group_service is not None and group_repo is not None:
             pages.insert(-1, ("groups", "小组", GroupClientPanel(group_service, group_repo, user), load_icon("users")))
+        if notification_repo is not None:
+            pages.append(("notifications", "通知", NotificationCenterPanel(user, notification_repo), load_icon("bell")))
         self.set_pages(pages)
