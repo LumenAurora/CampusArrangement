@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
-from app.domain.models import AllocationMode, MAX_POINTS, ActivityStatus, Registration, RegistrationStatus, SignupMode
+from app.domain.models import AllocationMode, MAX_POINTS, ActivityStatus, Notification, Registration, RegistrationStatus, SignupMode
 from app.infrastructure.db import transaction
-from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, TimeSlotRepository
+from app.infrastructure.repositories import ActivityRepository, NotificationRepository, RegistrationRepository, TimeSlotRepository
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.infrastructure.repositories import GroupRepository
@@ -19,11 +22,13 @@ class RegistrationService:
         reg_repo: RegistrationRepository,
         activity_repo: ActivityRepository,
         group_repo: GroupRepository | None = None,
+        notification_repo: NotificationRepository | None = None,
     ) -> None:
         self._slot_repo = slot_repo
         self._reg_repo = reg_repo
         self._activity_repo = activity_repo
         self._group_repo = group_repo
+        self._notification_repo = notification_repo
 
     def register(self, user_id: str, activity_id: str, slot_id: str, priority: int, points: int = 0) -> Registration:
         if priority < 1:
@@ -105,7 +110,23 @@ class RegistrationService:
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
                 self._reg_repo.create(registration, conn=conn)
+        self._notify_registration_success(user_id, activity)
         return registration
+
+    def _notify_registration_success(self, user_id: str, activity: dict) -> None:
+        if self._notification_repo is None:
+            return
+        try:
+            activity_name = activity.get("name", "活动")
+            notification = Notification.create(
+                user_id=user_id,
+                subject="报名成功",
+                body=f"你已成功报名活动「{activity_name}」。",
+                related_link=str(activity.get("id", "")),
+            )
+            self._notification_repo.create(notification)
+        except Exception as exc:  # noqa: BLE001 - 通知失败不应回滚报名主流程
+            logger.warning("保存报名成功通知失败: %s", exc)
 
     def _validate_points_total_in_txn(self, conn, user_id: str, activity_id: str, points: int) -> None:
         """事务内校验意愿点总数。必须在 BEGIN IMMEDIATE 事务内调用以防止竞态。"""

@@ -25,6 +25,7 @@ from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
     GroupRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -51,11 +52,12 @@ reg_repo = RegistrationRepository()
 schedule_repo = ScheduleRepository()
 checkin_repo = CheckInRepository()
 group_repo = GroupRepository()
+notification_repo = NotificationRepository()
 
 user_service = UserService(user_repo)
 activity_service = ActivityService(activity_repo, slot_repo)
-registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
-scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
+registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo, notification_repo)
+scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo, notification_repo)
 checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
 
 _tokens: dict[str, tuple[str, float]] = {}
@@ -413,6 +415,48 @@ def update_my_settings(payload: SettingsUpdateRequest, current_user: User = Depe
     except Exception as exc:
         _handle_domain_error(exc)
     return {"ok": True, "notification_mode": payload.notification_mode.value}
+
+
+@app.get("/notifications")
+def list_my_notifications(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(_get_current_user),
+) -> list[dict]:
+    """分页获取当前用户的站内通知。"""
+    return notification_repo.list_by_user(current_user.id, limit=max(1, min(limit, 100)), offset=max(0, offset))
+
+
+@app.get("/notifications/unread-count")
+def count_my_unread_notifications(current_user: User = Depends(_get_current_user)) -> dict:
+    """获取当前用户未读通知数。"""
+    return {"count": notification_repo.count_unread(current_user.id)}
+
+
+@app.post("/notifications/{notification_id}/read")
+def mark_my_notification_read(
+    notification_id: str,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    """标记当前用户的一条通知为已读。"""
+    notification = notification_repo.get(notification_id)
+    if not notification or notification.get("user_id") != current_user.id:
+        raise HTTPException(status_code=404, detail="通知不存在")
+    notification_repo.mark_as_read(notification_id)
+    return {"ok": True}
+
+
+@app.post("/notifications/read-all")
+def mark_all_my_notifications_read(current_user: User = Depends(_get_current_user)) -> dict:
+    """标记当前用户全部通知为已读。"""
+    notification_repo.mark_all_as_read(current_user.id)
+    return {"ok": True}
+
+
+@app.delete("/notifications/read")
+def delete_my_read_notifications(current_user: User = Depends(_get_current_user)) -> dict:
+    """删除当前用户全部已读通知。"""
+    return {"count": notification_repo.delete_read_by_user(current_user.id)}
 
 
 @app.post("/users/me/avatar")

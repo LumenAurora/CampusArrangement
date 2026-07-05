@@ -276,3 +276,25 @@ class RemoteUserRepository:
         # 远程模式：调用 PUT /users/me/settings 更新通知偏好
         mode_val = mode.value if hasattr(mode, "value") else str(mode)
         self._api.put("/users/me/settings", json={"notification_mode": mode_val})
+
+
+class RemoteNotificationRepository:
+    def __init__(self, api_client: ApiClient) -> None:
+        self._api = api_client
+
+    def list_by_user(self, user_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
+        return self._api.get("/notifications", params={"limit": limit, "offset": offset})
+
+    def count_unread(self, user_id: str) -> int:
+        payload = self._api.get("/notifications/unread-count")
+        return int(payload.get("count", 0))
+
+    def mark_as_read(self, notification_id: str) -> None:
+        self._api.post(f"/notifications/{notification_id}/read", json={})
+
+    def mark_all_as_read(self, user_id: str) -> None:
+        self._api.post("/notifications/read-all", json={})
+
+    def delete_read_by_user(self, user_id: str) -> int:
+        payload = self._api.delete("/notifications/read")
+        return int(payload.get("count", 0))
