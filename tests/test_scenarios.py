@@ -16,6 +16,7 @@ from app.infrastructure.exporter import export_to_excel
 from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -47,15 +48,22 @@ class ScenarioTests(unittest.TestCase):
         self.reg_repo = RegistrationRepository()
         self.schedule_repo = ScheduleRepository()
         self.checkin_repo = CheckInRepository()
+        self.notification_repo = NotificationRepository()
 
         self.user_service = UserService(self.user_repo)
         self.activity_service = ActivityService(self.activity_repo, self.slot_repo)
-        self.registration_service = RegistrationService(self.slot_repo, self.reg_repo, self.activity_repo)
+        self.registration_service = RegistrationService(
+            self.slot_repo,
+            self.reg_repo,
+            self.activity_repo,
+            notification_repo=self.notification_repo,
+        )
         self.scheduling_service = SchedulingService(
             self.reg_repo,
             self.slot_repo,
             self.schedule_repo,
             self.activity_repo,
+            self.notification_repo,
         )
         self.checkin_service = CheckInService(self.checkin_repo, self.schedule_repo, self.activity_repo)
 
@@ -92,10 +100,18 @@ class ScenarioTests(unittest.TestCase):
 
         self.registration_service.register(user_a.id, activity.id, slot1.id, priority=1)
         self.registration_service.register(user_b.id, activity.id, slot2.id, priority=1)
+        self.assertEqual(self.notification_repo.count_unread(user_a.id), 1)
+        self.assertEqual(self.notification_repo.count_unread(user_b.id), 1)
 
         self.activity_service.close_activity(admin, activity.id)
         assigned = self.scheduling_service.run(activity.id)
         self.assertEqual(assigned, 2)
+        self.assertEqual(self.notification_repo.count_unread(user_a.id), 2)
+        self.assertEqual(self.notification_repo.count_unread(user_b.id), 2)
+        self.assertTrue(any(
+            row["subject"] == "排班结果"
+            for row in self.notification_repo.list_by_user(user_a.id)
+        ))
         rows = self.schedule_repo.list_by_activity(activity.id)
         self.assertEqual(len(rows), 2)
         self.assertEqual({row["user_id"] for row in rows}, {user_a.id, user_b.id})

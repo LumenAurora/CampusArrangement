@@ -354,7 +354,7 @@ class NavigationWindow(QMainWindow):
         role_text = {
             "super_admin": "超级管理员",
             "organizer": "组织者",
-            "student": "学生",
+            "user": "学生",
         }.get(user.role.value, user.role.value)
         menu.setTitle(f"{user.username}  ·  {role_text}")
 
