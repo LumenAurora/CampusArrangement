@@ -172,8 +172,11 @@ class NavigationWindow(QMainWindow):
         self._anim2.setEndValue(target)
         self._anim2.start()
 
-        # 关键修复：动画结束后触发当前页面重排，让其内的表格
-        # 按 nav 收起后释放的宽度重新计算几何，避免横向溢出/滚动条残留。
+        # 动画结束后触发页面重排，先断开旧连接避免回调累积
+        try:
+            self._anim2.finished.disconnect(self._on_sidebar_anim_finished)
+        except (TypeError, RuntimeError):
+            pass
         self._anim2.finished.connect(self._on_sidebar_anim_finished)
 
         # 更新按钮箭头

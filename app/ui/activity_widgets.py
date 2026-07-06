@@ -1884,7 +1884,7 @@ class ActivityPanel(QWidget):
             batch_end = self._batch_end_date.dateTime().toPython()
             interval_text = self._batch_interval.currentText()
             day_of_week_idx = self._batch_day_of_week.currentIndex()
-            daily_start_time = self._batch_start_time.time()
+            daily_start_time = self._batch_start_time.dateTime().toPython().time()
             duration_hours = self._batch_duration.value()
             capacity = self._batch_capacity.value()
             position_name = self._batch_position_name.text().strip()
