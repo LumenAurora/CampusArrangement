@@ -571,21 +571,20 @@ def test_wf10_multi_slot_registration(qapp, services):
     assert r_a.status.value == "pending"
     r_b = svc["reg_svc"].register(test_user.id, activity.id, slot_b.id, priority=1)
     assert r_b.status.value == "pending"
-    # Cleanup: cancel registrations for this test user
-    svc["reg_svc"].cancel(test_user.id, r_a.id)
-    svc["reg_svc"].cancel(test_user.id, r_b.id)
 
-    # 不能重复报同一 slot
-    from app.domain.exceptions import ConflictError
+    # 不能重复报同一 slot（ValidationError from application check）
+    from app.domain.exceptions import ValidationError
     try:
         svc["reg_svc"].register(test_user.id, activity.id, slot_a.id, priority=1)
         assert False, "Should reject duplicate slot registration"
-    except ConflictError:
+    except ValidationError:
         pass
 
     svc["activity_svc"].close_activity(svc["admin"], activity.id)
     count = svc["sched_svc"].run(activity.id)
-    assert count >= 1
+    assert count >= 1, f"Scheduling produced {count} results (expected >=1)"
+
+    # ASSIGNED registrations cannot be cancelled after scheduling — skip cleanup
 
     print("  PASS: wf10 — multi-slot registration + duplicate prevention + scheduling")
 
