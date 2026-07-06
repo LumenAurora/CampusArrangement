@@ -45,7 +45,17 @@ class _StatCard(QFrame):
         self.setObjectName("statCard")
         self.setProperty("accentColor", accent_color)
         self.setFixedHeight(100)
-        self._accent_color = accent_color
+
+        p = get_palette()
+        color = getattr(p, accent_color, p.accent)
+        self.setStyleSheet(f"""
+            QFrame#statCard {{
+                background: {p.bg_card};
+                border: 1px solid {p.border_light};
+                border-left: 4px solid {color};
+                border-radius: 16px;
+            }}
+        """)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 16, 20, 16)
@@ -62,16 +72,11 @@ class _StatCard(QFrame):
 
         layout.addStretch(1)
         self.setLayout(layout)
-        self.refresh_theme()
 
     def update_value(self, value: str, accent_color: str) -> None:
         self._value_label.setText(str(value))
-        self._accent_color = accent_color
-        self.refresh_theme()
-
-    def refresh_theme(self) -> None:
         p = get_palette()
-        color = getattr(p, self._accent_color, p.accent)
+        color = getattr(p, accent_color, p.accent)
         self.setStyleSheet(f"""
             QFrame#statCard {{
                 background: {p.bg_card};
@@ -87,6 +92,14 @@ class _ActivityInfoCard(QFrame):
 
     def __init__(self) -> None:
         super().__init__()
+        p = get_palette()
+        self.setStyleSheet(f"""
+            QFrame#activityInfoCard {{
+                background: {p.bg_card};
+                border: 1px solid {p.border_light};
+                border-radius: 12px;
+            }}
+        """)
         self.setObjectName("activityInfoCard")
 
         self._form = QFormLayout()
@@ -110,31 +123,6 @@ class _ActivityInfoCard(QFrame):
 
         self.setLayout(self._form)
         self.setVisible(False)
-        self.refresh_theme()
-
-    def refresh_theme(self) -> None:
-        p = get_palette()
-        self.setStyleSheet(f"""
-            QFrame#activityInfoCard {{
-                background: {p.bg_card};
-                border: 1px solid {p.border_light};
-                border-radius: 12px;
-            }}
-            QFrame#activityInfoCard QLabel {{
-                background: transparent;
-                color: {p.text_primary};
-                border: none;
-            }}
-        """)
-        for label in (
-            self._name_label,
-            self._location_label,
-            self._status_label,
-            self._alloc_label,
-            self._signup_label,
-            self._signup_time_label,
-        ):
-            label.setStyleSheet(f"background: transparent; color: {p.text_primary}; border: none;")
 
     def update_info(self, activity: dict | None) -> None:
         if not activity:
@@ -331,13 +319,6 @@ class SchedulingPanel(QWidget):
         self._activity_selector.currentIndexChanged.connect(self._load_results)
         self._result_table.cellDoubleClicked.connect(self._on_result_double_clicked)
         self.refresh()
-
-    def refresh_theme(self) -> None:
-        self._stat_assigned.refresh_theme()
-        self._stat_slots.refresh_theme()
-        self._stat_fill.refresh_theme()
-        self._activity_info.refresh_theme()
-        self._activity_selector.update()
 
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()

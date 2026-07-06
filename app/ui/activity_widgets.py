@@ -115,14 +115,13 @@ class _CapacityBar(QWidget):
 
 
 class ActivityPanel(QWidget):
-    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None, group_repo=None, reg_repo: RegistrationRepository | None = None) -> None:
+    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None, group_repo=None) -> None:
         super().__init__()
         self._service = activity_service
         self._user = user
         self._scheduling_service = scheduling_service
         self._activity_repo = activity_repo
         self._group_repo = group_repo
-        self._reg_repo = reg_repo
 
         self._guided_panel = None  # 仅在向导模式下初始化
 
@@ -349,10 +348,10 @@ class ActivityPanel(QWidget):
         dialog.setMinimumWidth(580)
         dialog.setMinimumHeight(600)
         p = get_palette()
-        dialog.setStyleSheet(f"QDialog {{ background: {p.bg_base}; }}")
+        dialog.setStyleSheet(f"QDialog {{ background: {p.bg_card}; }}")
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         # 嵌入 GuidedActivityPanel
@@ -1215,14 +1214,7 @@ class ActivityPanel(QWidget):
             return
 
         for i, a in enumerate(activities):
-            reg_count = 0
-            if self._reg_repo:
-                try:
-                    regs = self._reg_repo.list_by_activity(a["id"])
-                    reg_count = sum(1 for r in regs if r.get("status") not in ("cancelled", "not_assigned"))
-                except Exception:
-                    pass
-            card = ActivityCard(a, reg_count=reg_count)
+            card = ActivityCard(a)
             card.mousePressEvent = lambda e, aid=a["id"]: self._on_card_clicked(aid)
             self._card_layout.insertWidget(i, card)
         self._card_layout.addStretch()
@@ -1892,7 +1884,7 @@ class ActivityPanel(QWidget):
             batch_end = self._batch_end_date.dateTime().toPython()
             interval_text = self._batch_interval.currentText()
             day_of_week_idx = self._batch_day_of_week.currentIndex()
-            daily_start_time = self._batch_start_time.dateTime().toPython().time()
+            daily_start_time = self._batch_start_time.time()
             duration_hours = self._batch_duration.value()
             capacity = self._batch_capacity.value()
             position_name = self._batch_position_name.text().strip()

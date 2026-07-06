@@ -263,7 +263,7 @@ class CheckInService:
         self._check_owner_or_admin(user, activity)
         if activity.get("checkin_mode") not in (CheckInMode.SELF_CODE.value, CheckInMode.QRCODE.value):
             raise ValidationError("该活动签到模式不支持生成签到码")
-        code = secrets.token_hex(8).upper()
+        code = secrets.token_hex(4).upper()
         self._activity_repo.update_checkin_code(activity_id, code)
         # Re-read the activity to get the actual stored code.
         # In remote mode, the server generates its own code and ignores

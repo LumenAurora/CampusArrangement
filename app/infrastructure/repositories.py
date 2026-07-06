@@ -548,19 +548,20 @@ class RegistrationRepository:
                 conn.close()
 
     def reset_for_rescheduling(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
-        """将 ASSIGNED / NOT_ASSIGNED / CONFIRMED 状态的报名重置为 PENDING，以便重新排班。"""
-        reset_statuses = (
-            RegistrationStatus.NOT_ASSIGNED.value,
-            RegistrationStatus.ASSIGNED.value,
-            RegistrationStatus.CONFIRMED.value,
-        )
-        sql = "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?, ?)"
-        params = (RegistrationStatus.PENDING.value, activity_id, *reset_statuses)
+        """将 ASSIGNED / NOT_ASSIGNED 状态的报名重置为 PENDING，以便重新排班。
+        不触碰 CONFIRMED 等已确认状态。"""
+        reset_statuses = (RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value)
         if conn is not None:
-            conn.execute(sql, params)
+            conn.execute(
+                "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
+                (RegistrationStatus.PENDING.value, activity_id, *reset_statuses),
+            )
         else:
             with transaction() as c:
-                c.execute(sql, params)
+                c.execute(
+                    "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
+                    (RegistrationStatus.PENDING.value, activity_id, *reset_statuses),
+                )
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
         conn = get_connection()
