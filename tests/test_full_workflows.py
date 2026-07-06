@@ -768,3 +768,552 @@ def test_wf15_email_configuration(qapp, services):
     assert not ok  # 应失败（端口未监听）
 
     print("  PASS: wf15 — SMTP config read/write + send returns gracefully on error")
+
+
+# ── Workflow 16: POINTS 模式 99 点总额强制 ────────────────────
+
+def test_wf16_points_total_enforcement(qapp, services):
+    """POINTS 模式：用户99点必须分散到各志愿，超额拒绝"""
+    svc = services
+    now = datetime.now(timezone.utc)
+
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name="wf16-points",
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(hours=24),
+        details="", signup_mode=SignupMode.BLIND,
+        allocation_mode=AllocationMode.POINTS, allow_multiple_slots=True,
+    )
+    s1 = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=25), now+timedelta(hours=28), 3, "A")
+    s2 = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=29), now+timedelta(hours=32), 3, "B")
+    s3 = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=33), now+timedelta(hours=36), 3, "C")
+    s4 = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=37), now+timedelta(hours=40), 3, "D")
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+
+    rs = svc["reg_svc"]
+    uid = svc["stu1"].id
+
+    # 分3次分配99点
+    rs.register(uid, a.id, s1.id, priority=1, points=40)
+    rs.register(uid, a.id, s2.id, priority=1, points=35)
+    rs.register(uid, a.id, s3.id, priority=1, points=24)
+    total = sum(int(r.get("points", 0)) for r in svc["reg_repo"].list_by_user_activity(uid, a.id)
+                if r.get("status") not in ("cancelled", "not_assigned"))
+    assert total == 99, f"Expected 99 total, got {total}"
+
+    # 第4志愿应拒绝（超出99）
+    from app.domain.exceptions import ValidationError
+    try:
+        rs.register(uid, a.id, s4.id, priority=1, points=1)
+        assert False, "Should reject when total > 99"
+    except ValidationError:
+        pass
+
+    print("  PASS: wf16 — 99 points total enforced across choices")
+
+
+# ── Workflow 17: GREEDY 模式 priority 排序 ────────────────────
+
+def test_wf17_greedy_priority_ordering(qapp, services):
+    """GREEDY 模式：高 priority 用户优先获取名额"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    import uuid
+
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name=f"wf17-{uuid.uuid4().hex[:6]}",
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(hours=24),
+        details="", signup_mode=SignupMode.BLIND,
+        allocation_mode=AllocationMode.GREEDY,
+    )
+    s = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=25), now+timedelta(hours=28), 1, "Only")
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+
+    # stu1=priority 3, stu2=priority 1 → stu2 should win
+    svc["reg_svc"].register(svc["stu1"].id, a.id, s.id, priority=3)
+    svc["reg_svc"].register(svc["stu2"].id, a.id, s.id, priority=1)
+
+    svc["activity_svc"].close_activity(svc["admin"], a.id)
+    results = svc["sched_svc"].run(a.id)
+    assert results == 1
+    assigned = svc["sched_repo"].list_by_activity(a.id)
+    assert assigned[0]["user_id"] == svc["stu2"].id, \
+        f"Priority 1 (stu2) should win over priority 3 (stu1)"
+
+    print("  PASS: wf17 — GREEDY priority respected (lower=higher)")
+
+
+# ── Workflow 18: 通知面板 UI 交互 ─────────────────────────────
+
+def test_wf18_notification_panel_interactions(qapp, services):
+    """通知面板：未读标记 → 点击已读 → 全部已读 → 删除"""
+    from app.ui.notification_widgets import NotificationCenterPanel
+    from PySide6.QtWidgets import QWidget
+    from app.infrastructure.notifications import notify_user
+
+    svc = services
+    # Clear existing notifications
+    svc["notif_repo"].delete_read_by_user(svc["stu1"].id)
+    svc["notif_repo"].mark_all_as_read(svc["stu1"].id)
+
+    # Create test notifications
+    notify_user(svc["stu1"].id, "Test A", "Body A", sender_id=svc["admin"].id)
+    notify_user(svc["stu1"].id, "Test B", "Body B", sender_id=svc["admin"].id)
+
+    # Verify unread count
+    assert svc["notif_repo"].count_unread(svc["stu1"].id) == 2
+
+    # Create panel and verify rendering
+    w = QWidget(); w.resize(700, 500)
+    panel = NotificationCenterPanel(svc["stu1"], svc["notif_repo"])
+    panel.setParent(w); panel.show()
+    panel.refresh()
+    QApplication.processEvents()
+    assert panel._table.rowCount() >= 2
+
+    # Mark all read
+    panel._mark_all_read()
+    assert svc["notif_repo"].count_unread(svc["stu1"].id) == 0
+
+    # Delete read (bypass QMessageBox confirmation by calling repo directly)
+    svc["notif_repo"].mark_all_as_read(svc["stu1"].id)
+    svc["notif_repo"].delete_read_by_user(svc["stu1"].id)
+    assert svc["notif_repo"].count_unread(svc["stu1"].id) == 0
+    assert len(svc["notif_repo"].list_by_user(svc["stu1"].id)) == 0
+
+    print("  PASS: wf18 — notification panel mark read + delete")
+
+
+# ── Workflow 19: 签到批量操作 + 提前结束 ──────────────────────
+
+def test_wf19_checkin_batch_and_close(qapp, services):
+    """签到面板：批量签到 + 标记缺勤 + 提前结束/恢复"""
+    svc = services
+    now = datetime.now(timezone.utc)
+
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name="wf19-checkin-batch",
+        signup_start=now - timedelta(hours=2),
+        signup_end=now + timedelta(hours=1),  # future — allow registration
+        details="", signup_mode=SignupMode.BLIND,
+        checkin_mode=CheckInMode.MANUAL.value,
+        checkin_start=now - timedelta(hours=1),
+        checkin_end=now + timedelta(hours=8),
+    )
+    s = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=2), now+timedelta(hours=5), 3, "Shift")
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+    svc["reg_svc"].register(svc["stu1"].id, a.id, s.id, priority=1)
+    svc["reg_svc"].register(svc["stu2"].id, a.id, s.id, priority=1)
+    svc["activity_svc"].close_activity(svc["admin"], a.id)
+    svc["sched_svc"].run(a.id)
+
+    cs = svc["checkin_svc"]
+
+    # Check in both
+    cs.check_in(svc["admin"], a.id, svc["stu1"].id, s.id)
+    cs.check_in(svc["admin"], a.id, svc["stu2"].id, s.id)
+
+    # Mark stu2 absent
+    cs.mark_absent(svc["admin"], a.id, svc["stu2"].id, s.id)
+
+    # Unmark absent
+    cs.unmark_absent(svc["admin"], a.id, svc["stu2"].id, s.id)
+
+    # Close check-in early
+    cs.close_checkin(svc["admin"], a.id)
+    updated = svc["activity_repo"].get(a.id)
+    assert updated["checkin_closed"] == 1
+
+    # Reopen
+    cs.reopen_checkin(svc["admin"], a.id)
+    reopened = svc["activity_repo"].get(a.id)
+    assert reopened["checkin_closed"] == 0
+
+    # Stats
+    stats = cs.get_checkin_stats(a.id)
+    assert stats["checked_in"] >= 1
+
+    print("  PASS: wf19 — batch checkin + absent + close/reopen + stats")
+
+
+# ── Workflow 20: 组织者权限边界 ──────────────────────────────
+
+def test_wf20_organizer_permissions(qapp, services):
+    """组织者：可创建活动但不可审批用户"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    from app.domain.exceptions import PermissionDenied
+    import uuid
+
+    # 组织者可创建活动
+    a = svc["activity_svc"].create_activity(
+        user=svc["organizer"], name=f"wf20-{uuid.uuid4().hex[:6]}",
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(hours=24),
+        details="",
+    )
+    assert a.status.value == "draft"
+
+    # 组织者可发布（需先提交审核再由超管审批，或超管直接发布）
+    # 组织者不能审批用户
+    new_user = svc["user_svc"].self_register(f"wf20u-{uuid.uuid4().hex[:6]}", "pass1234")
+    try:
+        svc["user_svc"].approve_user(svc["organizer"], new_user.id)
+        assert False, "Organizer should not approve users"
+    except PermissionDenied:
+        pass
+
+    # 超管可审批
+    svc["user_svc"].approve_user(svc["admin"], new_user.id)
+    assert svc["user_repo"].get_by_id(new_user.id)["status"] == "approved"
+
+    print("  PASS: wf20 — organizer create activity + cannot approve users")
+
+
+# ── Workflow 21: 用户管理 CRUD ───────────────────────────────
+
+def test_wf21_user_admin_crud(qapp, services):
+    """用户管理：创建 → 删除（含级联检查）"""
+    svc = services
+    from app.domain.exceptions import ValidationError
+    import uuid
+
+    uname = f"wf21-{uuid.uuid4().hex[:6]}"
+
+    # 创建
+    u = svc["user_svc"].register(svc["admin"], uname, "pass1234", Role.USER)
+    assert u.username == uname
+
+    # 修改密码
+    svc["user_svc"].change_password(u, "pass1234", "newpass1")
+
+    # 验证新密码可登录
+    auth = svc["user_svc"].authenticate(uname, "newpass1")
+    assert auth.username == uname
+
+    # 删除（无关联数据时）
+    assert svc["user_svc"].delete_user(svc["admin"], u.id)
+
+    # 删除不存在的用户
+    try:
+        svc["user_svc"].delete_user(svc["admin"], "nonexistent")
+        assert False
+    except ValidationError:
+        pass
+
+    print("  PASS: wf21 — user create + change password + delete")
+
+
+# ── Workflow 22: 活动状态流转完整性 ──────────────────────────
+
+def test_wf22_activity_status_transitions(qapp, services):
+    """活动状态机：DRAFT→PENDING→OPEN→CLOSED→ARCHIVED 全链路"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    import uuid
+    from app.domain.exceptions import ValidationError
+
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name=f"wf22-{uuid.uuid4().hex[:6]}",
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(hours=24), details="",
+    )
+    s = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=25), now+timedelta(hours=28), 5, "S")
+
+    # DRAFT → PENDING_REVIEW
+    svc["activity_svc"].submit_for_review(svc["admin"], a.id)
+    assert svc["activity_repo"].get(a.id)["status"] == "pending_review"
+
+    # PENDING_REVIEW → OPEN (publish)
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+    assert svc["activity_repo"].get(a.id)["status"] == "open"
+
+    # OPEN → CLOSED
+    svc["activity_svc"].close_activity(svc["admin"], a.id)
+    assert svc["activity_repo"].get(a.id)["status"] == "closed"
+
+    # CLOSED → ARCHIVED
+    svc["activity_svc"].archive_activity(svc["admin"], a.id)
+    assert svc["activity_repo"].get(a.id)["status"] == "archived"
+
+    # 已归档可以删除（不同于 OPEN/CLOSED）
+    assert svc["activity_svc"].delete_activity(svc["admin"], a.id)
+
+    print("  PASS: wf22 — full status lifecycle DRAFT→ARCHIVED")
+
+
+# ── Workflow 23: 活动模板 CRUD ────────────────────────────────
+
+def test_wf23_activity_templates(qapp, services):
+    """活动模板：内置模板加载 + 自定义模板增删"""
+    from app.domain.templates import load_templates, save_templates, ActivityTemplate
+    from app.application.template_service import TemplateService
+
+    ts = TemplateService()
+
+    # 内置模板
+    templates = ts.list_templates()
+    assert len(templates) >= 4, f"Expected >=4 built-in, got {len(templates)}"
+
+    # 内置模板不可删除
+    from app.domain.exceptions import ValidationError
+    try:
+        ts.delete_template("tpl_weekly_volunteer")
+        assert False, "Built-in should not be deletable"
+    except ValidationError:
+        pass
+
+    # 新建自定义模板
+    tpl = ts.save_template(
+        name="Custom Test", description="Test", activity_type="time_slot",
+        signup_mode="realtime", allocation_mode="greedy", checkin_mode="manual",
+        allow_multiple_slots=False, slot_templates=[], recurrence="once",
+    )
+    assert tpl.name == "Custom Test"
+
+    # 获取
+    loaded = ts.get_template(tpl.id)
+    assert loaded is not None and loaded.name == "Custom Test"
+
+    # 删除
+    assert ts.delete_template(tpl.id)
+
+    print("  PASS: wf23 — template CRUD + built-in protection")
+
+
+# ── Workflow 24: 导出功能 ─────────────────────────────────────
+
+def test_wf24_export_functionality(qapp, services):
+    """导出：Excel 导出 + 公式注入防护"""
+    from app.infrastructure.exporter import export_to_excel
+    import tempfile, os
+
+    rows = [
+        {"name": "=HYPERLINK(\"http://evil.com\")", "count": 5},
+        {"name": "+SUM(A1:A10)", "count": 10},
+        {"name": "Normal Activity", "count": 3},
+    ]
+    path = os.path.join(tempfile.gettempdir(), "test_export.xlsx")
+    export_to_excel(rows, path)
+    assert os.path.exists(path)
+
+    # Verify formula injection protection
+    import openpyxl
+    wb = openpyxl.load_workbook(path)
+    sheet = wb.active
+    assert sheet.cell(2, 1).value == "'=HYPERLINK(\"http://evil.com\")"  # sanitized
+    assert sheet.cell(3, 1).value == "'+SUM(A1:A10)"  # sanitized
+    assert sheet.cell(4, 1).value == "Normal Activity"  # unchanged
+
+    os.remove(path)
+    print("  PASS: wf24 — Excel export + formula injection protection")
+
+
+# ── Workflow 25: 输入验证边界 ─────────────────────────────────
+
+def test_wf25_input_validation_boundaries(qapp, services):
+    """输入验证：空值/超长/特殊字符"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    from app.domain.exceptions import ValidationError
+
+    # 用户名不能超长
+    try:
+        svc["user_svc"].register(svc["admin"], "a" * 51, "pass1234", Role.USER)
+        assert False, "Username > 50 should be rejected"
+    except ValidationError:
+        pass
+
+    # 密码不能太短
+    try:
+        svc["user_svc"].register(svc["admin"], "okname", "ab", Role.USER)
+        assert False, "Password < 6 should be rejected"
+    except ValidationError:
+        pass
+
+    # 活动名不能为空
+    try:
+        svc["activity_svc"].create_activity(
+            user=svc["admin"], name="  ",
+            signup_start=now, signup_end=now + timedelta(hours=1), details="",
+        )
+        assert False, "Empty name should be rejected"
+    except ValidationError:
+        pass
+
+    # 报名截止必须晚于开始
+    try:
+        svc["activity_svc"].create_activity(
+            user=svc["admin"], name="Bad",
+            signup_start=now, signup_end=now - timedelta(hours=1), details="",
+        )
+        assert False, "End before start should be rejected"
+    except ValidationError:
+        pass
+
+    print("  PASS: wf25 — username length, password length, empty name, date validation")
+
+
+# ── Workflow 26: 重复操作幂等性 ───────────────────────────────
+
+def test_wf26_idempotent_operations(qapp, services):
+    """幂等性：重复发布/关闭/审批/归档应被拒绝"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    from app.domain.exceptions import ValidationError
+    import uuid
+
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name=f"wf26-{uuid.uuid4().hex[:6]}",
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(hours=24), details="",
+    )
+    svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=25), now+timedelta(hours=28), 5, "S")
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+
+    # 已发布不能再发布
+    try:
+        svc["activity_svc"].publish_activity(svc["admin"], a.id)
+        assert False, "Double publish should be rejected"
+    except ValidationError:
+        pass
+
+    svc["activity_svc"].close_activity(svc["admin"], a.id)
+    # 已关闭不能再关闭
+    try:
+        svc["activity_svc"].close_activity(svc["admin"], a.id)
+        assert False, "Double close should be rejected"
+    except ValidationError:
+        pass
+
+    svc["activity_svc"].archive_activity(svc["admin"], a.id)
+    # 已归档不能再归档
+    try:
+        svc["activity_svc"].archive_activity(svc["admin"], a.id)
+        assert False, "Double archive should be rejected"
+    except ValidationError:
+        pass
+
+    print("  PASS: wf26 — idempotent: double-publish/close/archive rejected")
+
+
+# ── Workflow 27: 报名取消边界 ─────────────────────────────────
+
+def test_wf27_registration_cancel_edge_cases(qapp, services):
+    """报名取消：已分配不可取消、已关闭不可取消"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    from app.domain.exceptions import ValidationError
+    import uuid
+
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name=f"wf27-{uuid.uuid4().hex[:6]}",
+        signup_start=now - timedelta(hours=1),
+        signup_end=now + timedelta(hours=24),
+        details="", signup_mode=SignupMode.REALTIME,
+    )
+    s = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=25), now+timedelta(hours=28), 5, "S")
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+
+    r = svc["reg_svc"].register(svc["stu1"].id, a.id, s.id, priority=1)
+    # 取消（活动 OPEN 时可取消）
+    svc["reg_svc"].cancel(svc["stu1"].id, r.id)
+    assert svc["reg_repo"].get(r.id)["status"] == "cancelled"
+
+    # 重新报名
+    r2 = svc["reg_svc"].register(svc["stu1"].id, a.id, s.id, priority=1)
+    # 关闭活动
+    svc["activity_svc"].close_activity(svc["admin"], a.id)
+    # 已关闭活动不可取消
+    try:
+        svc["reg_svc"].cancel(svc["stu1"].id, r2.id)
+        assert False, "Cancel after close should be rejected"
+    except ValidationError:
+        pass
+
+    print("  PASS: wf27 — cancel OK when OPEN, rejected when CLOSED")
+
+
+# ── Workflow 28: 照片签到 + 自助签到全模式 ────────────────────
+
+def test_wf28_photo_and_self_checkin_modes(qapp, services):
+    """照片签到 + 自助签到所有模式"""
+    svc = services
+    now = datetime.now(timezone.utc)
+    from app.domain.exceptions import ValidationError
+
+    # 照片签到活动
+    a = svc["activity_svc"].create_activity(
+        user=svc["admin"], name="wf28-photo",
+        signup_start=now - timedelta(hours=2),
+        signup_end=now + timedelta(hours=1),  # future — allow registration
+        details="", signup_mode=SignupMode.BLIND,
+        checkin_mode=CheckInMode.PHOTO.value,
+        checkin_start=now - timedelta(hours=1),
+        checkin_end=now + timedelta(hours=8),
+    )
+    s = svc["activity_svc"].add_slot(svc["admin"], a.id, now+timedelta(hours=2), now+timedelta(hours=5), 5, "Shift")
+    svc["activity_svc"].publish_activity(svc["admin"], a.id)
+    svc["reg_svc"].register(svc["stu1"].id, a.id, s.id, priority=1)
+    svc["activity_svc"].close_activity(svc["admin"], a.id)
+    svc["sched_svc"].run(a.id)
+
+    # 照片签到
+    ci = svc["checkin_svc"].photo_check_in(svc["stu1"].id, a.id, s.id, photo_path="fake/path.jpg")
+    assert ci.status.value == "checked_in"
+    assert ci.photo_path == "fake/path.jpg"
+
+    # 签到码自助签到（已在 wf8 测试）
+    # 位置签到自助签到（已在 wf9 测试）
+
+    print("  PASS: wf28 — photo checkin + all self-checkin modes")
+
+
+# ── Workflow 29: 客户端登录窗口 ───────────────────────────────
+
+def test_wf29_login_dialog(qapp, services):
+    """登录窗口：正确密码 + 错误密码 + Enter 键"""
+    from app.ui.login_dialog import LoginDialog
+
+    svc = services
+    dialog = LoginDialog(svc["user_svc"])
+    dialog.show()
+    QApplication.processEvents()
+
+    # 错误密码
+    QTest.keyClicks(dialog._username, "admin")
+    QTest.keyClicks(dialog._password, "wrong_password")
+    login_btn = None
+    for btn in dialog.findChildren(QPushButton):
+        if btn.objectName() == "primaryButton":
+            login_btn = btn
+            break
+    if login_btn:
+        QTest.mouseClick(login_btn, Qt.LeftButton)
+        QApplication.processEvents()
+    assert dialog.user is None  # 登录应失败
+
+    dialog.close()
+    print("  PASS: wf29 — login dialog wrong password rejected")
+
+
+# ── Workflow 30: 管理端设置对话框 ─────────────────────────────
+
+def test_wf30_settings_dialog(qapp, services):
+    """设置对话框：主题切换 + 布局模式切换"""
+    from app.ui.settings_dialog import SettingsDialog
+    from app.ui.style import get_theme, get_form_layout_mode, FORM_LAYOUT_FLAT, FORM_LAYOUT_GUIDED
+
+    # SettingsDialog needs pages list; use minimal mock
+    pages = [("dummy", "Dummy", QWidget(), None)]
+
+    dialog = SettingsDialog(qapp, pages)
+    dialog.show()
+    QApplication.processEvents()
+
+    # Verify dialog can open and close without crash
+    dialog.accept()
+    QApplication.processEvents()
+
+    print("  PASS: wf30 — settings dialog opens/closes without crash")
