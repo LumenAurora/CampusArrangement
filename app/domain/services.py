@@ -5,7 +5,7 @@ from datetime import datetime
 import random
 from typing import Iterable
 
-from .models import AllocationMode, Registration, ScheduleResult, TimeSlot
+from .models import MAX_POINTS, AllocationMode, Registration, ScheduleResult, TimeSlot
 
 
 @dataclass(frozen=True)
@@ -35,22 +35,28 @@ def schedule_registrations(
     assigned_users: set[str] = set()
 
     regs = list(registrations)
+    rng = rng or random.Random()
+
     if mode == AllocationMode.FIRST_COME:
         sorted_regs = sorted(regs, key=lambda r: r.created_at)
     elif mode == AllocationMode.LOTTERY:
-        rng = rng or random.Random()
         sorted_regs = regs[:]
         rng.shuffle(sorted_regs)
-    elif mode == AllocationMode.POINTS:
-        # 意愿点模式：按 points 降序优先，同 points 级别随机抽签（公平）。
-        # 用一次性 shuffle 给每个 reg 一个随机 nonce，再按 (-points, nonce) 排序，
-        # 保证同级别内公平随机，且高 points 严格优先。
-        rng = rng or random.Random()
-        # 先生成随机 nonce，避免在 sort key 里反复调用 rng（不稳定）
+    elif mode in (AllocationMode.GREEDY, AllocationMode.POINTS):
+        # GREEDY (志愿优先): 将 priority 自动换算为点数 — 志愿1得最高分, 志愿N递减
+        # POINTS (意愿点): 用户手动分配点数，直接使用 registration.points
+        # 统一排序：高点优先，同级别随机抽签保证公平
+        score: dict[str, int] = {}
+        if mode == AllocationMode.GREEDY:
+            max_pri = max((r.priority for r in regs), default=1)
+            for r in regs:
+                score[r.id] = max(1, MAX_POINTS - (r.priority - 1) * (MAX_POINTS // max(max_pri, 1)))
+        else:
+            for r in regs:
+                score[r.id] = r.points
         nonces = {r.id: rng.random() for r in regs}
-        sorted_regs = sorted(regs, key=lambda r: (-r.points, nonces[r.id]))
+        sorted_regs = sorted(regs, key=lambda r: (-score[r.id], nonces[r.id]))
     else:
-        # Lower priority number = higher priority (priority 1 > priority 10)
         sorted_regs = sorted(regs, key=lambda r: (r.priority, r.created_at))
 
     # 第一轮：按用户选择的slot分配

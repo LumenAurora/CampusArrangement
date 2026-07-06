@@ -321,6 +321,14 @@ class RegistrationPanel(QWidget):
         self._points_hint = QLabel(f"意愿点（剩余 {MAX_POINTS} / {MAX_POINTS}）")
         self._points_hint.setVisible(False)
         self._points_spin.valueChanged.connect(self._on_points_changed)
+        # 志愿优先选择器（仅 GREEDY 模式显示，用户选择志愿顺序 1~10）
+        self._priority_spin = QSpinBox()
+        self._priority_spin.setRange(1, 10)
+        self._priority_spin.setValue(1)
+        self._priority_spin.setMinimumWidth(120)
+        self._priority_spin.setVisible(False)
+        self._priority_hint = QLabel("志愿优先（1=最优先，10=最低）")
+        self._priority_hint.setVisible(False)
         self._message = QLabel("")
         set_banner(self._message, "info", "")
 
@@ -364,12 +372,18 @@ class RegistrationPanel(QWidget):
         self._submit_btn.clicked.connect(self._register)
         action_row.addWidget(self._submit_btn)
         form.addRow(action_row)
-        # 意愿点输入行（仅 POINTS 模式活动显示，默认隐藏）
+        # 意愿点输入行（仅 POINTS 模式活动显示）
         points_row = QHBoxLayout()
         points_row.addWidget(self._points_hint)
         points_row.addWidget(self._points_spin)
         points_row.addStretch()
         form.addRow(points_row)
+        # 志愿优先选择行（仅 GREEDY 模式活动显示）
+        priority_row = QHBoxLayout()
+        priority_row.addWidget(self._priority_hint)
+        priority_row.addWidget(self._priority_spin)
+        priority_row.addStretch()
+        form.addRow(priority_row)
         form.addRow(self._message)
 
         form_group = QGroupBox("报名操作")
@@ -477,9 +491,10 @@ class RegistrationPanel(QWidget):
         self._slot_grid._selected_slot_id = None
         if not activity_id:
             self._countdown_label.set_times("", "")
-            # 无活动时隐藏意愿点输入框
             self._points_spin.setVisible(False)
             self._points_hint.setVisible(False)
+            self._priority_spin.setVisible(False)
+            self._priority_hint.setVisible(False)
             return
         activity = self._activity_service.get_activity(activity_id)
         if activity:
@@ -568,7 +583,7 @@ class RegistrationPanel(QWidget):
 
         self._slot_table.setColumnHidden(0, True)
 
-        # 意愿点模式：显示点数输入框并实时更新剩余点数
+        # 分配模式相关控件显示
         allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value) if activity else AllocationMode.GREEDY.value
         if allocation_mode == AllocationMode.POINTS.value:
             used = self._get_used_points(activity_id)
@@ -576,14 +591,22 @@ class RegistrationPanel(QWidget):
             self._points_spin.setMaximum(remaining)
             self._points_spin.setValue(0)
             self._points_hint.setText(f"意愿点（剩余 {remaining} / {MAX_POINTS}）")
-            # 可见性跟随分配模式，可交互性跟随报名时间窗口
             self._points_spin.setEnabled(can_signup)
             self._points_spin.setVisible(True)
             self._points_hint.setVisible(True)
-        else:
-            # 非 POINTS 模式隐藏意愿点输入框
+            self._priority_spin.setVisible(False)
+            self._priority_hint.setVisible(False)
+        elif allocation_mode == AllocationMode.GREEDY.value:
             self._points_spin.setVisible(False)
             self._points_hint.setVisible(False)
+            self._priority_spin.setEnabled(can_signup)
+            self._priority_spin.setVisible(True)
+            self._priority_hint.setVisible(True)
+        else:
+            self._points_spin.setVisible(False)
+            self._points_hint.setVisible(False)
+            self._priority_spin.setVisible(False)
+            self._priority_hint.setVisible(False)
 
         if not is_open:
             self._slot_selector.setEnabled(False)
@@ -662,11 +685,12 @@ class RegistrationPanel(QWidget):
             activity = self._activity_service.get_activity(activity_id)
             allocation_mode = AllocationMode(activity.get("allocation_mode", AllocationMode.GREEDY.value)) if activity else AllocationMode.GREEDY
             points = self._points_spin.value() if allocation_mode == AllocationMode.POINTS else 0
+            priority = self._priority_spin.value() if allocation_mode == AllocationMode.GREEDY else 1
             self._registration_service.register(
                 user_id=self._user.id,
                 activity_id=activity_id,
                 slot_id=slot_id,
-                priority=1,
+                priority=priority,
                 points=points,
             )
             set_banner(self._message, "success", "报名成功")
