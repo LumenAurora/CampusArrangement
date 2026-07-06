@@ -6,8 +6,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.infrastructure.db import init_db
-from app.infrastructure.repositories import ActivityRepository, CheckInRepository, RegistrationRepository, TimeSlotRepository, UserRepository
-from app.domain.models import Activity, Role, TimeSlot, User
+from app.infrastructure.notifications import notify_by_preference, notify_user
+from app.infrastructure.repositories import (
+    ActivityRepository,
+    CheckInRepository,
+    NotificationRepository,
+    RegistrationRepository,
+    TimeSlotRepository,
+    UserRepository,
+)
+from app.domain.models import Activity, NotificationMode, Role, TimeSlot, User
 
 
 class DatabaseTests(unittest.TestCase):
@@ -104,6 +112,55 @@ class DatabaseTests(unittest.TestCase):
 
         remaining_slots = slot_repo.list_by_activity(activity.id)
         self.assertEqual(len(remaining_slots), 0)
+
+    def test_notification_center_repository_flow(self) -> None:
+        user_repo = UserRepository()
+        user = User.create("notice_tester", Role.USER)
+        user_repo.create(user, "hashed")
+
+        repo = NotificationRepository()
+        created = notify_user(user.id, "报名成功", "你已成功报名活动")
+
+        self.assertIsNotNone(created)
+        self.assertEqual(repo.count_unread(user.id), 1)
+
+        rows = repo.list_by_user(user.id)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["subject"], "报名成功")
+        self.assertEqual(rows[0]["body"], "你已成功报名活动")
+        self.assertEqual(rows[0]["is_read"], 0)
+
+        repo.mark_as_read(rows[0]["id"])
+        self.assertEqual(repo.count_unread(user.id), 0)
+        self.assertEqual(repo.delete_read_by_user(user.id), 1)
+        self.assertEqual(repo.list_by_user(user.id), [])
+
+    def test_notify_by_preference_persists_in_app_and_respects_none(self) -> None:
+        user_repo = UserRepository()
+        in_app_user = User.create("in_app_notice", Role.USER)
+        silent_user = User.create("silent_notice", Role.USER)
+        user_repo.create(in_app_user, "hashed")
+        user_repo.create(silent_user, "hashed")
+
+        notify_by_preference(
+            in_app_user.id,
+            "",
+            NotificationMode.IN_APP.value,
+            "系统通知",
+            "请查看排班结果",
+        )
+        notify_by_preference(
+            silent_user.id,
+            "",
+            NotificationMode.NONE.value,
+            "不应保存",
+            "这条消息不应进入通知中心",
+        )
+
+        repo = NotificationRepository()
+        self.assertEqual(repo.count_unread(in_app_user.id), 1)
+        self.assertEqual(repo.count_unread(silent_user.id), 0)
+        self.assertEqual(repo.list_by_user(silent_user.id), [])
 
 
 if __name__ == "__main__":

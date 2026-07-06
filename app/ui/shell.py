@@ -250,6 +250,13 @@ class NavigationWindow(QMainWindow):
     def _apply_theme(app: QApplication, theme: str) -> None:
         set_theme(theme)
         apply_app_style(app, theme)
+        if app is None:
+            return
+        for window in app.topLevelWidgets():
+            for widget in [window, *window.findChildren(QWidget)]:
+                refresh_theme = getattr(widget, "refresh_theme", None)
+                if callable(refresh_theme):
+                    refresh_theme()
 
     @staticmethod
     def _apply_density(app: QApplication, density: str) -> None:
@@ -354,7 +361,7 @@ class NavigationWindow(QMainWindow):
         role_text = {
             "super_admin": "超级管理员",
             "organizer": "组织者",
-            "student": "学生",
+            "user": "学生",
         }.get(user.role.value, user.role.value)
         menu.setTitle(f"{user.username}  ·  {role_text}")
 

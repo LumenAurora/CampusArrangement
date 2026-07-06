@@ -465,6 +465,43 @@ class RemoteRepoMethodTests(unittest.TestCase):
         self.assertTrue(hasattr(repo, "update_avatar"))
         self.assertTrue(hasattr(repo, "update_notification_mode"))
 
+    def test_remote_notification_repo_maps_current_user_endpoints(self) -> None:
+        from app.infrastructure.remote_repositories import RemoteNotificationRepository
+
+        class FakeApi:
+            calls: list[tuple[str, str, dict | None]] = []
+
+            def get(self, path: str, params: dict | None = None):
+                self.calls.append(("GET", path, params))
+                if path == "/notifications/unread-count":
+                    return {"count": 2}
+                return [{"id": "n1"}]
+
+            def post(self, path: str, json: dict | None = None):
+                self.calls.append(("POST", path, json))
+                return {"ok": True}
+
+            def delete(self, path: str, json: dict | None = None):
+                self.calls.append(("DELETE", path, json))
+                return {"count": 1}
+
+        api = FakeApi()
+        repo = RemoteNotificationRepository(api)  # type: ignore[arg-type]
+
+        self.assertEqual(repo.list_by_user("ignored", limit=10, offset=5), [{"id": "n1"}])
+        self.assertEqual(repo.count_unread("ignored"), 2)
+        repo.mark_as_read("n1")
+        repo.mark_all_as_read("ignored")
+        self.assertEqual(repo.delete_read_by_user("ignored"), 1)
+
+        self.assertEqual(api.calls, [
+            ("GET", "/notifications", {"limit": 10, "offset": 5}),
+            ("GET", "/notifications/unread-count", None),
+            ("POST", "/notifications/n1/read", {}),
+            ("POST", "/notifications/read-all", {}),
+            ("DELETE", "/notifications/read", None),
+        ])
+
     def test_api_client_login_preserves_profile_fields(self) -> None:
         from app.infrastructure.api_client import ApiClient
 

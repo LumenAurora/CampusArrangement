@@ -452,6 +452,25 @@ class RegistrationPanel(QWidget):
                 self._slot_selector.setCurrentIndex(i)
                 break
 
+    def _signup_block_reason(self, activity: dict | None) -> str:
+        if not activity:
+            return "请选择活动"
+        if activity.get("status") != ActivityStatus.OPEN.value:
+            return f"该活动当前为「{format_activity_status(activity)}」，暂不能报名"
+
+        now = datetime.now(timezone.utc)
+        signup_start = activity.get("signup_start")
+        signup_end = activity.get("signup_end")
+        if signup_start:
+            start = to_utc(signup_start)
+            if now < start:
+                return f"报名尚未开始，将于 {format_datetime(str(signup_start))} 开始"
+        if signup_end:
+            end = to_utc(signup_end)
+            if now > end:
+                return f"报名已截止，截止时间为 {format_datetime(str(signup_end))}"
+        return ""
+
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
         # 过滤：只显示用户有权限报名的活动（公开 + 所在小组）
@@ -494,6 +513,8 @@ class RegistrationPanel(QWidget):
             self._priority_hint.setVisible(False)
             self._points_spin.setVisible(False)
             self._points_hint.setVisible(False)
+            self._slot_selector.setEnabled(False)
+            self._submit_btn.setEnabled(False)
             return
         activity = self._activity_service.get_activity(activity_id)
         if activity:
@@ -501,37 +522,33 @@ class RegistrationPanel(QWidget):
         signup_mode = activity.get("signup_mode") if activity else SignupMode.REALTIME.value
         is_open = activity.get("status") == ActivityStatus.OPEN.value if activity else False
         # 计算是否在报名时间窗口内
-        can_signup = False
-        if is_open:
-            now = datetime.now(timezone.utc)
-            signup_start = activity.get("signup_start") if activity else None
-            signup_end = activity.get("signup_end") if activity else None
-            can_signup = True
-            if signup_start:
-                start = to_utc(signup_start)
-                if now < start:
-                    can_signup = False
-            if signup_end:
-                end = to_utc(signup_end)
-                if now > end:
-                    can_signup = False
+        block_reason = self._signup_block_reason(activity)
+        can_signup = is_open and not block_reason
         slots = self._activity_service.list_slots(activity_id)
 
         # 过滤掉子岗位（用户报名选择父时段，排班系统分配岗位）
         top_slots = [s for s in slots if not s.get("parent_slot_id")]
 
         if not top_slots:
-            set_table_empty(self._slot_table, 8, "暂无选项")
+            empty_text = "暂无可报名时段/选项，请联系管理员在活动中添加"
+            set_table_empty(self._slot_table, 8, empty_text)
             self._slot_grid.set_slots([], signup_mode)
             # 无选项时隐藏志愿序号和意愿点输入框
             self._priority_spin.setVisible(False)
             self._priority_hint.setVisible(False)
             self._points_spin.setVisible(False)
             self._points_hint.setVisible(False)
+            self._slot_selector.setEnabled(False)
+            self._submit_btn.setEnabled(False)
+            set_banner(self._message, "error", empty_text)
             return
 
         # 更新格子视图
         self._slot_grid.set_slots(top_slots, signup_mode, can_select=can_signup)
+        if block_reason:
+            set_banner(self._message, "error", block_reason)
+        else:
+            set_banner(self._message, "info", "")
 
         # 更新表格视图
         self._slot_table.clearSpans()

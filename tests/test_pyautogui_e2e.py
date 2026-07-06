@@ -18,12 +18,17 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+import PySide6
 
 # 必须在导入应用模块前设置环境变量
 _DB_PATH = os.path.join(tempfile.gettempdir(), "campus_e2e_ui_test.db")
 os.environ["CAMPUS_DB_PATH"] = _DB_PATH
+_QT_PLUGIN_PATH = Path(PySide6.__file__).resolve().parent / "Qt" / "plugins"
+if _QT_PLUGIN_PATH.exists():
+    os.environ.setdefault("QT_PLUGIN_PATH", str(_QT_PLUGIN_PATH))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402
@@ -38,10 +43,12 @@ from app.application.scheduling_service import SchedulingService  # noqa: E402
 from app.application.user_service import UserService  # noqa: E402
 from app.domain.models import Activity, ActivityStatus, Role, TimeSlot  # noqa: E402
 from app.infrastructure.db import init_db  # noqa: E402
+from app.infrastructure.notifications import notify_user  # noqa: E402
 from app.infrastructure.repositories import (  # noqa: E402
     ActivityRepository,
     CheckInRepository,
     GroupRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -89,10 +96,11 @@ def services(fresh_db):
     schedule_repo = ScheduleRepository()
     checkin_repo = CheckInRepository()
     group_repo = GroupRepository()
+    notification_repo = NotificationRepository()
 
     activity_service = ActivityService(activity_repo, slot_repo)
-    registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
-    scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
+    registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo, notification_repo)
+    scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo, notification_repo)
     checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
     group_service = GroupService(group_repo, activity_repo)
 
@@ -105,6 +113,7 @@ def services(fresh_db):
         schedule_repo=schedule_repo,
         checkin_repo=checkin_repo,
         group_repo=group_repo,
+        notification_repo=notification_repo,
         activity_service=activity_service,
         registration_service=registration_service,
         scheduling_service=scheduling_service,
@@ -255,6 +264,7 @@ def _build_client_window(services, user, qapp) -> ClientWindow:
         checkin_repo=services.checkin_repo,
         group_service=services.group_service,
         group_repo=services.group_repo,
+        notification_repo=services.notification_repo,
     )
     window.show()
     qapp.processEvents()
@@ -452,6 +462,56 @@ def test_client_window_opens_after_full_signup_schedule_checkin_flow(qapp: QAppl
                 qapp.processEvents()
         assert services.schedule_repo.count_by_user(student.id) == 1
         assert services.checkin_repo.get_by_user_slot(student.id, slot.id) is not None
+        assert services.notification_repo.count_unread(student.id) == 2
+
+        notice_index = window._page_keys.index("notifications")
+        window._nav.setCurrentRow(notice_index)
+        qapp.processEvents()
+        notice_panel = window._stack.currentWidget()
+        assert notice_panel._table.rowCount() == 2
+    finally:
+        window.close()
+
+
+def test_client_notification_center_marks_message_read(qapp: QApplication, services) -> None:
+    """通知中心冒烟：学生端显示通知页，点击未读消息后标记已读。"""
+    admin_user = services.user_service.authenticate("admin", "admin")
+    student = services.user_service.register(admin_user, "notice_student", "pass1234", Role.USER)
+    created = notify_user(student.id, "排班结果", "你已被分配到志愿服务 A 时段")
+    assert created is not None
+    assert services.notification_repo.count_unread(student.id) == 1
+
+    window = _build_client_window(services, student, qapp)
+    try:
+        assert "notifications" in window._page_keys
+        index = window._page_keys.index("notifications")
+        window._nav.setCurrentRow(index)
+        qapp.processEvents()
+
+        panel = window._stack.currentWidget()
+        assert panel.__class__.__name__ == "NotificationCenterPanel"
+        assert panel._table.rowCount() == 1
+        assert "1 条未读通知" in panel._summary_label.text()
+
+        panel._on_cell_clicked(0, 0)
+        qapp.processEvents()
+
+        assert services.notification_repo.count_unread(student.id) == 0
+        assert "全部已读" in panel._summary_label.text()
+    finally:
+        window.close()
+
+
+def test_client_topbar_displays_student_role_label(qapp: QApplication, services) -> None:
+    """学生端顶栏菜单应显示中文角色名，而不是底层枚举值 user。"""
+    admin_user = services.user_service.authenticate("admin", "admin")
+    student = services.user_service.register(admin_user, "role_label_student", "pass1234", Role.USER)
+
+    window = _build_client_window(services, student, qapp)
+    try:
+        title = window._avatar_btn.menu().title()
+        assert "学生" in title
+        assert "user" not in title
     finally:
         window.close()
 
