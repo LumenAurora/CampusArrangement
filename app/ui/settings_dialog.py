@@ -40,6 +40,7 @@ from app.ui.style import (
     get_form_layout_mode,
     get_palette,
     get_theme,
+    refresh_dynamic_styles,
     set_default_page,
     set_density,
     set_form_layout_mode,
@@ -334,4 +335,5 @@ class SettingsDialog(QDialog):
             use_tls=self._email_tls.isChecked(),
         )
         apply_app_style(self._app, get_theme())
+        refresh_dynamic_styles(self._app)
         self.accept()

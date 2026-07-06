@@ -36,6 +36,7 @@ from app.ui.style import (
     get_density,
     get_palette,
     get_theme,
+    refresh_dynamic_styles,
     set_density,
     set_theme,
 )
@@ -250,18 +251,13 @@ class NavigationWindow(QMainWindow):
     def _apply_theme(app: QApplication, theme: str) -> None:
         set_theme(theme)
         apply_app_style(app, theme)
-        if app is None:
-            return
-        for window in app.topLevelWidgets():
-            for widget in [window, *window.findChildren(QWidget)]:
-                refresh_theme = getattr(widget, "refresh_theme", None)
-                if callable(refresh_theme):
-                    refresh_theme()
+        refresh_dynamic_styles(app)
 
     @staticmethod
     def _apply_density(app: QApplication, density: str) -> None:
         set_density(density)
         apply_app_style(app, get_theme())
+        refresh_dynamic_styles(app)
 
     def _build_topbar(self, user: User) -> QFrame:
         bar = QFrame()

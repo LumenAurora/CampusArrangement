@@ -52,7 +52,12 @@ class ActivityCard(QFrame):
             f"ActivityCard[selected=true] {{ border: 2px solid {p.accent}; background: {p.accent_soft}; }}"
         )
 
-        layout = QVBoxLayout()
+        layout = self.layout()
+        if layout is not None:
+            self._clear_layout(layout)
+        else:
+            layout = QVBoxLayout()
+            self.setLayout(layout)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
@@ -127,7 +132,18 @@ class ActivityCard(QFrame):
         bottom_row.addStretch()
         layout.addLayout(bottom_row)
 
-        self.setLayout(layout)
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                ActivityCard._clear_layout(item.layout())
+
+    def refresh_theme(self) -> None:
+        self._build()
+        self.set_selected(self._selected)
 
     def _build_workflow_bar(self, a: dict, p) -> QWidget:
         """构建工作流进度条 — 5 步骤：编辑→提交→发布→进行→结束。"""
@@ -217,7 +233,12 @@ class WorkflowTimeline(QWidget):
 
     def _build(self) -> None:
         p = _p()
-        layout = QVBoxLayout()
+        layout = self.layout()
+        if layout is not None:
+            self._clear_layout(layout)
+        else:
+            layout = QVBoxLayout()
+            self.setLayout(layout)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -260,7 +281,19 @@ class WorkflowTimeline(QWidget):
         self._config_card = self._build_config_card()
         layout.addWidget(self._config_card)
 
-        self.setLayout(layout)
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                WorkflowTimeline._clear_layout(item.layout())
+
+    def refresh_theme(self) -> None:
+        activity = self._activity
+        self._build()
+        self.set_activity(activity)
 
     def _build_config_card(self) -> QWidget:
         p = _p()

@@ -214,12 +214,14 @@ class ActivityPanel(QWidget):
         self._status_btn_row.addWidget(self._submit_review_btn)
         self._status_btn_row.addWidget(self._publish_btn)
         # Separator
+        self._status_separators: list[QFrame] = []
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.VLine)
         sep1.setFrameShadow(QFrame.Sunken)
         sep1.setFixedWidth(1)
         p = get_palette()
         sep1.setStyleSheet(f"color: {p.border_light};")
+        self._status_separators.append(sep1)
         self._status_btn_row.addWidget(sep1)
         # Moderation group
         self._status_btn_row.addWidget(self._reject_btn)
@@ -232,6 +234,7 @@ class ActivityPanel(QWidget):
         sep2.setFrameShadow(QFrame.Sunken)
         sep2.setFixedWidth(1)
         sep2.setStyleSheet(f"color: {p.border_light};")
+        self._status_separators.append(sep2)
         self._status_btn_row.addWidget(sep2)
         self._status_btn_row.addWidget(self._delete_btn)
 
@@ -302,8 +305,8 @@ class ActivityPanel(QWidget):
 
         # ── 顶部工具栏（创建按钮 + 搜索筛选）─────────────────
         p_tb = get_palette()
-        top_toolbar = QFrame()
-        top_toolbar.setStyleSheet(
+        self._top_toolbar = QFrame()
+        self._top_toolbar.setStyleSheet(
             f"QFrame {{ background: {p_tb.bg_card}; border: 1px solid {p_tb.border_light}; "
             f"border-radius: 10px; }}"
         )
@@ -320,13 +323,13 @@ class ActivityPanel(QWidget):
         tb_layout.addWidget(self._search_box, 1)
         tb_layout.addWidget(self._status_filter)
         tb_layout.addWidget(self._time_filter)
-        top_toolbar.setLayout(tb_layout)
+        self._top_toolbar.setLayout(tb_layout)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(header)
-        layout.addWidget(top_toolbar)
+        layout.addWidget(self._top_toolbar)
         layout.addWidget(self._right_widget, 1)
         self.setLayout(layout)
 
@@ -336,6 +339,28 @@ class ActivityPanel(QWidget):
         self._activity_table.itemSelectionChanged.connect(self._on_activity_selection_changed)
         self._activity_table.cellDoubleClicked.connect(self._on_activity_double_clicked)
         self.refresh()
+
+    def refresh_theme(self) -> None:
+        """Re-apply inline palette styles after switching light/dark theme."""
+        p = get_palette()
+        if hasattr(self, "_top_toolbar"):
+            self._top_toolbar.setStyleSheet(
+                f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
+                f"border-radius: 10px; }}"
+            )
+        for sep in getattr(self, "_status_separators", []):
+            sep.setStyleSheet(f"color: {p.border_light};")
+        self._detail_card.setStyleSheet(
+            f"QFrame#activityDetailCard {{ background: {p.bg_elevated}; border: 1px solid {p.border_light}; "
+            f"border-radius: 10px; padding: 8px 12px; }}"
+        )
+        self._detail_name_label.setStyleSheet(f"font-weight: 600; font-size: 14px; color: {p.text_primary};")
+        self._detail_location_label.setStyleSheet(f"color: {p.accent}; font-weight: 500;")
+        self._detail_signup_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 12px;")
+        self._detail_allocation_label.setStyleSheet(f"color: {p.text_secondary}; font-size: 12px;")
+        if hasattr(self, "_workflow_timeline"):
+            self._workflow_timeline.refresh_theme()
+        self._apply_filters()
 
     # ═══════════════════════════════════════════════════════════
     # 左侧面板构建 / 热切换
@@ -447,7 +472,11 @@ class ActivityPanel(QWidget):
         if hasattr(self, '_workflow_timeline') and activity:
             self._workflow_timeline.set_activity(activity)
         if not activity_id:
+            if hasattr(self, '_workflow_timeline'):
+                self._workflow_timeline.set_activity(None)
+            self._update_card_selection(None)
             return
+        self._update_card_selection(activity_id)
         # 避免重复 setCurrentIndex 触发不必要刷新
         current_id = self._activity_selector.currentData()
         if current_id == activity_id:
@@ -1224,6 +1253,7 @@ class ActivityPanel(QWidget):
             card.mousePressEvent = lambda e, aid=a["id"]: self._on_card_clicked(aid)
             self._card_layout.insertWidget(i, card)
         self._card_layout.addStretch()
+        self._update_card_selection(self._activity_selector.currentData())
 
     def _on_card_clicked(self, activity_id: str) -> None:
         """活动卡片点击：在表格中选中对应行并更新工作流时间线。"""
@@ -1233,10 +1263,22 @@ class ActivityPanel(QWidget):
             if item and item.text() == activity_id:
                 self._activity_table.selectRow(row)
                 break
+        self._select_activity_by_id(activity_id)
+        self._update_status_buttons()
+        self._update_card_selection(activity_id)
         # 更新工作流时间线
         activity = next((a for a in self._all_activities if a["id"] == activity_id), None)
         if hasattr(self, '_workflow_timeline') and activity:
             self._workflow_timeline.set_activity(activity)
+
+    def _update_card_selection(self, activity_id: str | None) -> None:
+        if not hasattr(self, "_card_layout"):
+            return
+        for i in range(self._card_layout.count()):
+            item = self._card_layout.itemAt(i)
+            widget = item.widget() if item else None
+            if isinstance(widget, ActivityCard):
+                widget.set_selected(bool(activity_id and widget.activity_id == activity_id))
 
     def _select_activity_by_id(self, activity_id: str) -> None:
         """在活动选择器中选中指定 ID 的活动并加载其时段。
