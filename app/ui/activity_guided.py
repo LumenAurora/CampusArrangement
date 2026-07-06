@@ -855,15 +855,14 @@ class GuidedActivityPanel(QWidget):
                 try:
                     # 合并日历日期 + 时间
                     cal_date = self._calendar.selectedDate()
+                    # Use naive datetime (no tzinfo) for consistency with the rest of the app
                     slot_start = datetime(
                         cal_date.year(), cal_date.month(), cal_date.day(),
                         self._slot_start.time().hour(), self._slot_start.time().minute(),
-                        tzinfo=timezone.utc,
                     )
                     slot_end = datetime(
                         cal_date.year(), cal_date.month(), cal_date.day(),
                         self._slot_end.time().hour(), self._slot_end.time().minute(),
-                        tzinfo=timezone.utc,
                     )
                     self._service.add_slot(
                         user=self._user,

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from app.domain.models import User
 from app.infrastructure.repositories import NotificationRepository
 from app.ui.style import get_palette
-from app.ui.ui_utils import configure_table, format_datetime, make_page_header
+from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_table_empty
 
 
 class NotificationCenterPanel(QWidget):
@@ -151,6 +151,9 @@ class NotificationCenterPanel(QWidget):
 
     def _render_table(self) -> None:
         p = get_palette()
+        if not self._all_notifications:
+            set_table_empty(self._table, 4, "暂无通知")
+            return
         self._table.setRowCount(len(self._all_notifications))
         for i, n in enumerate(self._all_notifications):
             is_read = bool(n.get("is_read", 0))
