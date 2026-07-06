@@ -39,17 +39,53 @@ class UserRepository:
     def list_all(self) -> list[dict]:
         conn = get_connection()
         try:
-            rows = conn.execute("SELECT id, username, role, status, created_at FROM users ORDER BY created_at DESC").fetchall()
+            # 包含 avatar_path/notification_mode，供 UI 显示头像与偏好
+            rows = conn.execute("SELECT id, username, role, status, created_at, avatar_path, notification_mode FROM users ORDER BY created_at DESC").fetchall()
             return [dict(row) for row in rows]
         finally:
             conn.close()
 
     def delete(self, user_id: str) -> bool:
+        """删除用户。
+
+        前置处理（与外键约束维护一致）：
+        1. 拒绝删除尚为小组 owner 的用户，避免 groups.owner_id 外键约束崩溃；
+        2. 释放该用户 REALTIME 模式下 PENDING 报名占用的 slot.used_count，
+           避免 users 级联删除 registrations 后 slot 名额虚占。
+
+        所有清理在单事务内完成，保证原子性。
+        """
         conn = get_connection()
         try:
+            # 1. 拒绝小组 owner 删除
+            group_owner_count = conn.execute(
+                "SELECT COUNT(*) FROM groups WHERE owner_id = ?", (user_id,)
+            ).fetchone()[0]
+            if group_owner_count > 0:
+                raise ConflictError("该用户是小组 owner，请先转让或删除小组后再删除用户")
+
+            # 2. 释放该用户 PENDING 报名占用的 slot.used_count
+            # registrations 表通过 ON DELETE CASCADE 级联删除，但 slots.used_count 不会回滚，
+            # 这里手动扣减。仅处理 status='pending' 的报名，因为 ASSIGNED/CONFIRMED 已被
+            # scheduling_service.reset_used_counts 在排班时重算。
+            pending_rows = conn.execute(
+                "SELECT slot_id FROM registrations WHERE user_id = ? AND status = 'pending'",
+                (user_id,),
+            ).fetchall()
+            for row in pending_rows:
+                slot_id = row["slot_id"] if hasattr(row, "keys") else row[0]
+                conn.execute(
+                    "UPDATE slots SET used_count = MAX(used_count - 1, 0) WHERE id = ?",
+                    (slot_id,),
+                )
+
+            # 3. 删除用户（registrations/checkins/group_members 由 ON DELETE CASCADE 处理）
             cursor = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -80,7 +116,7 @@ class UserRepository:
         conn = get_connection()
         try:
             rows = conn.execute(
-                "SELECT id, username, role, status, created_at FROM users WHERE status = ? ORDER BY created_at DESC",
+                "SELECT id, username, role, status, created_at, avatar_path, notification_mode FROM users WHERE status = ? ORDER BY created_at DESC",
                 (status.value,),
             ).fetchall()
             return [dict(row) for row in rows]
@@ -98,14 +134,40 @@ class UserRepository:
         finally:
             conn.close()
 
-
-class ActivityRepository:
-    def create(self, activity: Activity) -> None:
+    def update_avatar(self, user_id: str, avatar_path: str) -> None:
+        """更新用户头像路径（相对路径，便于本地/远程统一）。"""
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "UPDATE users SET avatar_path = ? WHERE id = ?",
+                (avatar_path, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_notification_mode(self, user_id: str, mode: str) -> None:
+        """更新用户通知偏好（in_app/email/none）。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET notification_mode = ? WHERE id = ?",
+                (mode, user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+class ActivityRepository:
+    def create(self, activity: Activity, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO activities (id, name, status, owner_id, signup_start, signup_end, details, signup_mode, allocation_mode, location, activity_type, checkin_code, checkin_mode, checkin_start, checkin_end, group_id, checkin_closed, allow_multiple_slots) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     activity.id,
                     activity.name,
@@ -123,11 +185,15 @@ class ActivityRepository:
                     activity.checkin_start.isoformat() if activity.checkin_start else None,
                     activity.checkin_end.isoformat() if activity.checkin_end else None,
                     activity.group_id,
+                    1 if activity.checkin_closed else 0,
+                    1 if activity.allow_multiple_slots else 0,
                 ),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def get(self, activity_id: str) -> dict | None:
         conn = get_connection()
@@ -208,6 +274,33 @@ class ActivityRepository:
         finally:
             conn.close()
 
+    def update_checkin_closed(self, activity_id: str, closed: bool) -> None:
+        """人工提前结束/恢复签到。closed=True 结束，False 恢复。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE activities SET checkin_closed = ? WHERE id = ?",
+                (1 if closed else 0, activity_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update(self, activity_id: str, fields: dict) -> None:
+        """更新活动的基本字段（name, details, location, signup_start, signup_end）。"""
+        allowed = {"name", "details", "location", "signup_start", "signup_end"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not updates:
+            return
+        conn = get_connection()
+        try:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            values = list(updates.values()) + [activity_id]
+            conn.execute(f"UPDATE activities SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+        finally:
+            conn.close()
+
 
 class TimeSlotRepository:
     def get(self, slot_id: str) -> dict | None:
@@ -218,8 +311,10 @@ class TimeSlotRepository:
         finally:
             conn.close()
 
-    def create(self, slot: TimeSlot) -> None:
-        conn = get_connection()
+    def create(self, slot: TimeSlot, conn: sqlite3.Connection | None = None) -> None:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             start_time_str = slot.start_time.isoformat() if slot.start_time else None
             end_time_str = slot.end_time.isoformat() if slot.end_time else None
@@ -239,9 +334,11 @@ class TimeSlotRepository:
                     slot.parent_slot_id,
                 ),
             )
-            conn.commit()
+            if own:
+                conn.commit()
         finally:
-            conn.close()
+            if own:
+                conn.close()
 
     def list_by_activity(self, activity_id: str, conn: sqlite3.Connection | None = None) -> list[dict]:
         own = conn is None
@@ -405,8 +502,8 @@ class RegistrationRepository:
             conn = get_connection()
         try:
             conn.execute(
-                "INSERT INTO registrations (id, user_id, activity_id, slot_id, priority, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO registrations (id, user_id, activity_id, slot_id, priority, status, created_at, points) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     registration.id,
                     registration.user_id,
@@ -415,6 +512,7 @@ class RegistrationRepository:
                     registration.priority,
                     registration.status.value,
                     registration.created_at.isoformat(),
+                    registration.points,
                 ),
             )
             if own:
@@ -422,7 +520,7 @@ class RegistrationRepository:
         except sqlite3.IntegrityError:
             if own:
                 conn.rollback()
-            raise ConflictError("您已报名该活动，请勿重复报名")
+            raise ConflictError("您已报名该时段，请勿重复报名")
         finally:
             if own:
                 conn.close()
@@ -450,20 +548,19 @@ class RegistrationRepository:
                 conn.close()
 
     def reset_for_rescheduling(self, activity_id: str, conn: sqlite3.Connection | None = None) -> None:
-        """将 ASSIGNED / NOT_ASSIGNED 状态的报名重置为 PENDING，以便重新排班。
-        不触碰 CONFIRMED 等已确认状态。"""
-        reset_statuses = (RegistrationStatus.NOT_ASSIGNED.value, RegistrationStatus.ASSIGNED.value)
+        """将 ASSIGNED / NOT_ASSIGNED / CONFIRMED 状态的报名重置为 PENDING，以便重新排班。"""
+        reset_statuses = (
+            RegistrationStatus.NOT_ASSIGNED.value,
+            RegistrationStatus.ASSIGNED.value,
+            RegistrationStatus.CONFIRMED.value,
+        )
+        sql = "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?, ?)"
+        params = (RegistrationStatus.PENDING.value, activity_id, *reset_statuses)
         if conn is not None:
-            conn.execute(
-                "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
-                (RegistrationStatus.PENDING.value, activity_id, *reset_statuses),
-            )
+            conn.execute(sql, params)
         else:
             with transaction() as c:
-                c.execute(
-                    "UPDATE registrations SET status = ? WHERE activity_id = ? AND status IN (?, ?)",
-                    (RegistrationStatus.PENDING.value, activity_id, *reset_statuses),
-                )
+                c.execute(sql, params)
 
     def list_by_activity(self, activity_id: str) -> list[dict]:
         conn = get_connection()
@@ -476,12 +573,32 @@ class RegistrationRepository:
         finally:
             conn.close()
 
-    def list_by_user_activity(self, user_id: str, activity_id: str) -> list[dict]:
-        conn = get_connection()
+    def list_by_user_activity(
+        self,
+        user_id: str,
+        activity_id: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> list[dict]:
+        own = conn is None
+        if own:
+            conn = get_connection()
         try:
             rows = conn.execute(
                 "SELECT * FROM registrations WHERE user_id = ? AND activity_id = ? AND status != ?",
                 (user_id, activity_id, RegistrationStatus.CANCELLED.value),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            if own:
+                conn.close()
+
+    def list_by_user_slot(self, user_id: str, slot_id: str) -> list[dict]:
+        """查询用户在指定 slot 下的所有未取消报名记录（用于兼报模式下的重复校验）。"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM registrations WHERE user_id = ? AND slot_id = ? AND status != ?",
+                (user_id, slot_id, RegistrationStatus.CANCELLED.value),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
@@ -542,6 +659,7 @@ class RegistrationRepository:
                     priority=row["priority"],
                     status=RegistrationStatus(row["status"]),
                     created_at=datetime.fromisoformat(row["created_at"]),
+                    points=int(row.get("points", 0) or 0),
                 )
             )
         return regs
@@ -636,6 +754,11 @@ class CheckInRepository:
                 ),
             )
             conn.commit()
+        except sqlite3.IntegrityError:
+            # 并发场景下 check_in 与 self_check_in 都可能先通过 get_by_user_slot 检查
+            # 但 UNIQUE(user_id, slot_id) 约束会拦截重复插入，转换为业务冲突
+            conn.rollback()
+            raise ConflictError("该用户已签到此时段")
         except Exception:
             conn.rollback()
             raise
@@ -769,12 +892,12 @@ class GroupRepository:
 
     # ── 成员管理 ────────────────────────────────────────────
 
-    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending") -> None:
+    def add_member(self, group_id: str, user_id: str, role: str = "member", status: str = "pending", reason: str = "") -> None:
         conn = get_connection()
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at) VALUES (?, ?, ?, ?, ?)",
-                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat()),
+                "INSERT OR REPLACE INTO group_members (group_id, user_id, role, status, joined_at, reason) VALUES (?, ?, ?, ?, ?, ?)",
+                (group_id, user_id, role, status, datetime.now(timezone.utc).isoformat(), reason),
             )
             conn.commit()
         finally:
@@ -848,3 +971,105 @@ class GroupRepository:
         """检查用户是否为已审批的小组成员"""
         row = self.get_member(group_id, user_id)
         return row is not None and row.get("status") == "approved"
+
+
+class NotificationRepository:
+    """通知数据访问"""
+
+    def create(self, notification) -> None:
+        """持久化一条通知。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO notifications (id, user_id, subject, body, created_at, "
+                "is_read, sender_id, related_link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    notification.id,
+                    notification.user_id,
+                    notification.subject,
+                    notification.body,
+                    notification.created_at.isoformat(),
+                    1 if notification.is_read else 0,
+                    notification.sender_id,
+                    notification.related_link,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get(self, notification_id: str) -> dict | None:
+        """按ID查询单条通知。"""
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM notifications WHERE id = ?", (notification_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_by_user(
+        self, user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[dict]:
+        """分页查询用户通知列表，按时间倒序。"""
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM notifications WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def count_unread(self, user_id: str) -> int:
+        """查询用户未读通知数。"""
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS total FROM notifications "
+                "WHERE user_id = ? AND is_read = 0",
+                (user_id,),
+            ).fetchone()
+            return int(row["total"]) if row else 0
+        finally:
+            conn.close()
+
+    def mark_as_read(self, notification_id: str) -> None:
+        """标记单条通知为已读。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE notifications SET is_read = 1 WHERE id = ?",
+                (notification_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def mark_all_as_read(self, user_id: str) -> None:
+        """标记用户所有通知为已读。"""
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
+                (user_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_read_by_user(self, user_id: str) -> int:
+        """删除用户所有已读通知。返回删除条数。"""
+        conn = get_connection()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM notifications WHERE user_id = ? AND is_read = 1",
+                (user_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()

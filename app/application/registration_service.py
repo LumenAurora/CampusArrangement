@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
-from app.domain.models import ActivityStatus, Registration, RegistrationStatus, SignupMode
+from app.domain.models import AllocationMode, MAX_POINTS, ActivityStatus, Notification, Registration, RegistrationStatus, SignupMode
 from app.infrastructure.db import transaction
-from app.infrastructure.repositories import ActivityRepository, RegistrationRepository, TimeSlotRepository
+from app.infrastructure.repositories import ActivityRepository, NotificationRepository, RegistrationRepository, TimeSlotRepository
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.infrastructure.repositories import GroupRepository
@@ -19,13 +22,15 @@ class RegistrationService:
         reg_repo: RegistrationRepository,
         activity_repo: ActivityRepository,
         group_repo: GroupRepository | None = None,
+        notification_repo: NotificationRepository | None = None,
     ) -> None:
         self._slot_repo = slot_repo
         self._reg_repo = reg_repo
         self._activity_repo = activity_repo
         self._group_repo = group_repo
+        self._notification_repo = notification_repo
 
-    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int) -> Registration:
+    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int, points: int = 0) -> Registration:
         if priority < 1:
             raise ValidationError("志愿优先级必须大于等于1")
         activity = self._activity_repo.get(activity_id)
@@ -33,6 +38,11 @@ class RegistrationService:
             raise ValidationError("活动不存在")
         if activity["status"] != ActivityStatus.OPEN.value:
             raise ValidationError("该活动当前不在报名中")
+        # 意愿点模式：单志愿点数范围校验（不依赖 DB 状态，可放事务外）
+        allocation_mode = AllocationMode(activity.get("allocation_mode", AllocationMode.GREEDY.value))
+        if allocation_mode == AllocationMode.POINTS:
+            if points < 0 or points > MAX_POINTS:
+                raise ValidationError(f"意愿点数必须在 0~{MAX_POINTS} 之间")
         # 校验小组权限：如果活动有小组限制，检查用户是否是成员
         if self._group_repo and activity.get("group_id"):
             if not self._group_repo.is_member(activity["group_id"], user_id):
@@ -55,18 +65,31 @@ class RegistrationService:
         if not slot or slot["activity_id"] != activity_id:
             raise ValidationError("所选时段不属于该活动")
 
-        # 如果用户有NOT_ASSIGNED记录，先将其置为CANCELLED以允许重新报名
-        existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
-        not_assigned_ids = [r["id"] for r in existing if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
-        active_existing = [r for r in existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
-        if active_existing:
-            raise ValidationError("您已报名该活动，请勿重复报名")
+        allow_multiple = bool(activity.get("allow_multiple_slots", 0))
+        if allow_multiple:
+            # 兼报模式：只检查同一 slot 是否已报名，允许同活动报不同 slot
+            existing_slot = self._reg_repo.list_by_user_slot(user_id, slot_id)
+            not_assigned_ids = [r["id"] for r in existing_slot if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
+            active_slot = [r for r in existing_slot if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+            if active_slot:
+                raise ValidationError("您已报名该时段，请勿重复报名")
+        else:
+            # 单报模式：检查同一 activity 是否已有 active 报名
+            existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
+            not_assigned_ids = [r["id"] for r in existing if r["status"] == RegistrationStatus.NOT_ASSIGNED.value]
+            active_existing = [r for r in existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+            if active_existing:
+                raise ValidationError("您已报名该活动，请勿重复报名")
 
         registration = Registration.create(
-            user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority,
+            user_id=user_id, activity_id=activity_id, slot_id=slot_id, priority=priority, points=points,
         )
         if activity.get("signup_mode") == SignupMode.REALTIME.value:
             with transaction() as conn:
+                # 事务内重新校验意愿点总数，防止 TOCTOU 竞态
+                # BEGIN IMMEDIATE 已串行化写，重新读取保证一致性
+                if allocation_mode == AllocationMode.POINTS:
+                    self._validate_points_total_in_txn(conn, user_id, activity_id, points)
                 # 先取消NOT_ASSIGNED记录
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
@@ -81,10 +104,37 @@ class RegistrationService:
         else:
             # BLIND模式也使用事务保证原子性
             with transaction() as conn:
+                # 事务内重新校验意愿点总数，防止 TOCTOU 竞态
+                if allocation_mode == AllocationMode.POINTS:
+                    self._validate_points_total_in_txn(conn, user_id, activity_id, points)
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
                 self._reg_repo.create(registration, conn=conn)
+        self._notify_registration_success(user_id, activity)
         return registration
+
+    def _notify_registration_success(self, user_id: str, activity: dict) -> None:
+        if self._notification_repo is None:
+            return
+        try:
+            activity_name = activity.get("name", "活动")
+            notification = Notification.create(
+                user_id=user_id,
+                subject="报名成功",
+                body=f"你已成功报名活动「{activity_name}」。",
+                related_link=str(activity.get("id", "")),
+            )
+            self._notification_repo.create(notification)
+        except Exception as exc:  # noqa: BLE001 - 通知失败不应回滚报名主流程
+            logger.warning("保存报名成功通知失败: %s", exc)
+
+    def _validate_points_total_in_txn(self, conn, user_id: str, activity_id: str, points: int) -> None:
+        """事务内校验意愿点总数。必须在 BEGIN IMMEDIATE 事务内调用以防止竞态。"""
+        txn_existing = self._reg_repo.list_by_user_activity(user_id, activity_id, conn=conn)
+        txn_active = [r for r in txn_existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
+        total_used = sum(int(r.get("points", 0)) for r in txn_active) + points
+        if total_used > MAX_POINTS:
+            raise ValidationError(f"意愿点总数超过上限 {MAX_POINTS}（已用 {total_used - points}，本次 {points}）")
 
     def cancel(self, user_id: str, registration_id: str) -> None:
         reg = self._reg_repo.get(registration_id)
@@ -101,12 +151,14 @@ class RegistrationService:
             raise ValidationError("报名已结束，如需取消请联系组织者请假")
         if activity and activity["status"] == ActivityStatus.ARCHIVED.value:
             raise ValidationError("已归档的活动无法取消报名")
-        # Only release the slot if the registration is PENDING in realtime mode.
-        # NOT_ASSIGNED registrations should NOT release the slot because
-        # SchedulingService.run already recalculated used_count based on
-        # actual assignments, and NOT_ASSIGNED users are not counted.
+        # Release the slot for REALTIME mode registrations that actually occupy capacity.
+        # PENDING registrations in REALTIME mode locked a slot on creation.
+        # CONFIRMED registrations also occupy a slot (they are excluded from rescheduling).
+        # NOT_ASSIGNED registrations do NOT occupy a slot — SchedulingService.run
+        # recalculates used_count based on actual assignments, so NOT_ASSIGNED users
+        # are not counted and must not trigger a release.
         if (activity and activity.get("signup_mode") == SignupMode.REALTIME.value
-                and reg["status"] == RegistrationStatus.PENDING.value):
+                and reg["status"] in (RegistrationStatus.PENDING.value, RegistrationStatus.CONFIRMED.value)):
             with transaction() as conn:
                 self._slot_repo.release_slot(reg["slot_id"], conn=conn)
                 self._reg_repo.update_status(registration_id, RegistrationStatus.CANCELLED, conn=conn)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import time
 
 from app.infrastructure.api_client import ApiClient
@@ -81,9 +82,14 @@ class RemoteActivityRepository:
         return True
 
     def update_checkin_code(self, activity_id: str, checkin_code: str) -> None:
-        # Server generates the code; the checkin_code param is ignored
-        # because the API endpoint generates its own code
+        # Server generates its own code via the API endpoint.
+        # We store the server-returned code so callers can retrieve it.
         self._api.post(f"/activities/{activity_id}/generate_checkin_code", json={})
+
+    def update_checkin_closed(self, activity_id: str, closed: bool) -> None:
+        # 远程模式：通过 close/reopen 端点切换签到关闭状态
+        action = "close" if closed else "reopen"
+        self._api.post(f"/checkin/{activity_id}/{action}", json={})
 
 
 class RemoteTimeSlotRepository:
@@ -102,7 +108,7 @@ class RemoteTimeSlotRepository:
 
     def list_positions(self, parent_slot_id: str) -> list[dict]:
         """获取某时段下的所有子岗位（远程模式）"""
-        return self._api.get(f"/activities/-/slots/{parent_slot_id}/positions")
+        return self._api.get(f"/slots/{parent_slot_id}/positions")
 
     def count_all(self) -> int:
         return int(self._metrics.get_overview().get("slots", 0))
@@ -255,4 +261,40 @@ class RemoteUserRepository:
         try:
             return self._api.get(f"/users/{user_id}")
         except Exception:
-            return None
+            try:
+                current_user = self._api.get("/users/me")
+            except Exception:
+                return None
+            return current_user if current_user.get("id") == user_id else None
+
+    def update_avatar(self, user_id: str, avatar_path: str) -> None:
+        upload_root = Path(__file__).resolve().parent.parent / "resources" / "uploads"
+        full_path = upload_root / avatar_path
+        self._api.post_file("/users/me/avatar", "file", str(full_path))
+
+    def update_notification_mode(self, user_id: str, mode) -> None:
+        # 远程模式：调用 PUT /users/me/settings 更新通知偏好
+        mode_val = mode.value if hasattr(mode, "value") else str(mode)
+        self._api.put("/users/me/settings", json={"notification_mode": mode_val})
+
+
+class RemoteNotificationRepository:
+    def __init__(self, api_client: ApiClient) -> None:
+        self._api = api_client
+
+    def list_by_user(self, user_id: str, limit: int = 50, offset: int = 0) -> list[dict]:
+        return self._api.get("/notifications", params={"limit": limit, "offset": offset})
+
+    def count_unread(self, user_id: str) -> int:
+        payload = self._api.get("/notifications/unread-count")
+        return int(payload.get("count", 0))
+
+    def mark_as_read(self, notification_id: str) -> None:
+        self._api.post(f"/notifications/{notification_id}/read", json={})
+
+    def mark_all_as_read(self, user_id: str) -> None:
+        self._api.post("/notifications/read-all", json={})
+
+    def delete_read_by_user(self, user_id: str) -> int:
+        payload = self._api.delete("/notifications/read")
+        return int(payload.get("count", 0))

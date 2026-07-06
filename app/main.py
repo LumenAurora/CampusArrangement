@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
+
+import PySide6
+
+
+def _ensure_qt_plugin_path() -> None:
+    """Let `python -m app.main` find Qt platform plugins without start scripts."""
+    plugin_path = Path(PySide6.__file__).resolve().parent / "Qt" / "plugins"
+    if plugin_path.exists():
+        os.environ.setdefault("QT_PLUGIN_PATH", str(plugin_path))
+
+
+_ensure_qt_plugin_path()
 
 from PySide6.QtWidgets import QApplication
 
@@ -24,6 +38,7 @@ from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
     GroupRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -34,6 +49,7 @@ from app.infrastructure.remote_repositories import (
     RemoteActivityRepository,
     RemoteCheckInRepository,
     RemoteRegistrationRepository,
+    RemoteNotificationRepository,
     RemoteScheduleRepository,
     RemoteTimeSlotRepository,
     RemoteUserRepository,
@@ -82,6 +98,7 @@ def main() -> int:
         # 远程模式暂不支持小组功能
         group_repo = None
         group_service = None
+        notification_repo = RemoteNotificationRepository(api_client)
     else:
         activity_repo = ActivityRepository()
         slot_repo = TimeSlotRepository()
@@ -89,10 +106,11 @@ def main() -> int:
         schedule_repo = ScheduleRepository()
         checkin_repo = CheckInRepository()
         group_repo = GroupRepository()
+        notification_repo = NotificationRepository()
 
         activity_service = ActivityService(activity_repo, slot_repo)
-        registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo)
-        scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
+        registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo, notification_repo)
+        scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo, notification_repo)
         checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
         group_service = GroupService(group_repo, activity_repo)
 
@@ -124,10 +142,14 @@ def main() -> int:
             checkin_service=checkin_service,
             group_service=group_service,
             group_repo=group_repo,
+            notification_repo=notification_repo,
             checkin_repo=checkin_repo,
         )
     window.resize(1100, 700)
     window.setMinimumSize(960, 640)
+    # 注入用户上下文：启用顶栏头像显示与账号设置入口
+    # admin_window/client_window 构造函数签名不变，由 main 在构造后注入 user_repo
+    window.set_user_context(login.user, user_repo)
     window.show()
     return app.exec()
 

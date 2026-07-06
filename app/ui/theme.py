@@ -134,7 +134,7 @@ def build_stylesheet(p: Palette) -> str:
     return f"""
 /* ===== 全局 ===== */
 * {{
-    font-family: "SF Pro Text", "Helvetica Neue", ".AppleSystemUIFont", "Segoe UI", sans-serif;
+    font-family: "Helvetica Neue", "Arial";
     font-size: 13px;
     color: {p.text_primary};
     border: none;
@@ -412,6 +412,10 @@ QPushButton#primaryButton {{
 QPushButton#primaryButton:hover {{
     background: {p.accent_hover};
 }}
+QPushButton#primaryButton:disabled {{
+    background: {p.btn_disabled_bg};
+    color: {p.btn_disabled_fg};
+}}
 QPushButton#secondaryButton {{
     background: {p.btn_secondary_bg};
     color: {p.btn_secondary_fg};
@@ -419,12 +423,20 @@ QPushButton#secondaryButton {{
 QPushButton#secondaryButton:hover {{
     background: {p.btn_secondary_hover};
 }}
+QPushButton#secondaryButton:disabled {{
+    background: {p.btn_disabled_bg};
+    color: {p.btn_disabled_fg};
+}}
 QPushButton#dangerButton {{
     background: {p.btn_danger_bg};
     color: {p.error_fg};
 }}
 QPushButton#dangerButton:hover {{
     background: {p.btn_danger_hover};
+}}
+QPushButton#dangerButton:disabled {{
+    background: {p.btn_disabled_bg};
+    color: {p.btn_disabled_fg};
 }}
 QPushButton#sidebarToggle {{
     background: transparent;

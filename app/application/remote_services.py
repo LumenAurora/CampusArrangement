@@ -74,6 +74,8 @@ class RemoteActivityService:
         checkin_mode: str = "manual",
         checkin_start: datetime | None = None,
         checkin_end: datetime | None = None,
+        group_id: str | None = None,
+        allow_multiple_slots: bool = False,
     ) -> Activity:
         # 确保 checkin_mode 序列化为字符串
         checkin_mode_str = checkin_mode.value if isinstance(checkin_mode, CheckInMode) else str(checkin_mode)
@@ -87,11 +89,14 @@ class RemoteActivityService:
             "location": location,
             "activity_type": activity_type.value,
             "checkin_mode": checkin_mode_str,
+            "allow_multiple_slots": allow_multiple_slots,
         }
         if checkin_start:
             json_data["checkin_start"] = checkin_start.isoformat()
         if checkin_end:
             json_data["checkin_end"] = checkin_end.isoformat()
+        if group_id:
+            json_data["group_id"] = group_id
         payload = self._api.post("/activities", json=json_data)
         return Activity(
             id=payload["id"],
@@ -109,6 +114,8 @@ class RemoteActivityService:
             checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
             checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
             checkin_end=datetime.fromisoformat(payload["checkin_end"]) if payload.get("checkin_end") else None,
+            group_id=payload.get("group_id"),
+            allow_multiple_slots=bool(payload.get("allow_multiple_slots", 0)),
         )
 
     def add_slot(
@@ -222,6 +229,9 @@ class RemoteActivityService:
     def get_activity(self, activity_id: str) -> dict | None:
         return self._api.get(f"/activities/{activity_id}")
 
+    def update_activity(self, user: User, activity_id: str, fields: dict) -> None:
+        self._api.put(f"/activities/{activity_id}", json=fields)
+
     def delete_activity(self, user: User, activity_id: str) -> bool:
         self._api.post(f"/activities/{activity_id}/delete", json={})
         return True
@@ -279,6 +289,8 @@ class RemoteActivityService:
             checkin_mode=CheckInMode(payload.get("checkin_mode", "manual")),
             checkin_start=datetime.fromisoformat(payload["checkin_start"]) if payload.get("checkin_start") else None,
             checkin_end=datetime.fromisoformat(payload["checkin_end"]) if payload.get("checkin_end") else None,
+            group_id=payload.get("group_id"),
+            allow_multiple_slots=bool(payload.get("allow_multiple_slots", 0)),
         )
 
 
@@ -286,10 +298,10 @@ class RemoteRegistrationService:
     def __init__(self, api_client: ApiClient) -> None:
         self._api = api_client
 
-    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int) -> Registration:
+    def register(self, user_id: str, activity_id: str, slot_id: str, priority: int, points: int = 0) -> Registration:
         payload = self._api.post(
             "/registrations",
-            json={"activity_id": activity_id, "slot_id": slot_id, "priority": priority},
+            json={"activity_id": activity_id, "slot_id": slot_id, "priority": priority, "points": points},
         )
         return Registration(
             id=payload["id"],
@@ -299,6 +311,7 @@ class RemoteRegistrationService:
             priority=payload["priority"],
             status=RegistrationStatus(payload["status"]),
             created_at=datetime.fromisoformat(payload["created_at"]),
+            points=int(payload.get("points", 0)),
         )
 
     def cancel(self, user_id: str, registration_id: str) -> None:
@@ -349,6 +362,14 @@ class RemoteCheckInService:
 
     def list_by_user(self, user_id: str) -> list[dict]:
         return self._api.get("/checkins", params={"user_id": user_id})
+
+    def close_checkin(self, user: User, activity_id: str) -> None:
+        # 远程模式：调用 POST /checkin/{activity_id}/close 人工提前结束签到
+        self._api.post(f"/checkin/{activity_id}/close", json={})
+
+    def reopen_checkin(self, user: User, activity_id: str) -> None:
+        # 远程模式：调用 POST /checkin/{activity_id}/reopen 恢复签到
+        self._api.post(f"/checkin/{activity_id}/reopen", json={})
 
     def self_check_in(self, user_id: str, activity_id: str, slot_id: str, checkin_code: str) -> CheckIn:
         payload = self._api.post(

@@ -216,3 +216,54 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ============================================================
+# Project-specific temporary files
+# ============================================================
+
+# Diff output files (generated during code review/merge analysis)
+diff*.txt
+diff_*.txt
+
+# Temporary Python modules (refactoring/development scratch files)
+tmp_*.py
+tmp_*.txt
+
+# LaTeX build artifacts (roadshow presentation)
+*.aux
+*.nav
+*.out
+*.snm
+*.toc
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+# Duplicate/backup files (Chinese "- 副本" / "-副本" suffix)
+*- 副本.*
+*-副本.*
+*.bak
+*.orig
+
+# Timestamped command/log files (YYYY-MM-DD-...)
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.txt
+
+# Local SQLite databases (dev data, should never be committed)
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+app/resources/data/*.db
+
+# Build outputs (PyInstaller / cx_Freeze etc.)
+build_*.bat.tmp
+*.exe.manifest
+
+# OS-generated desktop.ini / Thumbs.db
+desktop.ini
+Thumbs.db
+ehthumbs.db
+
+# WorkBuddy project data (AI assistant working files)
+.workbuddy/
+.trae/

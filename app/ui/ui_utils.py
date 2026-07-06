@@ -6,18 +6,23 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from app.ui.style import get_palette
@@ -30,8 +35,30 @@ def configure_table(table: QTableWidget) -> None:
     table.verticalHeader().setVisible(False)
     table.setShowGrid(False)
     table.verticalHeader().setDefaultSectionSize(40)
+    # 关键：禁用横向滚动条。Stretch 模式下若 cell widget 顶出宽度，
+    # 默认 ScrollBarAsNeeded 会冒出滚动条，导致整页可左右滑动（系统性布局 bug 根因）。
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     header = table.horizontalHeader()
     header.setSectionResizeMode(QHeaderView.Stretch)
+    header.setCascadingSectionResizes(True)
+
+
+def configure_tree(tree: QTreeWidget) -> None:
+    """QTreeWidget 的自适应配置，与 configure_table 对齐。
+
+    关键修复：原 _slot_tree 硬编码 8 列共 780px，窄窗口下必然出现横向滚动条。
+    改为 Stretch + 禁用横向滚动条，让列宽随容器自适应。
+    """
+    tree.setAlternatingRowColors(True)
+    tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+    tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    tree.setRootIsDecorated(False)
+    tree.setUniformRowHeights(True)
+    tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    header = tree.header()
+    header.setSectionResizeMode(QHeaderView.Stretch)
+    header.setStretchLastSection(True)
+    header.setCascadingSectionResizes(True)
 
 
 def make_page_header(title: str, subtitle: str | None = None) -> QWidget:
@@ -59,7 +86,10 @@ def format_datetime(value: str) -> str:
 
 
 def format_slot_name(slot: dict) -> str:
-    """Format a slot dict into a human-readable label."""
+    """Format a slot dict into a human-readable label.
+
+    时间格式与 format_datetime 保持一致（含年份），避免年份显示不一致。
+    """
     name = slot.get("name")
     if name:
         return name
@@ -69,7 +99,10 @@ def format_slot_name(slot: dict) -> str:
         try:
             s = datetime.fromisoformat(str(start))
             e = datetime.fromisoformat(str(end))
-            return f"{s.strftime('%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+            # 同日只显示一次日期，跨日显示完整起止
+            if s.date() == e.date():
+                return f"{s.strftime('%Y-%m-%d %H:%M')} ~ {e.strftime('%H:%M')}"
+            return f"{s.strftime('%Y-%m-%d %H:%M')} ~ {e.strftime('%Y-%m-%d %H:%M')}"
         except ValueError:
             pass
     return str(slot.get("id", "—"))
@@ -101,8 +134,34 @@ def to_utc(value: str | datetime) -> datetime:
 
     这是整个应用中时间解析的唯一标准入口。
     """
-    dt = datetime.fromisoformat(str(value)) if isinstance(value, str) else value
+    if isinstance(value, str):
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        dt = datetime.fromisoformat(normalized)
+    else:
+        dt = value
     return dt.astimezone(timezone.utc)
+
+
+def to_local(value: str | datetime) -> datetime:
+    """将时间值转为本地时区-aware datetime，用于 UI 展示。
+
+    统一入口：先经 to_utc 归一化（naive 视为本地时间），再 astimezone() 转回本地，
+    保证 UI 看到的是用户所在时区的「墙上时间」，而非 UTC。
+    """
+    return to_utc(value).astimezone()
+
+
+def safe_to_utc(value: str | datetime | None) -> datetime | None:
+    """安全的 to_utc：传入 None 或非法字符串返回 None，避免上层异常。
+
+    用于 UI 展示场景，单个字段格式异常不应拖垮整页渲染。
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return to_utc(value)
+    except (ValueError, TypeError):
+        return None
 
 
 def format_activity_status(activity: dict) -> str:
@@ -124,33 +183,54 @@ def format_activity_status(activity: dict) -> str:
         signup_start = activity.get("signup_start")
         signup_end = activity.get("signup_end")
         if signup_start:
-            start = to_utc(signup_start)
-            if now < start:
+            start = safe_to_utc(signup_start)
+            if start and now < start:
                 return "报名未开始"
         if signup_end:
-            end = to_utc(signup_end)
-            if now > end:
+            end = safe_to_utc(signup_end)
+            if end and now > end:
                 return "报名已截止"
         return "报名中"
 
     if status == "closed":
+        # 人工提前结束签到：最高优先级，直接返回"签到已结束"
+        if activity.get("checkin_closed"):
+            return "签到已结束"
         now = datetime.now(timezone.utc)
         checkin_start = activity.get("checkin_start")
         checkin_end = activity.get("checkin_end")
+        # 调整判断顺序：先看签到是否已开始，再看是否已结束。
+        # 原逻辑直接判 checkin_end 过期就返回"签到已结束"，
+        # 但若 checkin_start 未设置或未到，应优先返回"签到未开始"，
+        # 否则会出现"刚关闭报名就显示签到已结束"的语义跳跃。
         if checkin_start:
-            start = to_utc(checkin_start)
-            if now < start:
+            start = safe_to_utc(checkin_start)
+            if start and now < start:
                 return "签到未开始"
         if checkin_end:
-            end = to_utc(checkin_end)
-            if now > end:
-                return "签到已结束"
+            end = safe_to_utc(checkin_end)
+            if end and now > end:
+                # 仅当签到已开始（或未设开始时间但结束时间已过）才判为"签到已结束"
+                if not checkin_start or (start is not None and now >= start):
+                    return "签到已结束"
         return "签到中"
 
     return format_status(status)
 
 
-def set_banner(label: QLabel, kind: str, text: str) -> None:
+_banner_timers: dict[int, "QTimer"] = {}
+
+
+def set_banner(label: QLabel, kind: str, text: str, auto_dismiss: bool | None = None) -> None:
+    """更新 banner 文案与样式。
+
+    默认 toast 行为：success/info 在 2.5 秒后自动消失，error 持久保留直到下次操作。
+    显式传入 ``auto_dismiss`` 可覆盖默认行为。
+
+    若 label 已有挂载的自动消失计时器，会先取消，避免旧计时器误清新文案。
+    计时器以 label 为父对象，label 销毁时计时器同步销毁；
+    此处对 stop() 做异常兜底，避免 label 销毁后 id 复用导致 RuntimeError。
+    """
     mapping = {
         "success": "bannerSuccess",
         "error": "bannerError",
@@ -161,6 +241,43 @@ def set_banner(label: QLabel, kind: str, text: str) -> None:
     label.setVisible(bool(text))
     label.style().unpolish(label)
     label.style().polish(label)
+
+    label_id = id(label)
+    existing = _banner_timers.pop(label_id, None)
+    if existing is not None:
+        try:
+            existing.stop()
+        except RuntimeError:
+            # 旧 label 已销毁、计时器随之销毁，stop 失败可忽略
+            pass
+
+    should_dismiss = auto_dismiss if auto_dismiss is not None else kind in ("success", "info")
+    if text and should_dismiss:
+        timer = QTimer(label)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: _clear_banner(label))
+        timer.start(2500)
+        _banner_timers[label_id] = timer
+
+
+def _clear_banner(label: QLabel) -> None:
+    """清空 banner 文案与样式，并移除对应的自动消失计时器。"""
+    label_id = id(label)
+    existing = _banner_timers.pop(label_id, None)
+    if existing is not None:
+        try:
+            existing.stop()
+        except RuntimeError:
+            pass
+    try:
+        label.setObjectName("bannerInfo")
+        label.setText("")
+        label.setVisible(False)
+        label.style().unpolish(label)
+        label.style().polish(label)
+    except RuntimeError:
+        # label 已销毁（理论上不会发生，因计时器是 label 子对象），兜底保护
+        pass
 
 
 def set_table_empty(table: QTableWidget, columns: int, message: str = "暂无数据") -> None:
@@ -183,11 +300,11 @@ def make_status_item(text: str) -> QTableWidgetItem:
     color_map = {
         "报名中": (p.success_fg, p.success_bg),
         "报名未开始": (p.accent, p.accent_soft),
-        "报名已截止": (p.error_fg, p.error_bg),
+        "报名已截止": (p.text_tertiary, p.bg_sidebar),
         "签到未开始": (p.accent, p.accent_soft),
         "签到中": (p.success_fg, p.success_bg),
-        "签到已结束": (p.error_fg, p.error_bg),
-        "已结束": (p.error_fg, p.error_bg),
+        "签到已结束": (p.text_tertiary, p.bg_sidebar),
+        "已结束": (p.text_tertiary, p.bg_sidebar),
         "已归档": (p.text_tertiary, p.bg_sidebar),
         "草稿": (p.warning_fg, p.warning_bg),
         "待审核": (p.accent, p.accent_soft),
@@ -328,3 +445,193 @@ class ItemDetailDialog(QDialog):
         layout.addWidget(close_btn)
 
         self.setLayout(layout)
+
+
+class RadioCardGroup(QWidget):
+    """卡片式单选组件 — 使用 QWidget 卡片 + 隐藏 QRadioButton。
+
+    每个选项显示为可点选的卡片，QLabel 渲染富文本标题和说明。
+    解决 QRadioButton 不支持 HTML 富文本的问题。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        self.setLayout(self._layout)
+        self._cards: list[QWidget] = []
+        self._radios: list[QRadioButton] = []
+        self._labels: list[QLabel] = []
+        self._data: list = []
+
+    def add_card(self, title: str, description: str = "", data=None, tooltip: str = "") -> None:
+        """添加一张选项卡片。"""
+        p = get_palette()
+        # 外层容器
+        card = QWidget()
+        card.setCursor(Qt.PointingHandCursor)
+        card_layout = QHBoxLayout()
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(10)
+
+        # 隐藏的 radio button（只做选择逻辑）
+        radio = QRadioButton()
+        radio.setFixedSize(0, 0)
+
+        # 富文本标签
+        text = f"<b style='color: {p.text_primary};'>{title}</b>"
+        if description:
+            text += f"<br><span style='color: {p.text_tertiary}; font-size: 11px;'>{description}</span>"
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("border: none; background: transparent;")
+        if tooltip:
+            label.setToolTip(tooltip)
+
+        card_layout.addWidget(radio)
+        card_layout.addWidget(label, 1)
+        card.setLayout(card_layout)
+        # 卡片样式
+        card.setStyleSheet(f"""
+            QWidget {{
+                background: {p.bg_input};
+                border: 1.5px solid {p.border_light};
+                border-radius: 10px;
+            }}
+        """)
+        # hover 和 checked 样式通过 eventFilter 或 paintEvent 实现
+        # 简化：用 mousePressEvent 连接 radio 的 click
+        card.mousePressEvent = lambda e, r=radio: r.click()
+        label.mousePressEvent = lambda e, r=radio: r.click()
+
+        # 监听 radio 状态变化来更新样式
+        radio.toggled.connect(lambda checked, c=card, p=p: self._update_card_style(c, checked, p))
+
+        self._layout.addWidget(card)
+        self._group.addButton(radio)
+        self._cards.append(card)
+        self._radios.append(radio)
+        self._labels.append(label)
+        self._data.append(data)
+
+    @staticmethod
+    def _update_card_style(card: QWidget, checked: bool, p) -> None:
+        if checked:
+            card.setStyleSheet(
+                f"QWidget {{ background: {p.accent_soft}; border: 2px solid {p.accent}; border-radius: 10px; }}"
+            )
+        else:
+            card.setStyleSheet(
+                f"QWidget {{ background: {p.bg_input}; border: 1.5px solid {p.border_light}; border-radius: 10px; }}"
+                f"QWidget:hover {{ border-color: {p.accent}; background: {p.accent_soft}; }}"
+            )
+
+    def current_data(self):
+        checked = self._group.checkedButton()
+        if checked is None:
+            return None
+        try:
+            idx = self._radios.index(checked)
+            return self._data[idx] if idx < len(self._data) else None
+        except ValueError:
+            return None
+
+    def card_text(self, index: int) -> str:
+        """返回指定索引卡片的纯文本。"""
+        if 0 <= index < len(self._labels):
+            return self._labels[index].text().replace("&", "").strip()
+        return ""
+
+    def current_index(self) -> int:
+        checked = self._group.checkedButton()
+        if checked is None:
+            return -1
+        try:
+            return self._radios.index(checked)
+        except ValueError:
+            return -1
+
+    def set_current_by_data(self, data) -> None:
+        try:
+            idx = self._data.index(data)
+            self._radios[idx].setChecked(True)
+        except (ValueError, IndexError):
+            pass
+
+    def set_current_index(self, index: int) -> None:
+        if 0 <= index < len(self._radios):
+            self._radios[index].setChecked(True)
+
+
+class StepIndicator(QWidget):
+    """步骤指示器 — 水平步骤条，显示当前进度。
+
+    用法：StepIndicator(["基本信息", "报名规则", "时段岗位"], current=0)
+    """
+
+    def __init__(self, steps: list[str], current: int = 0, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._steps = steps
+        self._current = current
+        self._labels: list[QLabel] = []
+        self._build()
+
+    def _build(self) -> None:
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        p = get_palette()
+        for i, step in enumerate(self._steps):
+            # 步骤圆点 + 文字
+            is_active = i <= self._current
+            is_current = i == self._current
+            color = p.accent if is_active else p.text_tertiary
+            bg = p.accent if is_active else p.border_light
+
+            dot = QLabel()
+            dot.setFixedSize(28, 28)
+            dot.setAlignment(Qt.AlignCenter)
+            dot.setText(str(i + 1))
+            dot.setStyleSheet(
+                f"background: {bg}; color: {p.text_on_accent if is_active else p.text_secondary}; "
+                f"border-radius: 14px; font-weight: bold; font-size: 13px;"
+            )
+            layout.addWidget(dot)
+
+            label = QLabel(step)
+            label.setStyleSheet(
+                f"color: {color}; font-weight: {'700' if is_current else '400'}; "
+                f"font-size: 12px; margin: 0 8px;"
+            )
+            self._labels.append(label)
+            layout.addWidget(label)
+
+            if i < len(self._steps) - 1:
+                # 连接线
+                line = QFrame()
+                line.setFrameShape(QFrame.HLine)
+                line.setFixedHeight(2)
+                line.setMinimumWidth(24)
+                line.setStyleSheet(
+                    f"background: {p.accent if i < self._current else p.border_light}; "
+                    f"border: none; margin: 0 4px;"
+                )
+                line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                layout.addWidget(line)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def set_current(self, index: int) -> None:
+        """更新当前步骤索引并刷新样式。"""
+        self._current = max(0, min(index, len(self._steps) - 1))
+        # 清除并重建
+        while self.layout().count():
+            item = self.layout().takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._labels.clear()
+        self._build()

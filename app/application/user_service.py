@@ -20,8 +20,10 @@ class UserService:
 
         if not username or not username.strip():
             raise ValidationError("用户名不能为空")
-        if not password or len(password) < 4:
-            raise ValidationError("密码长度不能少于4位")
+        if len(username.strip()) > 50:
+            raise ValidationError("用户名不能超过50个字符")
+        if not password or len(password) < 6:
+            raise ValidationError("密码长度不能少于6位")
         if self._user_repo.get_by_username(username.strip()):
             raise ValidationError("用户名已存在")
         user = User.create(username=username.strip(), role=role)
@@ -32,8 +34,10 @@ class UserService:
         """用户自助注册，注册后状态为待审批"""
         if not username or not username.strip():
             raise ValidationError("用户名不能为空")
-        if not password or len(password) < 4:
-            raise ValidationError("密码长度不能少于4位")
+        if len(username.strip()) > 50:
+            raise ValidationError("用户名不能超过50个字符")
+        if not password or len(password) < 6:
+            raise ValidationError("密码长度不能少于6位")
         if self._user_repo.get_by_username(username.strip()):
             raise ValidationError("用户名已存在")
         user = User.create(username=username.strip(), role=Role.USER, status=UserStatus.PENDING_REVIEW)
@@ -42,8 +46,8 @@ class UserService:
 
     def approve_user(self, current_user: User, user_id: str) -> User:
         """审批通过用户注册"""
-        if current_user.role == Role.USER:
-            raise PermissionDenied("普通用户无权审批用户")
+        if current_user.role != Role.SUPER_ADMIN:
+            raise PermissionDenied("仅超级管理员可审批用户")
         record = self._user_repo.get_by_id(user_id)
         if not record:
             raise ValidationError("用户不存在")
@@ -54,8 +58,8 @@ class UserService:
 
     def reject_user(self, current_user: User, user_id: str) -> None:
         """拒绝用户注册"""
-        if current_user.role == Role.USER:
-            raise PermissionDenied("普通用户无权审批用户")
+        if current_user.role != Role.SUPER_ADMIN:
+            raise PermissionDenied("仅超级管理员可审批用户")
         record = self._user_repo.get_by_id(user_id)
         if not record:
             raise ValidationError("用户不存在")
@@ -65,15 +69,18 @@ class UserService:
 
     def list_pending_users(self, current_user: User) -> list[dict]:
         """获取待审批用户列表"""
-        if current_user.role == Role.USER:
-            raise PermissionDenied("普通用户无权查看待审批用户")
+        if current_user.role != Role.SUPER_ADMIN:
+            raise PermissionDenied("仅超级管理员可查看待审批用户")
         return self._user_repo.list_by_status(UserStatus.PENDING_REVIEW)
 
     def authenticate(self, username: str, password: str) -> User:
         record = self._user_repo.get_by_username(username)
         if not record or not verify_password(password, record["password_hash"]):
             raise ValidationError("用户名或密码错误")
-        status = UserStatus(record.get("status", "approved"))
+        try:
+            status = UserStatus(record.get("status", "approved"))
+        except ValueError:
+            raise ValidationError("用户状态数据异常，请联系管理员")
         if status == UserStatus.PENDING_REVIEW:
             raise ValidationError("账号待审批，请等待管理员审核")
         if status == UserStatus.REJECTED:

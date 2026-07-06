@@ -2,6 +2,8 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 from app.application.activity_service import ActivityService
 from app.application.checkin_service import CheckInService
@@ -14,6 +16,7 @@ from app.infrastructure.exporter import export_to_excel
 from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -22,11 +25,21 @@ from app.infrastructure.repositories import (
 
 
 class ScenarioTests(unittest.TestCase):
+    """端到端场景测试 — 每个测试使用独立 DB（通过 patch DB_PATH）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmpdir = tempfile.mkdtemp(prefix="campus_scenario_test_")
+
     def setUp(self) -> None:
-        self._db_path = os.path.join(tempfile.gettempdir(), "campus_scenario.db")
-        os.environ["CAMPUS_DB_PATH"] = self._db_path
+        self._db_path = os.path.join(self._tmpdir, f"{self._testMethodName}.db")
         if os.path.exists(self._db_path):
             os.remove(self._db_path)
+        # patch DB_PATH 避免模块导入时缓存导致的测试间 DB 共享
+        self._db_patcher = patch("app.infrastructure.db.DB_PATH", Path(self._db_path))
+        self._db_patcher.start()
+        self.addCleanup(self._db_patcher.stop)
+        os.environ.pop("CAMPUS_DB_PATH", None)
         init_db()
 
         self.user_repo = UserRepository()
@@ -35,22 +48,29 @@ class ScenarioTests(unittest.TestCase):
         self.reg_repo = RegistrationRepository()
         self.schedule_repo = ScheduleRepository()
         self.checkin_repo = CheckInRepository()
+        self.notification_repo = NotificationRepository()
 
         self.user_service = UserService(self.user_repo)
         self.activity_service = ActivityService(self.activity_repo, self.slot_repo)
-        self.registration_service = RegistrationService(self.slot_repo, self.reg_repo, self.activity_repo)
+        self.registration_service = RegistrationService(
+            self.slot_repo,
+            self.reg_repo,
+            self.activity_repo,
+            notification_repo=self.notification_repo,
+        )
         self.scheduling_service = SchedulingService(
             self.reg_repo,
             self.slot_repo,
             self.schedule_repo,
             self.activity_repo,
+            self.notification_repo,
         )
         self.checkin_service = CheckInService(self.checkin_repo, self.schedule_repo, self.activity_repo)
 
     def test_full_flow_blind_lottery(self) -> None:
-        admin = self.user_service.register(current_user=None, username="admin1", password="pass", role=Role.SUPER_ADMIN)
-        user_a = self.user_service.register(current_user=admin, username="user_a", password="pass", role=Role.USER)
-        user_b = self.user_service.register(current_user=admin, username="user_b", password="pass", role=Role.USER)
+        admin = self.user_service.register(current_user=None, username="admin1", password="pass123", role=Role.SUPER_ADMIN)
+        user_a = self.user_service.register(current_user=admin, username="user_a", password="pass123", role=Role.USER)
+        user_b = self.user_service.register(current_user=admin, username="user_b", password="pass123", role=Role.USER)
 
         activity = self.activity_service.create_activity(
             user=admin,
@@ -80,10 +100,18 @@ class ScenarioTests(unittest.TestCase):
 
         self.registration_service.register(user_a.id, activity.id, slot1.id, priority=1)
         self.registration_service.register(user_b.id, activity.id, slot2.id, priority=1)
+        self.assertEqual(self.notification_repo.count_unread(user_a.id), 1)
+        self.assertEqual(self.notification_repo.count_unread(user_b.id), 1)
 
         self.activity_service.close_activity(admin, activity.id)
         assigned = self.scheduling_service.run(activity.id)
         self.assertEqual(assigned, 2)
+        self.assertEqual(self.notification_repo.count_unread(user_a.id), 2)
+        self.assertEqual(self.notification_repo.count_unread(user_b.id), 2)
+        self.assertTrue(any(
+            row["subject"] == "排班结果"
+            for row in self.notification_repo.list_by_user(user_a.id)
+        ))
         rows = self.schedule_repo.list_by_activity(activity.id)
         self.assertEqual(len(rows), 2)
         self.assertEqual({row["user_id"] for row in rows}, {user_a.id, user_b.id})
@@ -95,8 +123,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(os.path.exists(output_path))
 
     def test_registration_cancel_and_checkin(self) -> None:
-        admin = self.user_service.register(current_user=None, username="admin2", password="pass", role=Role.SUPER_ADMIN)
-        user_c = self.user_service.register(current_user=admin, username="user_c", password="pass", role=Role.USER)
+        admin = self.user_service.register(current_user=None, username="admin2", password="pass123", role=Role.SUPER_ADMIN)
+        user_c = self.user_service.register(current_user=admin, username="user_c", password="pass123", role=Role.USER)
 
         activity = self.activity_service.create_activity(
             user=admin,
@@ -140,8 +168,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(result["status"], CheckInStatus.CHECKED_IN.value)
 
     def test_registration_requires_open_activity(self) -> None:
-        admin = self.user_service.register(current_user=None, username="admin3", password="pass", role=Role.SUPER_ADMIN)
-        user_d = self.user_service.register(current_user=admin, username="user_d", password="pass", role=Role.USER)
+        admin = self.user_service.register(current_user=None, username="admin3", password="pass123", role=Role.SUPER_ADMIN)
+        user_d = self.user_service.register(current_user=admin, username="user_d", password="pass123", role=Role.USER)
 
         activity = self.activity_service.create_activity(
             user=admin,

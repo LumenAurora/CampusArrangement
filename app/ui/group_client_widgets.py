@@ -4,7 +4,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -124,8 +126,18 @@ class GroupClientPanel(QWidget):
                 self._all_table.setCellWidget(i, 4, join_btn)
 
     def _join_group(self, group_id: str) -> None:
+        # 弹出输入对话框让用户填写申请理由，方便管理端审批参考
+        reason, ok = QInputDialog.getText(
+            self,
+            "申请加入小组",
+            "请填写申请理由（可选）：",
+            QLineEdit.Normal,
+            "",
+        )
+        if not ok:
+            return  # 用户取消
         try:
-            self._service.join_group(self._user.id, group_id)
+            self._service.join_group(self._user.id, group_id, reason=reason.strip())
             QMessageBox.information(self, "申请成功", "已提交加入申请，请等待小组管理员审批")
             self.refresh()
         except ValidationError as exc:
@@ -137,7 +149,7 @@ class GroupClientPanel(QWidget):
         if reply != QMessageBox.Yes:
             return
         try:
-            self._repo.remove_member(group_id, self._user.id)
+            self._service.leave_group(self._user.id, group_id)
             QMessageBox.information(self, "成功", "已退出小组")
             self.refresh()
         except Exception as exc:

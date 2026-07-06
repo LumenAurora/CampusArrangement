@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import secrets
+import shutil
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -17,11 +19,13 @@ from app.application.registration_service import RegistrationService
 from app.application.scheduling_service import SchedulingService
 from app.application.user_service import UserService
 from app.domain.exceptions import CapacityExceeded, ConflictError, PermissionDenied, ValidationError
-from app.domain.models import ActivityStatus, ActivityType, AllocationMode, CheckInMode, CheckInStatus, RegistrationStatus, Role, SignupMode, SlotType, User, UserStatus
+from app.domain.models import MAX_POINTS, ActivityStatus, ActivityType, AllocationMode, CheckInMode, CheckInStatus, NotificationMode, RegistrationStatus, Role, SignupMode, SlotType, User, UserStatus
 from app.infrastructure.db import init_db
 from app.infrastructure.repositories import (
     ActivityRepository,
     CheckInRepository,
+    GroupRepository,
+    NotificationRepository,
     RegistrationRepository,
     ScheduleRepository,
     TimeSlotRepository,
@@ -47,11 +51,13 @@ slot_repo = TimeSlotRepository()
 reg_repo = RegistrationRepository()
 schedule_repo = ScheduleRepository()
 checkin_repo = CheckInRepository()
+group_repo = GroupRepository()
+notification_repo = NotificationRepository()
 
 user_service = UserService(user_repo)
 activity_service = ActivityService(activity_repo, slot_repo)
-registration_service = RegistrationService(slot_repo, reg_repo, activity_repo)
-scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo)
+registration_service = RegistrationService(slot_repo, reg_repo, activity_repo, group_repo, notification_repo)
+scheduling_service = SchedulingService(reg_repo, slot_repo, schedule_repo, activity_repo, notification_repo)
 checkin_service = CheckInService(checkin_repo, schedule_repo, activity_repo)
 
 _tokens: dict[str, tuple[str, float]] = {}
@@ -93,6 +99,16 @@ class ActivityCreateRequest(BaseModel):
     checkin_mode: CheckInMode = CheckInMode.MANUAL
     checkin_start: datetime | None = None
     checkin_end: datetime | None = None
+    group_id: str | None = None
+    allow_multiple_slots: bool = False
+
+
+class ActivityUpdateRequest(BaseModel):
+    name: str | None = None
+    signup_start: datetime | None = None
+    signup_end: datetime | None = None
+    details: str | None = None
+    location: str | None = None
 
 
 class SlotCreateRequest(BaseModel):
@@ -115,6 +131,7 @@ class RegistrationRequest(BaseModel):
     activity_id: str
     slot_id: str
     priority: int = Field(..., ge=1)
+    points: int = Field(0, ge=0, le=99)  # 意愿点模式：用户对该志愿分配的点数
 
 
 class ScheduleRunRequest(BaseModel):
@@ -176,7 +193,9 @@ class UnmarkAbsentRequest(BaseModel):
 
 def _to_user(record: dict) -> User:
     return User(id=record["id"], username=record["username"], role=Role(record["role"]),
-                status=UserStatus(record.get("status", "approved")))
+                status=UserStatus(record.get("status", "approved")),
+                avatar_path=record.get("avatar_path", ""),
+                notification_mode=NotificationMode(record.get("notification_mode", "in_app")))
 
 
 def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
@@ -199,12 +218,29 @@ def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
     record = user_repo.get_by_id(user_id)
     if not record:
         raise HTTPException(status_code=401, detail="用户不存在")
-    return _to_user(record)
+    user = _to_user(record)
+    # 校验用户当前状态：REJECTED/PENDING 用户即便持有旧 token 也不允许操作
+    if user.status != UserStatus.APPROVED:
+        with _tokens_lock:
+            _tokens.pop(token, None)
+        raise HTTPException(status_code=403, detail="账号已被禁用或尚未审批通过")
+    return user
 
 
 def _require_roles(user: User, roles: set[Role]) -> None:
     if user.role not in roles:
         raise HTTPException(status_code=403, detail="权限不足")
+
+
+def _check_activity_access(user: User, activity_id: str) -> dict:
+    """校验用户对活动的访问权限：超级管理员或活动 owner 可访问，
+    否则抛 403。返回活动记录供后续使用。"""
+    activity = activity_repo.get(activity_id)
+    if not activity:
+        raise HTTPException(status_code=404, detail="活动不存在")
+    if user.role != Role.SUPER_ADMIN and activity.get("owner_id") != user.id:
+        raise HTTPException(status_code=403, detail="无权访问该活动的数据")
+    return activity
 
 
 def _handle_domain_error(exc: Exception) -> None:
@@ -231,10 +267,26 @@ def login(payload: LoginRequest) -> dict:
     token = secrets.token_hex(16)
     with _tokens_lock:
         _tokens[token] = (user.id, time.time())
+    # 读取完整用户记录以返回头像与通知偏好
+    record = user_repo.get_by_id(user.id) or {}
     return {
         "token": token,
-        "user": {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value},
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "role": user.role.value,
+            "status": user.status.value,
+            "avatar_path": record.get("avatar_path", ""),
+            "notification_mode": record.get("notification_mode", "in_app"),
+        },
     }
+
+
+def _strip_secrets(user: dict | None) -> dict | None:
+    """剔除用户记录中的敏感字段（password_hash），避免通过 API 外泄。"""
+    if user is None:
+        return None
+    return {k: v for k, v in user.items() if k != "password_hash"}
 
 
 @app.get("/users")
@@ -245,17 +297,35 @@ def list_users(
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     if username:
         user = user_repo.get_by_username(username)
-        return [user] if user else []
-    return user_repo.list_all()
+        stripped = _strip_secrets(user)
+        return [stripped] if stripped else []
+    return [_strip_secrets(user) for user in user_repo.list_all()]
+
+
+@app.get("/users/pending")
+def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
+    """获取待审批用户列表"""
+    _require_roles(current_user, {Role.SUPER_ADMIN})
+    try:
+        return user_service.list_pending_users(current_user)
+    except Exception as exc:
+        _handle_domain_error(exc)
 
 
 @app.get("/users/{user_id}")
 def get_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    if user_id == "me":
+        record = user_repo.get_by_id(current_user.id)
+        stripped = _strip_secrets(record)
+        if not stripped:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        return stripped
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
     user = user_repo.get_by_id(user_id)
-    if not user:
+    stripped = _strip_secrets(user)
+    if not stripped:
         raise HTTPException(status_code=404, detail="用户不存在")
-    return user
+    return stripped
 
 
 @app.post("/users")
@@ -288,20 +358,10 @@ def self_register(payload: SelfRegisterRequest) -> dict:
     return {"id": user.id, "username": user.username, "role": user.role.value, "status": user.status.value}
 
 
-@app.get("/users/pending")
-def list_pending_users(current_user: User = Depends(_get_current_user)) -> list[dict]:
-    """获取待审批用户列表"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
-    try:
-        return user_service.list_pending_users(current_user)
-    except Exception as exc:
-        _handle_domain_error(exc)
-
-
 @app.post("/users/{user_id}/approve")
 def approve_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     """审批通过用户注册"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _require_roles(current_user, {Role.SUPER_ADMIN})
     try:
         user = user_service.approve_user(current_user, user_id)
     except Exception as exc:
@@ -312,7 +372,7 @@ def approve_user(user_id: str, current_user: User = Depends(_get_current_user)) 
 @app.post("/users/{user_id}/reject")
 def reject_user(user_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     """拒绝用户注册"""
-    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _require_roles(current_user, {Role.SUPER_ADMIN})
     try:
         user_service.reject_user(current_user, user_id)
     except Exception as exc:
@@ -320,20 +380,174 @@ def reject_user(user_id: str, current_user: User = Depends(_get_current_user)) -
     return {"ok": True}
 
 
+# 头像存储目录
+_AVATAR_DIR = Path(__file__).resolve().parent.parent / "resources" / "uploads" / "avatars"
+_AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+_ALLOWED_AVATAR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2MB
+
+
+@app.get("/users/me")
+def get_me(current_user: User = Depends(_get_current_user)) -> dict:
+    """获取当前登录用户的完整信息（含头像与通知偏好）。"""
+    record = user_repo.get_by_id(current_user.id)
+    if not record:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return _strip_secrets(record)
+
+
+class SettingsUpdateRequest(BaseModel):
+    notification_mode: NotificationMode = NotificationMode.IN_APP
+
+
+@app.put("/users/me/settings")
+def update_my_settings(payload: SettingsUpdateRequest, current_user: User = Depends(_get_current_user)) -> dict:
+    """更新当前用户的通知偏好。"""
+    try:
+        user_repo.update_notification_mode(current_user.id, payload.notification_mode.value)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True, "notification_mode": payload.notification_mode.value}
+
+
+@app.get("/notifications")
+def list_my_notifications(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(_get_current_user),
+) -> list[dict]:
+    """分页获取当前用户的站内通知。"""
+    return notification_repo.list_by_user(current_user.id, limit=max(1, min(limit, 100)), offset=max(0, offset))
+
+
+@app.get("/notifications/unread-count")
+def count_my_unread_notifications(current_user: User = Depends(_get_current_user)) -> dict:
+    """获取当前用户未读通知数。"""
+    return {"count": notification_repo.count_unread(current_user.id)}
+
+
+@app.post("/notifications/{notification_id}/read")
+def mark_my_notification_read(
+    notification_id: str,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    """标记当前用户的一条通知为已读。"""
+    notification = notification_repo.get(notification_id)
+    if not notification or notification.get("user_id") != current_user.id:
+        raise HTTPException(status_code=404, detail="通知不存在")
+    notification_repo.mark_as_read(notification_id)
+    return {"ok": True}
+
+
+@app.post("/notifications/read-all")
+def mark_all_my_notifications_read(current_user: User = Depends(_get_current_user)) -> dict:
+    """标记当前用户全部通知为已读。"""
+    notification_repo.mark_all_as_read(current_user.id)
+    return {"ok": True}
+
+
+@app.delete("/notifications/read")
+def delete_my_read_notifications(current_user: User = Depends(_get_current_user)) -> dict:
+    """删除当前用户全部已读通知。"""
+    return {"count": notification_repo.delete_read_by_user(current_user.id)}
+
+
+@app.post("/users/me/avatar")
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    """上传当前用户头像。保存到 resources/uploads/avatars/{user_id}.{ext}。"""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_AVATAR_EXTS:
+        raise HTTPException(status_code=400, detail=f"不支持的头像格式，仅支持 {', '.join(_ALLOWED_AVATAR_EXTS)}")
+    content = await file.read()
+    if len(content) > _MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail=f"头像大小不能超过 {_MAX_AVATAR_BYTES // 1024}KB")
+    save_path = _AVATAR_DIR / f"{current_user.id}{ext}"
+    save_path.write_bytes(content)
+    # 存相对路径，便于本地/远程统一
+    rel_path = f"avatars/{current_user.id}{ext}"
+    try:
+        user_repo.update_avatar(current_user.id, rel_path)
+    except Exception as exc:
+        # 写库失败时清理已写入的孤儿文件，避免磁盘残留与 DB 不一致
+        try:
+            save_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        _handle_domain_error(exc)
+    # 清理同 user_id 的旧扩展名文件（用户可能从 .png 切换到 .jpg）
+    for old in _AVATAR_DIR.glob(f"{current_user.id}.*"):
+        if old != save_path:
+            try:
+                old.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return {"ok": True, "avatar_path": rel_path}
+
+
+@app.post("/checkin/{activity_id}/close")
+def close_checkin(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    """人工提前结束签到。"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        checkin_service.close_checkin(current_user, activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True}
+
+
+@app.post("/checkin/{activity_id}/reopen")
+def reopen_checkin(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    """恢复签到（撤销人工提前结束）。"""
+    _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    try:
+        checkin_service.reopen_checkin(current_user, activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True}
+
+
+def _filter_visible_activities_for_user(user: User, activities: list[dict]) -> list[dict]:
+    if user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        return activities
+    visible_statuses = {
+        ActivityStatus.OPEN.value,
+        ActivityStatus.CLOSED.value,
+        ActivityStatus.ARCHIVED.value,
+    }
+    return [activity for activity in activities if activity.get("status") in visible_statuses]
+
+
+def _is_activity_visible_to_user(user: User, activity: dict) -> bool:
+    return bool(_filter_visible_activities_for_user(user, [activity]))
+
+
+def _ensure_slot_visible_to_user(user: User, slot_id: str) -> dict:
+    slot = slot_repo.get(slot_id)
+    if not slot:
+        raise HTTPException(status_code=404, detail="时段不存在")
+    activity = activity_repo.get(slot.get("activity_id", ""))
+    if not activity or not _is_activity_visible_to_user(user, activity):
+        raise HTTPException(status_code=404, detail="时段不存在")
+    return slot
+
+
 @app.get("/activities")
-def list_activities(status: Optional[str] = None, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_activities(status: Optional[str] = None, current_user: User = Depends(_get_current_user)) -> list[dict]:
     if status:
         valid_statuses = {s.value for s in ActivityStatus}
         if status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"无效的活动状态: {status}")
-        return activity_repo.list_by_status(ActivityStatus(status))
-    return activity_service.list_activities()
+        return _filter_visible_activities_for_user(current_user, activity_repo.list_by_status(ActivityStatus(status)))
+    return _filter_visible_activities_for_user(current_user, activity_service.list_activities())
 
 
 @app.get("/activities/{activity_id}")
-def get_activity(activity_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_activity(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     activity = activity_repo.get(activity_id)
-    if not activity:
+    if not activity or not _is_activity_visible_to_user(current_user, activity):
         raise HTTPException(status_code=404, detail="活动不存在")
     return activity
 
@@ -354,6 +568,8 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
             checkin_mode=payload.checkin_mode.value,
             checkin_start=payload.checkin_start,
             checkin_end=payload.checkin_end,
+            group_id=payload.group_id,
+            allow_multiple_slots=payload.allow_multiple_slots,
         )
     except Exception as exc:
         _handle_domain_error(exc)
@@ -373,6 +589,8 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
         "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+        "group_id": activity.group_id,
+        "allow_multiple_slots": activity.allow_multiple_slots,
     }
 
 
@@ -380,6 +598,23 @@ def create_activity(payload: ActivityCreateRequest, current_user: User = Depends
 def delete_activity(activity_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     try:
         activity_service.delete_activity(user=current_user, activity_id=activity_id)
+    except Exception as exc:
+        _handle_domain_error(exc)
+    return {"ok": True}
+
+
+@app.put("/activities/{activity_id}")
+def update_activity(
+    activity_id: str,
+    payload: ActivityUpdateRequest,
+    current_user: User = Depends(_get_current_user),
+) -> dict:
+    fields = payload.model_dump(exclude_unset=True)
+    for key in ("signup_start", "signup_end"):
+        if key in fields and fields[key] is not None:
+            fields[key] = fields[key].isoformat()
+    try:
+        activity_service.update_activity(user=current_user, activity_id=activity_id, fields=fields)
     except Exception as exc:
         _handle_domain_error(exc)
     return {"ok": True}
@@ -418,6 +653,8 @@ def duplicate_activity(
         "checkin_mode": activity.checkin_mode.value,
         "checkin_start": activity.checkin_start.isoformat() if activity.checkin_start else None,
         "checkin_end": activity.checkin_end.isoformat() if activity.checkin_end else None,
+        "group_id": activity.group_id,
+        "allow_multiple_slots": activity.allow_multiple_slots,
     }
 
 
@@ -456,13 +693,31 @@ def update_activity_status(
 
 
 @app.get("/activities/{activity_id}/slots")
-def list_slots(activity_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_slots(activity_id: str, current_user: User = Depends(_get_current_user)) -> list[dict]:
+    activity = activity_repo.get(activity_id)
+    if not activity or not _is_activity_visible_to_user(current_user, activity):
+        raise HTTPException(status_code=404, detail="活动不存在")
     return slot_repo.list_by_activity(activity_id)
 
 
 @app.get("/activities/{activity_id}/slots/{parent_slot_id}/positions")
-def list_positions(activity_id: str, parent_slot_id: str, _: User = Depends(_get_current_user)) -> list[dict]:
+def list_positions(
+    activity_id: str,
+    parent_slot_id: str,
+    current_user: User = Depends(_get_current_user),
+) -> list[dict]:
     """获取某时段下的所有子岗位"""
+    activity = activity_repo.get(activity_id)
+    if not activity or not _is_activity_visible_to_user(current_user, activity):
+        raise HTTPException(status_code=404, detail="活动不存在")
+    _ensure_slot_visible_to_user(current_user, parent_slot_id)
+    return slot_repo.list_positions(parent_slot_id)
+
+
+@app.get("/slots/{parent_slot_id}/positions")
+def list_positions_by_parent(parent_slot_id: str, current_user: User = Depends(_get_current_user)) -> list[dict]:
+    """获取某时段下的所有子岗位（无需活动ID的兼容入口）。"""
+    _ensure_slot_visible_to_user(current_user, parent_slot_id)
     return slot_repo.list_positions(parent_slot_id)
 
 
@@ -497,11 +752,8 @@ def add_position(
 
 
 @app.get("/slots/{slot_id}")
-def get_slot(slot_id: str, _: User = Depends(_get_current_user)) -> dict:
-    slot = slot_repo.get(slot_id)
-    if not slot:
-        raise HTTPException(status_code=404, detail="时段不存在")
-    return slot
+def get_slot(slot_id: str, current_user: User = Depends(_get_current_user)) -> dict:
+    return _ensure_slot_visible_to_user(current_user, slot_id)
 
 
 @app.post("/activities/{activity_id}/slots")
@@ -568,11 +820,14 @@ def list_registrations(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
-        if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
-            raise HTTPException(status_code=403, detail="权限不足")
+        _check_activity_access(current_user, activity_id)
         if status == "pending":
             return reg_repo.list_pending(activity_id)
-        return reg_repo.list_by_activity(activity_id)
+        all_regs = reg_repo.list_by_activity(activity_id)
+        if status:
+            # 仅返回符合状态过滤的报名，避免静默忽略 status 参数
+            return [r for r in all_regs if r.get("status") == status]
+        return all_regs
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
@@ -581,10 +836,14 @@ def list_registrations(
 
 
 @app.get("/registrations/{registration_id}")
-def get_registration(registration_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_registration(registration_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     reg = reg_repo.get(registration_id)
     if not reg:
         raise HTTPException(status_code=404, detail="报名记录不存在")
+    if current_user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        _check_activity_access(current_user, reg.get("activity_id", ""))
+    elif reg.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="权限不足")
     return reg
 
 
@@ -599,6 +858,7 @@ def create_registration(
             activity_id=payload.activity_id,
             slot_id=payload.slot_id,
             priority=payload.priority,
+            points=payload.points,
         )
     except Exception as exc:
         _handle_domain_error(exc)
@@ -608,6 +868,7 @@ def create_registration(
         "activity_id": registration.activity_id,
         "slot_id": registration.slot_id,
         "priority": registration.priority,
+        "points": registration.points,
         "status": registration.status.value,
         "created_at": registration.created_at.isoformat(),
     }
@@ -628,6 +889,7 @@ def cancel_registration(
 @app.post("/scheduling/run")
 def run_scheduling(payload: ScheduleRunRequest, current_user: User = Depends(_get_current_user)) -> dict:
     _require_roles(current_user, {Role.SUPER_ADMIN, Role.ORGANIZER})
+    _check_activity_access(current_user, payload.activity_id)
     try:
         count = scheduling_service.run(payload.activity_id)
     except Exception as exc:
@@ -642,13 +904,13 @@ def list_schedules(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
+        _check_activity_access(current_user, activity_id)
         return schedule_repo.list_by_activity(activity_id)
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
         return schedule_repo.list_by_user(user_id)
     raise HTTPException(status_code=400, detail="必须提供 activity_id 或 user_id")
-
 
 @app.get("/checkins")
 def list_checkins(
@@ -657,6 +919,7 @@ def list_checkins(
     current_user: User = Depends(_get_current_user),
 ) -> list[dict]:
     if activity_id:
+        _check_activity_access(current_user, activity_id)
         return checkin_repo.list_by_activity(activity_id)
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
@@ -666,10 +929,14 @@ def list_checkins(
 
 
 @app.get("/checkins/{checkin_id}")
-def get_checkin(checkin_id: str, _: User = Depends(_get_current_user)) -> dict:
+def get_checkin(checkin_id: str, current_user: User = Depends(_get_current_user)) -> dict:
     ci = checkin_repo.get(checkin_id)
     if not ci:
         raise HTTPException(status_code=404, detail="签到记录不存在")
+    if current_user.role in {Role.SUPER_ADMIN, Role.ORGANIZER}:
+        _check_activity_access(current_user, ci.get("activity_id", ""))
+    elif ci.get("user_id") != current_user.id:
+        raise HTTPException(status_code=403, detail="权限不足")
     return ci
 
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRectF, QTimer, Signal
+from PySide6.QtCore import QDate, QDateTime, QTime, Qt, QRect, QRectF, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QCalendarWidget,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -46,12 +48,23 @@ def _color(hex_str: str) -> QColor:
     return QColor(hex_str)
 
 
+def _make_arrow_button(arrow_type: QStyle.StandardPixmap, parent_widget: QWidget) -> QPushButton:
+    """创建一个使用系统标准图标的箭头按钮，避免 Unicode 字形缺失问题。"""
+    btn = QPushButton()
+    btn.setObjectName("secondaryButton")
+    btn.setFixedSize(32, 28)
+    icon = parent_widget.style().standardIcon(arrow_type)
+    btn.setIcon(icon)
+    return btn
+
+
 # ─── 自定义日程存储 ──────────────────────────────────────────
 
 class _CustomEventStore:
     """管理用户自定义日程的 JSON 持久化存储。"""
 
     _PATH = Path.home() / ".campus_arrangement" / "custom_events.json"
+    _lock = threading.Lock()
 
     @classmethod
     def _ensure_file(cls) -> None:
@@ -61,22 +74,24 @@ class _CustomEventStore:
 
     @classmethod
     def load(cls, user_id: str) -> list[dict]:
-        cls._ensure_file()
-        try:
-            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-        return data.get(user_id, {}).get("events", [])
+        with cls._lock:
+            cls._ensure_file()
+            try:
+                data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            return data.get(user_id, {}).get("events", [])
 
     @classmethod
     def save(cls, user_id: str, events: list[dict]) -> None:
-        cls._ensure_file()
-        try:
-            data = json.loads(cls._PATH.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            data = {}
-        data.setdefault(user_id, {})["events"] = events
-        cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with cls._lock:
+            cls._ensure_file()
+            try:
+                data = json.loads(cls._PATH.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                data = {}
+            data.setdefault(user_id, {})["events"] = events
+            cls._PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @classmethod
     def add_event(cls, user_id: str, event: dict) -> None:
@@ -192,20 +207,33 @@ class ActivityCalendar(QCalendarWidget):
         painter.setFont(font)
         painter.drawText(rect.adjusted(4, 2, -2, 0), Qt.AlignTop | Qt.AlignLeft, str(date.day()))
 
-        # 活动条目
+        # 活动条目：用户反馈「单元格扩大不好，无法显示底下的事件，干脆同一行标记数量」
+        # 原方案画 3 条 bar 占用整个单元格高度，事件多时被截断且挤压日期数字。
+        # 改为：单元格底部同行显示事件数量徽标（按类型着色），点击日期后查看详情。
         events = self._events_by_date.get(date, [])
         if events:
-            y_offset = 18
-            max_events = min(len(events), 3)  # 最多显示3条
-            bar_height = 14
-            bar_margin = 2
-            for i in range(max_events):
-                event = events[i]
-                bar_rect = rect.adjusted(3, y_offset + i * (bar_height + bar_margin), -3, 0)
-                bar_rect.setHeight(bar_height)
+            # 按类型分组计数
+            type_counts: dict[str, int] = {}
+            for ev in events:
+                t = ev.get("type", "schedule")
+                type_counts[t] = type_counts.get(t, 0) + 1
 
-                # 条目颜色
-                etype = event.get("type", "schedule")
+            # 底部一行徽标：每个类型一个圆角小色块 + 数量
+            badge_h = 12
+            badge_margin = 2
+            x = rect.left() + 3
+            y = rect.bottom() - badge_h - 2
+            font.setPointSize(7)
+            font.setBold(True)
+            painter.setFont(font)
+
+            # 按稳定顺序：activity → schedule → 其他
+            ordered_types = sorted(
+                type_counts.keys(),
+                key=lambda t: {"activity": 0, "schedule": 1}.get(t, 2),
+            )
+            for etype in ordered_types:
+                count = type_counts[etype]
                 if etype == "activity":
                     bg = _color(p.accent)
                     fg = _color(p.text_on_accent)
@@ -216,26 +244,23 @@ class ActivityCalendar(QCalendarWidget):
                     bg = _color(p.success_fg)
                     fg = _color(p.text_on_accent)
 
+                label = f"{count}个" if count > 1 else "·"
+                # 测量文字宽度估算徽标宽度
+                metrics = painter.fontMetrics()
+                text_w = metrics.horizontalAdvance(label)
+                badge_w = text_w + 6
+
+                badge_rect = QRect(x, y, badge_w, badge_h)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(bg)
-                painter.drawRoundedRect(bar_rect, 3, 3)
+                painter.drawRoundedRect(badge_rect, 3, 3)
 
-                # 条目文字
                 painter.setPen(fg)
-                font.setPointSize(7)
-                font.setBold(False)
-                painter.setFont(font)
-                title = event.get("title", "")
-                if len(title) > 8:
-                    title = title[:7] + "…"
-                painter.drawText(bar_rect.adjusted(3, 0, -1, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
-
-            if len(events) > 3:
-                painter.setPen(_color(p.text_tertiary))
-                font.setPointSize(7)
-                painter.setFont(font)
-                more_y = y_offset + max_events * (bar_height + bar_margin)
-                painter.drawText(rect.adjusted(5, more_y, -2, 0), Qt.AlignTop | Qt.AlignLeft, f"+{len(events) - 3}")
+                painter.drawText(badge_rect, Qt.AlignCenter, label)
+                x += badge_w + badge_margin
+                # 防止超出单元格右边界
+                if x > rect.right() - badge_w:
+                    break
 
         # 今日下划线
         if is_today:
@@ -291,13 +316,9 @@ class WeekView(QWidget):
         # 导航栏
         nav = QHBoxLayout()
         nav.setContentsMargins(8, 4, 8, 4)
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setObjectName("secondaryButton")
-        self._prev_btn.setFixedSize(32, 28)
+        self._prev_btn = _make_arrow_button(QStyle.SP_ArrowLeft, self)
         self._prev_btn.clicked.connect(self._go_prev)
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setObjectName("secondaryButton")
-        self._next_btn.setFixedSize(32, 28)
+        self._next_btn = _make_arrow_button(QStyle.SP_ArrowRight, self)
         self._next_btn.clicked.connect(self._go_next)
         self._header_label = QLabel()
         self._header_label.setAlignment(Qt.AlignCenter)
@@ -508,13 +529,9 @@ class DayView(QWidget):
         # 导航栏
         nav = QHBoxLayout()
         nav.setContentsMargins(8, 4, 8, 4)
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setObjectName("secondaryButton")
-        self._prev_btn.setFixedSize(32, 28)
+        self._prev_btn = _make_arrow_button(QStyle.SP_ArrowLeft, self)
         self._prev_btn.clicked.connect(self._go_prev)
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setObjectName("secondaryButton")
-        self._next_btn.setFixedSize(32, 28)
+        self._next_btn = _make_arrow_button(QStyle.SP_ArrowRight, self)
         self._next_btn.clicked.connect(self._go_next)
         self._header_label = QLabel()
         self._header_label.setAlignment(Qt.AlignCenter)
@@ -908,6 +925,9 @@ class CalendarPanel(QWidget):
         self._selected_date = date
         self._jump_date.setDate(date)
         if self._view_mode.currentIndex() == 2:
+            # 日视图：必须同时刷新事件，否则翻页后事件不更新
+            day_events = self._events_by_date.get(date, [])
+            self._day_view.set_events(day_events)
             self._day_view.set_date(date)
         self._update_date_info()
         self._update_my_events()
@@ -935,8 +955,11 @@ class CalendarPanel(QWidget):
         elif idx == 1:
             self._week_view.set_week_start(date)
         elif idx == 2:
+            day_events = self._events_by_date.get(date, [])
+            self._day_view.set_events(day_events)
             self._day_view.set_date(date)
         self._update_date_info()
+        self._update_my_events()
 
     def _on_event_click(self, item: QListWidgetItem) -> None:
         data = item.data(Qt.UserRole)
@@ -961,23 +984,16 @@ class CalendarPanel(QWidget):
             end_dt = self._parse_dt(raw["end_time"])
             if not start_dt:
                 return
-            end_hour = end_dt.hour if end_dt else min(start_dt.hour + 1, 24)
+            start_h = start_dt.hour + start_dt.minute / 60.0
+            if end_dt:
+                end_h = end_dt.hour + end_dt.minute / 60.0
+                if end_h <= start_h:
+                    end_h = start_h + 1.0
+            else:
+                end_h = min(start_h + 1.0, 24.0)
             time_range = start_dt.strftime("%H:%M")
             if end_dt:
                 time_range += f" - {end_dt.strftime('%H:%M')}"
-            custom_event = {
-                "id": event_id,
-                "title": raw["title"],
-                "location": raw.get("location", ""),
-                "start_time": raw["start_time"],
-                "end_time": raw["end_time"],
-                "description": raw.get("description", ""),
-                "type": "custom",
-                "time": raw["start_time"][:16],
-                "time_range": time_range,
-                "start_hour": start_dt.hour,
-                "end_hour": end_hour,
-            }
             _CustomEventStore.add_event(self._user.id, {
                 "id": event_id,
                 "title": raw["title"],
@@ -1031,14 +1047,17 @@ class CalendarPanel(QWidget):
                         dt = self._parse_dt(start_time_str)
                         if dt:
                             qdate = QDate(dt.year, dt.month, dt.day)
+                            # 分钟级定位（用浮点小时避免整数小时对齐）
+                            start_h = dt.hour + dt.minute / 60.0
                             event = {
+                                "id": f"activity:{activity.get('id', '')}",
                                 "title": activity.get("name", "未知活动"),
                                 "time": start_time_str[:16],
                                 "time_range": dt.strftime("%H:%M") + " 开始报名",
                                 "location": activity.get("location", ""),
                                 "type": "activity",
-                                "start_hour": dt.hour,
-                                "end_hour": min(dt.hour + 1, 24),
+                                "start_hour": start_h,
+                                "end_hour": min(start_h + 1.0, 24.0),
                             }
                             events_by_date.setdefault(qdate, []).append(event)
                             all_events.append(event)
@@ -1064,18 +1083,25 @@ class CalendarPanel(QWidget):
                                 end_dt = self._parse_dt(end_time_str) if end_time_str else None
                                 if dt:
                                     qdate = QDate(dt.year, dt.month, dt.day)
-                                    end_hour = end_dt.hour if end_dt else min(dt.hour + 1, 24)
+                                    start_h = dt.hour + dt.minute / 60.0
+                                    if end_dt:
+                                        end_h = end_dt.hour + end_dt.minute / 60.0
+                                        if end_h <= start_h:
+                                            end_h = start_h + 1.0
+                                    else:
+                                        end_h = min(start_h + 1.0, 24.0)
                                     time_range = dt.strftime("%H:%M")
                                     if end_dt:
                                         time_range += f" - {end_dt.strftime('%H:%M')}"
                                     event = {
+                                        "id": f"schedule:{slot_id}",
                                         "title": activity_name,
                                         "time": start_time_str[:16],
                                         "time_range": time_range,
                                         "location": activity_location,
                                         "type": "schedule",
-                                        "start_hour": dt.hour,
-                                        "end_hour": end_hour,
+                                        "start_hour": start_h,
+                                        "end_hour": end_h,
                                         "checkin_status": checkin_map.get(slot_id),
                                     }
                                     events_by_date.setdefault(qdate, []).append(event)
@@ -1093,7 +1119,13 @@ class CalendarPanel(QWidget):
                     if not start_dt:
                         continue
                     qdate = QDate(start_dt.year, start_dt.month, start_dt.day)
-                    end_hour = end_dt.hour if end_dt else min(start_dt.hour + 1, 24)
+                    start_h = start_dt.hour + start_dt.minute / 60.0
+                    if end_dt:
+                        end_h = end_dt.hour + end_dt.minute / 60.0
+                        if end_h <= start_h:
+                            end_h = start_h + 1.0
+                    else:
+                        end_h = min(start_h + 1.0, 24.0)
                     time_range = start_dt.strftime("%H:%M")
                     if end_dt:
                         time_range += f" - {end_dt.strftime('%H:%M')}"
@@ -1105,8 +1137,8 @@ class CalendarPanel(QWidget):
                         "location": ce.get("location", ""),
                         "description": ce.get("description", ""),
                         "type": "custom",
-                        "start_hour": start_dt.hour,
-                        "end_hour": end_hour,
+                        "start_hour": start_h,
+                        "end_hour": end_h,
                     }
                     events_by_date.setdefault(qdate, []).append(event)
                     all_events.append(event)
@@ -1284,7 +1316,7 @@ class CalendarPanel(QWidget):
         box.setText(msg)
         box.setIcon(QMessageBox.Information)
         box.setStandardButtons(QMessageBox.Ok)
-        box.show()
+        box.exec()
 
     @staticmethod
     def _parse_dt(value: str) -> datetime | None:

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 from app.application.activity_service import ActivityService
 from app.application.registration_service import RegistrationService
 from app.domain.exceptions import CapacityExceeded, ConflictError, ValidationError
-from app.domain.models import ActivityStatus, ActivityType, RegistrationStatus, SignupMode, User
+from app.domain.models import AllocationMode, MAX_POINTS, ActivityStatus, ActivityType, RegistrationStatus, SignupMode, User
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import GroupRepository, RegistrationRepository
 from app.ui.style import get_palette
@@ -311,6 +312,15 @@ class RegistrationPanel(QWidget):
         self._activity_selector.setMinimumWidth(220)
         self._slot_selector = StyledComboBox()
         self._slot_selector.setMinimumWidth(220)
+        # 意愿点输入框（仅 POINTS 模式活动显示，默认隐藏）
+        self._points_spin = QSpinBox()
+        self._points_spin.setRange(0, MAX_POINTS)
+        self._points_spin.setValue(0)
+        self._points_spin.setMinimumWidth(120)
+        self._points_spin.setVisible(False)
+        self._points_hint = QLabel(f"意愿点（剩余 {MAX_POINTS} / {MAX_POINTS}）")
+        self._points_hint.setVisible(False)
+        self._points_spin.valueChanged.connect(self._on_points_changed)
         self._message = QLabel("")
         set_banner(self._message, "info", "")
 
@@ -354,6 +364,12 @@ class RegistrationPanel(QWidget):
         self._submit_btn.clicked.connect(self._register)
         action_row.addWidget(self._submit_btn)
         form.addRow(action_row)
+        # 意愿点输入行（仅 POINTS 模式活动显示，默认隐藏）
+        points_row = QHBoxLayout()
+        points_row.addWidget(self._points_hint)
+        points_row.addWidget(self._points_spin)
+        points_row.addStretch()
+        form.addRow(points_row)
         form.addRow(self._message)
 
         form_group = QGroupBox("报名操作")
@@ -362,8 +378,9 @@ class RegistrationPanel(QWidget):
         form_layout.addLayout(form)
         form_group.setLayout(form_layout)
 
-        self._my_reg_table = QTableWidget(0, 5)
-        self._my_reg_table.setHorizontalHeaderLabels(["报名ID", "活动", "时段", "状态", "操作"])
+        # 「我的报名」表格：新增「意愿点」列，仅在 POINTS 模式活动下显示数值
+        self._my_reg_table = QTableWidget(0, 6)
+        self._my_reg_table.setHorizontalHeaderLabels(["报名ID", "活动", "时段", "状态", "意愿点", "操作"])
         configure_table(self._my_reg_table)
 
         my_reg_group = QGroupBox("我的报名")
@@ -410,7 +427,7 @@ class RegistrationPanel(QWidget):
 
     def _on_my_reg_double_clicked(self, row: int, _col: int) -> None:
         data = {}
-        for col, key in enumerate(["报名ID", "活动", "时段", "状态"]):
+        for col, key in enumerate(["报名ID", "活动", "时段", "状态", "意愿点"]):
             item = self._my_reg_table.item(row, col)
             data[key] = item.text() if item else "—"
         ItemDetailDialog("报名详情", data, self).exec()
@@ -422,6 +439,25 @@ class RegistrationPanel(QWidget):
                 self._slot_selector.setCurrentIndex(i)
                 break
 
+    def _signup_block_reason(self, activity: dict | None) -> str:
+        if not activity:
+            return "请选择活动"
+        if activity.get("status") != ActivityStatus.OPEN.value:
+            return f"该活动当前为「{format_activity_status(activity)}」，暂不能报名"
+
+        now = datetime.now(timezone.utc)
+        signup_start = activity.get("signup_start")
+        signup_end = activity.get("signup_end")
+        if signup_start:
+            start = to_utc(signup_start)
+            if now < start:
+                return f"报名尚未开始，将于 {format_datetime(str(signup_start))} 开始"
+        if signup_end:
+            end = to_utc(signup_end)
+            if now > end:
+                return f"报名已截止，截止时间为 {format_datetime(str(signup_end))}"
+        return ""
+
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
         # 过滤：只显示用户有权限报名的活动（公开 + 所在小组）
@@ -431,25 +467,26 @@ class RegistrationPanel(QWidget):
                 if not a.get("group_id") or self._group_repo.is_member(a.get("group_id", ""), self._user.id)
             ]
         self._activity_selector.blockSignals(True)
-        self._activity_selector.clear()
-        if not activities:
-            set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动或加入小组")
-            self._activity_selector.blockSignals(False)
-            self._load_my_registrations()
-            return
-        open_activities = [a for a in activities if a.get("status") == ActivityStatus.OPEN.value]
-        other_activities = [a for a in activities if a.get("status") != ActivityStatus.OPEN.value]
-        for activity in open_activities:
-            at = activity.get("activity_type", "time_slot")
-            mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
-            status_text = format_activity_status(activity)
-            self._activity_selector.addItem(f"{activity['name']} [{mode_tag}] ({status_text})", activity["id"])
-        if other_activities:
-            self._activity_selector.insertSeparator(self._activity_selector.count())
-            for activity in other_activities:
+        try:
+            self._activity_selector.clear()
+            if not activities:
+                set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动或加入小组")
+                self._load_my_registrations()
+                return
+            open_activities = [a for a in activities if a.get("status") == ActivityStatus.OPEN.value]
+            other_activities = [a for a in activities if a.get("status") != ActivityStatus.OPEN.value]
+            for activity in open_activities:
+                at = activity.get("activity_type", "time_slot")
+                mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
                 status_text = format_activity_status(activity)
-                self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
-        self._activity_selector.blockSignals(False)
+                self._activity_selector.addItem(f"{activity['name']} [{mode_tag}] ({status_text})", activity["id"])
+            if other_activities:
+                self._activity_selector.insertSeparator(self._activity_selector.count())
+                for activity in other_activities:
+                    status_text = format_activity_status(activity)
+                    self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
+        finally:
+            self._activity_selector.blockSignals(False)
         self._load_slots()
         self._load_my_registrations()
 
@@ -459,6 +496,11 @@ class RegistrationPanel(QWidget):
         self._slot_grid._selected_slot_id = None
         if not activity_id:
             self._countdown_label.set_times("", "")
+            # 无活动时隐藏意愿点输入框
+            self._points_spin.setVisible(False)
+            self._points_hint.setVisible(False)
+            self._slot_selector.setEnabled(False)
+            self._submit_btn.setEnabled(False)
             return
         activity = self._activity_service.get_activity(activity_id)
         if activity:
@@ -466,32 +508,31 @@ class RegistrationPanel(QWidget):
         signup_mode = activity.get("signup_mode") if activity else SignupMode.REALTIME.value
         is_open = activity.get("status") == ActivityStatus.OPEN.value if activity else False
         # 计算是否在报名时间窗口内
-        can_signup = False
-        if is_open:
-            now = datetime.now(timezone.utc)
-            signup_start = activity.get("signup_start") if activity else None
-            signup_end = activity.get("signup_end") if activity else None
-            can_signup = True
-            if signup_start:
-                start = to_utc(signup_start)
-                if now < start:
-                    can_signup = False
-            if signup_end:
-                end = to_utc(signup_end)
-                if now > end:
-                    can_signup = False
+        block_reason = self._signup_block_reason(activity)
+        can_signup = is_open and not block_reason
         slots = self._activity_service.list_slots(activity_id)
 
         # 过滤掉子岗位（用户报名选择父时段，排班系统分配岗位）
         top_slots = [s for s in slots if not s.get("parent_slot_id")]
 
         if not top_slots:
-            set_table_empty(self._slot_table, 8, "暂无选项")
+            empty_text = "暂无可报名时段/选项，请联系管理员在活动中添加"
+            set_table_empty(self._slot_table, 8, empty_text)
             self._slot_grid.set_slots([], signup_mode)
+            # 无选项时隐藏意愿点输入框
+            self._points_spin.setVisible(False)
+            self._points_hint.setVisible(False)
+            self._slot_selector.setEnabled(False)
+            self._submit_btn.setEnabled(False)
+            set_banner(self._message, "error", empty_text)
             return
 
         # 更新格子视图
         self._slot_grid.set_slots(top_slots, signup_mode, can_select=can_signup)
+        if block_reason:
+            set_banner(self._message, "error", block_reason)
+        else:
+            set_banner(self._message, "info", "")
 
         # 更新表格视图
         self._slot_table.clearSpans()
@@ -544,6 +585,23 @@ class RegistrationPanel(QWidget):
 
         self._slot_table.setColumnHidden(0, True)
 
+        # 意愿点模式：显示点数输入框并实时更新剩余点数
+        allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value) if activity else AllocationMode.GREEDY.value
+        if allocation_mode == AllocationMode.POINTS.value:
+            used = self._get_used_points(activity_id)
+            remaining = max(0, MAX_POINTS - used)
+            self._points_spin.setMaximum(remaining)
+            self._points_spin.setValue(0)
+            self._points_hint.setText(f"意愿点（剩余 {remaining} / {MAX_POINTS}）")
+            # 可见性跟随分配模式，可交互性跟随报名时间窗口
+            self._points_spin.setEnabled(can_signup)
+            self._points_spin.setVisible(True)
+            self._points_hint.setVisible(True)
+        else:
+            # 非 POINTS 模式隐藏意愿点输入框
+            self._points_spin.setVisible(False)
+            self._points_hint.setVisible(False)
+
         if not is_open:
             self._slot_selector.setEnabled(False)
             self._submit_btn.setEnabled(False)
@@ -557,12 +615,21 @@ class RegistrationPanel(QWidget):
         except Exception:
             regs = []
         if not regs:
-            set_table_empty(self._my_reg_table, 5, "暂无报名记录")
+            set_table_empty(self._my_reg_table, 6, "暂无报名记录")
             return
         raw_activities = self._activity_service.list_activities()
         activities = {a["id"]: a["name"] for a in raw_activities}
         activity_status_map = {a["id"]: a.get("status", "") for a in raw_activities}
-        slots = {s["id"]: s for s_list in [self._activity_service.list_slots(aid) for aid in activities] if s_list for s in s_list}
+        # 构建 allocation_mode 映射：用于判断「意愿点」列是否显示数值
+        activity_alloc_map = {a["id"]: a.get("allocation_mode", AllocationMode.GREEDY.value) for a in raw_activities}
+        slots = {}
+        for aid in activities:
+            try:
+                sl = self._activity_service.list_slots(aid)
+            except Exception:
+                sl = []
+            for s in sl:
+                slots[s["id"]] = s
         self._my_reg_table.clearSpans()
         self._my_reg_table.setRowCount(len(regs))
         for row_index, reg in enumerate(regs):
@@ -574,6 +641,15 @@ class RegistrationPanel(QWidget):
             self._my_reg_table.setItem(row_index, 2, QTableWidgetItem(slot_text))
             status_text = format_status(reg["status"])
             self._my_reg_table.setItem(row_index, 3, QTableWidgetItem(status_text))
+            # 意愿点列：仅在 POINTS 模式活动下显示数值，否则显示 "-"
+            alloc = activity_alloc_map.get(reg["activity_id"], AllocationMode.GREEDY.value)
+            if alloc == AllocationMode.POINTS.value:
+                points_text = str(reg.get("points", 0))
+            else:
+                points_text = "-"
+            points_item = QTableWidgetItem(points_text)
+            points_item.setTextAlignment(Qt.AlignCenter)
+            self._my_reg_table.setItem(row_index, 4, points_item)
             # 取消按钮：仅当报名状态允许且活动未关闭/未归档时才显示
             reg_cancellable = reg["status"] in (
                 RegistrationStatus.PENDING.value,
@@ -587,9 +663,9 @@ class RegistrationPanel(QWidget):
                 cancel_btn.setObjectName("dangerButton")
                 cancel_btn.setCursor(Qt.PointingHandCursor)
                 cancel_btn.clicked.connect(lambda checked, rid=reg["id"]: self._cancel_registration(rid))
-                self._my_reg_table.setCellWidget(row_index, 4, cancel_btn)
+                self._my_reg_table.setCellWidget(row_index, 5, cancel_btn)
             else:
-                self._my_reg_table.setItem(row_index, 4, QTableWidgetItem("-"))
+                self._my_reg_table.setItem(row_index, 5, QTableWidgetItem("-"))
         self._my_reg_table.setColumnHidden(0, True)
 
     def _register(self) -> None:
@@ -599,11 +675,16 @@ class RegistrationPanel(QWidget):
             slot_id = self._slot_selector.currentData()
             if not activity_id or not slot_id:
                 raise ValidationError("请选择活动与时段")
+            # 意愿点模式：从输入框读取点数；其他模式传 0
+            activity = self._activity_service.get_activity(activity_id)
+            allocation_mode = AllocationMode(activity.get("allocation_mode", AllocationMode.GREEDY.value)) if activity else AllocationMode.GREEDY
+            points = self._points_spin.value() if allocation_mode == AllocationMode.POINTS else 0
             self._registration_service.register(
                 user_id=self._user.id,
                 activity_id=activity_id,
                 slot_id=slot_id,
                 priority=1,
+                points=points,
             )
             set_banner(self._message, "success", "报名成功")
             notify(f"报名成功：用户 {self._user.username}")
@@ -611,6 +692,33 @@ class RegistrationPanel(QWidget):
             self._load_my_registrations()
         except (CapacityExceeded, ConflictError, ValidationError) as exc:
             set_banner(self._message, "error", str(exc))
+
+    def _get_used_points(self, activity_id: str) -> int:
+        """获取用户在该活动已使用的意愿点数（active 报名 points 之和）。
+
+        active 指非 CANCELLED 且非 NOT_ASSIGNED 的报名记录，
+        与后端 registration_service 的校验逻辑保持一致。
+        """
+        try:
+            regs = self._reg_repo.list_by_user_activity(self._user.id, activity_id)
+            active = [
+                r for r in regs
+                if r.get("status") not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)
+            ]
+            return sum(int(r.get("points", 0)) for r in active)
+        except Exception:
+            return 0
+
+    def _on_points_changed(self) -> None:
+        """意愿点输入变化时实时更新剩余点数显示。"""
+        activity_id = self._activity_selector.currentData()
+        if not activity_id:
+            return
+        used = self._get_used_points(activity_id)
+        remaining = max(0, MAX_POINTS - used)
+        current = self._points_spin.value()
+        # 显示扣除本次输入后剩余可用点数
+        self._points_hint.setText(f"意愿点（剩余 {max(0, remaining - current)} / {MAX_POINTS}）")
 
     def _cancel_registration(self, registration_id: str) -> None:
         reply = QMessageBox.question(

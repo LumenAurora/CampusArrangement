@@ -1,21 +1,33 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from app.config import DATA_DIR, DB_PATH
+from app.config import DATA_DIR
+
+DB_PATH = str(DATA_DIR / "app.db")
 
 
 def ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def get_db_path() -> str:
+    """懒读取 DB_PATH：每次调用都从环境变量获取，便于测试通过 monkeypatch.setenv 切换数据库。
+
+    保留与 app.config 一致的默认值（DATA_DIR/app.db），生产行为不变。
+    """
+    return os.environ.get("CAMPUS_DB_PATH", DB_PATH)
+
+
 def get_connection() -> sqlite3.Connection:
     ensure_data_dir()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
@@ -83,8 +95,8 @@ def init_db() -> None:
                 FOREIGN KEY (slot_id) REFERENCES slots(id) ON DELETE CASCADE
             );
 
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_activity_active
-                ON registrations(user_id, activity_id) WHERE status NOT IN ('cancelled', 'not_assigned');
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_slot_active
+                ON registrations(user_id, slot_id) WHERE status NOT IN ('cancelled', 'not_assigned');
 
             CREATE TABLE IF NOT EXISTS schedule_results (
                 id TEXT PRIMARY KEY,
@@ -129,6 +141,20 @@ def init_db() -> None:
                 FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                sender_id TEXT NOT NULL DEFAULT '',
+                related_link TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+                ON notifications(user_id, created_at DESC);
             """
         )
         _ensure_column(conn, "activities", "signup_mode", "signup_mode TEXT NOT NULL DEFAULT 'realtime'")
@@ -143,8 +169,6 @@ def init_db() -> None:
         _ensure_column(conn, "slots", "slot_type", "slot_type TEXT NOT NULL DEFAULT 'time_slot'")
         _ensure_column(conn, "slots", "name", "name TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "slots", "metadata", "metadata TEXT NOT NULL DEFAULT ''")
-        # 使slots表中start_time和end_time允许为空
-        # （注意：SQLite不支持直接修改列约束，所以我们不改变这些列的定义）
         _ensure_column(conn, "checkins", "latitude", "latitude REAL")
         _ensure_column(conn, "checkins", "longitude", "longitude REAL")
         _ensure_column(conn, "checkins", "photo_path", "photo_path TEXT NOT NULL DEFAULT ''")
@@ -154,6 +178,22 @@ def init_db() -> None:
         _ensure_column(conn, "slots", "parent_slot_id", "parent_slot_id TEXT")
         # 新增：活动小组限制
         _ensure_column(conn, "activities", "group_id", "group_id TEXT")
+        # 新增：小组申请理由，方便管理端审批时参考
+        _ensure_column(conn, "group_members", "reason", "reason TEXT NOT NULL DEFAULT ''")
+        # 新增：意愿点模式（用户对每个志愿分配的点数）
+        _ensure_column(conn, "registrations", "points", "points INTEGER NOT NULL DEFAULT 0")
+        # 新增：人工提前结束签到（与 checkin_end 时间独立，可逆）
+        _ensure_column(conn, "activities", "checkin_closed", "checkin_closed INTEGER NOT NULL DEFAULT 0")
+        # 新增：用户头像与通知偏好
+        _ensure_column(conn, "users", "avatar_path", "avatar_path TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "users", "notification_mode", "notification_mode TEXT NOT NULL DEFAULT 'in_app'")
+        # 新增：允许兼报多个时段/岗位（0=不允许，1=允许）
+        _ensure_column(conn, "activities", "allow_multiple_slots", "allow_multiple_slots INTEGER NOT NULL DEFAULT 0")
+        # 改造报名唯一索引：从 (user_id, activity_id) 改为 (user_id, slot_id)
+        # 允许兼报时同一用户可报同一活动的不同 slot，但同一 slot 不可重复报
+        _migrate_registration_unique_index(conn)
+        # 放宽 slots.start_time/end_time 的 NOT NULL 约束（选题模式岗位无时间字段）
+        _migrate_slots_nullable_time(conn)
         # 迁移旧 activity_type 到新模式：scheduling/topic_selection/course_selection/seat_reservation/custom → time_slot/non_time_slot
         _migrate_activity_type(conn)
         conn.commit()
@@ -163,12 +203,54 @@ def init_db() -> None:
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     # 使用白名单验证表名，防止SQL注入
-    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results", "checkins", "groups", "group_members"}
+    allowed_tables = {"users", "activities", "slots", "registrations", "schedule_results", "checkins", "groups", "group_members", "notifications"}
     if table not in allowed_tables:
         raise ValueError(f"不允许的表名: {table}")
     columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+def _migrate_slots_nullable_time(conn: sqlite3.Connection) -> None:
+    """放宽 slots 表 start_time/end_time 的 NOT NULL 约束。
+
+    旧 schema 中 start_time/end_time 为 NOT NULL，但选题模式下的岗位
+    （create_position 创建，无 parent 时段时间）不需要这两个字段，
+    导致 INSERT 失败。SQLite 不支持 ALTER COLUMN 放宽约束，需重建表。
+    """
+    cols = conn.execute("PRAGMA table_info(slots)").fetchall()
+    need_migrate = any(
+        row["name"] in ("start_time", "end_time") and row["notnull"] == 1
+        for row in cols
+    )
+    if not need_migrate:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE slots_new (
+            id TEXT PRIMARY KEY,
+            activity_id TEXT NOT NULL,
+            slot_type TEXT NOT NULL DEFAULT 'time_slot',
+            name TEXT NOT NULL DEFAULT '',
+            start_time TEXT,
+            end_time TEXT,
+            capacity INTEGER NOT NULL,
+            used_count INTEGER NOT NULL DEFAULT 0,
+            metadata TEXT NOT NULL DEFAULT '',
+            parent_slot_id TEXT,
+            FOREIGN KEY (activity_id) REFERENCES activities(id) ON DELETE CASCADE
+        );
+        INSERT INTO slots_new
+            (id, activity_id, slot_type, name, start_time, end_time,
+             capacity, used_count, metadata, parent_slot_id)
+        SELECT
+            id, activity_id, slot_type, name, start_time, end_time,
+            capacity, used_count, metadata, parent_slot_id
+        FROM slots;
+        DROP TABLE slots;
+        ALTER TABLE slots_new RENAME TO slots;
+        """
+    )
 
 
 def _migrate_activity_type(conn: sqlite3.Connection) -> None:
@@ -184,4 +266,25 @@ def _migrate_activity_type(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE activities SET activity_type = ? WHERE activity_type = ?",
             (new_val, old_val),
+        )
+
+
+def _migrate_registration_unique_index(conn: sqlite3.Connection) -> None:
+    """将报名唯一索引从 (user_id, activity_id) 改为 (user_id, slot_id)。
+
+    旧索引阻止同一用户在同一活动下报多个 slot（即阻止兼报）；
+    新索引只阻止同一用户重复报同一 slot，允许兼报不同 slot。
+    对于不允许兼报的活动，由应用层 RegistrationService.register 做检查。
+    """
+    # 检查旧索引是否存在，存在则删除
+    indexes = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='registrations'"
+    ).fetchall()
+    index_names = {row["name"] for row in indexes}
+    if "idx_reg_user_activity_active" in index_names:
+        conn.execute("DROP INDEX IF EXISTS idx_reg_user_activity_active")
+    if "idx_reg_user_slot_active" not in index_names:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_reg_user_slot_active "
+            "ON registrations(user_id, slot_id) WHERE status NOT IN ('cancelled', 'not_assigned')"
         )
