@@ -893,9 +893,11 @@ class CalendarPanel(QWidget):
         my_events_layout = QVBoxLayout()
         my_events_layout.setSpacing(4)
         self._my_events_list = QListWidget()
+        self._my_events_list.setFrameShape(QFrame.NoFrame)
         self._my_events_list.itemClicked.connect(self._on_event_click)
         my_events_layout.addWidget(self._my_events_list)
         self._my_events.setLayout(my_events_layout)
+        self._apply_my_events_list_style()
 
         right_panel.addWidget(self._date_info, 1)
         right_panel.addWidget(self._my_events, 2)
@@ -913,6 +915,42 @@ class CalendarPanel(QWidget):
         layout.addLayout(header)
         layout.addLayout(main_layout, 1)
         self.setLayout(layout)
+
+    def _apply_my_events_list_style(self) -> None:
+        p = _p()
+        self._my_events_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {p.bg_card};
+                color: {p.text_primary};
+                border: none;
+                border-radius: 10px;
+                padding: 8px;
+                outline: none;
+            }}
+            QListWidget::viewport {{
+                background: {p.bg_card};
+            }}
+            QListWidget::item {{
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+                padding: 4px 6px;
+                min-height: 22px;
+            }}
+            QListWidget::item:hover {{
+                background: {p.nav_hover_bg};
+            }}
+            QListWidget::item:selected {{
+                background: {p.accent_soft};
+                color: {p.accent};
+            }}
+        """)
+
+    def refresh_theme(self) -> None:
+        self._apply_my_events_list_style()
+        self._apply_events_to_views()
+        self._update_my_events()
+        self._update_date_info()
 
     # ─── 事件处理 ────────────────────────────────────────────
 

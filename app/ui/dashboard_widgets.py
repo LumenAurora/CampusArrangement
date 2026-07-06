@@ -56,6 +56,22 @@ class DashboardPanel(QWidget):
         root.addWidget(header)
 
         self._tabs = QTabWidget()
+        self._apply_tab_style()
+
+        # —— Tab 1：当前信息 ——
+        self._current_page = self._build_current_page()
+        self._tabs.addTab(self._current_page, "当前信息")
+
+        # —— Tab 2：历史统计 ——
+        self._history_page = self._build_history_page()
+        self._tabs.addTab(self._history_page, "历史统计")
+
+        root.addWidget(self._tabs, 1)
+        self.setLayout(root)
+
+        self.refresh()
+
+    def _apply_tab_style(self) -> None:
         p = get_palette()
         self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{ border: none; background: transparent; }}
@@ -72,17 +88,8 @@ class DashboardPanel(QWidget):
             }}
         """)
 
-        # —— Tab 1：当前信息 ——
-        self._current_page = self._build_current_page()
-        self._tabs.addTab(self._current_page, "当前信息")
-
-        # —— Tab 2：历史统计 ——
-        self._history_page = self._build_history_page()
-        self._tabs.addTab(self._history_page, "历史统计")
-
-        root.addWidget(self._tabs, 1)
-        self.setLayout(root)
-
+    def refresh_theme(self) -> None:
+        self._apply_tab_style()
         self.refresh()
 
     # ── 页面构建 ──────────────────────────────────────────────
