@@ -95,8 +95,8 @@ class UserService:
 
     def change_password(self, user: User, old_password: str, new_password: str) -> None:
         """用户修改自己的密码"""
-        if not new_password or len(new_password) < 4:
-            raise ValidationError("新密码长度不能少于4位")
+        if not new_password or len(new_password) < 6:
+            raise ValidationError("新密码长度不能少于6位")
 
         record = self._user_repo.get_by_id(user.id)
         if not record:
