@@ -250,6 +250,20 @@ def _check_activity_access(user: User, activity_id: str) -> dict:
     return activity
 
 
+def _filter_records_by_activity_access(user: User, records: list[dict]) -> list[dict]:
+    """Filter user-scoped records so organizers only see records for owned activities."""
+    if user.role == Role.SUPER_ADMIN:
+        return records
+    if user.role != Role.ORGANIZER:
+        return records
+    visible: list[dict] = []
+    for record in records:
+        activity = activity_repo.get(str(record.get("activity_id", "")))
+        if activity and activity.get("owner_id") == user.id:
+            visible.append(record)
+    return visible
+
+
 def _handle_domain_error(exc: Exception) -> None:
     if isinstance(exc, PermissionDenied):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -838,7 +852,7 @@ def list_registrations(
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
-        return reg_repo.list_by_user(user_id)
+        return _filter_records_by_activity_access(current_user, reg_repo.list_by_user(user_id))
     return []
 
 
@@ -916,7 +930,7 @@ def list_schedules(
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
-        return schedule_repo.list_by_user(user_id)
+        return _filter_records_by_activity_access(current_user, schedule_repo.list_by_user(user_id))
     raise HTTPException(status_code=400, detail="必须提供 activity_id 或 user_id")
 
 @app.get("/checkins")
@@ -931,7 +945,7 @@ def list_checkins(
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
-        return checkin_repo.list_by_user(user_id)
+        return _filter_records_by_activity_access(current_user, checkin_repo.list_by_user(user_id))
     return []
 
 
