@@ -349,10 +349,10 @@ class ActivityPanel(QWidget):
         dialog.setMinimumWidth(580)
         dialog.setMinimumHeight(600)
         p = get_palette()
-        dialog.setStyleSheet(f"QDialog {{ background: {p.bg_card}; }}")
+        dialog.setStyleSheet(f"QDialog {{ background: {p.bg_base}; }}")
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(0)
 
         # 嵌入 GuidedActivityPanel
