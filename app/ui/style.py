@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QAction, QActionGroup, QFont
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QWidget
 
 from app.ui.theme import DARK, LIGHT, Palette, build_stylesheet
