@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QPropertyAnimation, QSize, Qt, QSettings
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut, QPixmap
+from PySide6.QtCore import QPropertyAnimation, QRect, QSize, Qt, QSettings
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QPainter, QShortcut, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStyledItemDelegate,
+    QStyle,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -48,6 +50,59 @@ NAV_COLLAPSED_WIDTH = 56
 _AVATAR_ROOT = Path(__file__).resolve().parent.parent / "resources" / "uploads"
 
 
+class _SidebarItemDelegate(QStyledItemDelegate):
+    """Draw sidebar items so collapsed icons stay visually centered."""
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802
+        return QSize(option.rect.width(), 54)
+
+    def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802
+        p = get_palette()
+        collapsed = bool(option.widget and option.widget.property("collapsed"))
+        selected = bool(option.state & QStyle.State_Selected)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        item_rect = option.rect.adjusted(8, 3, -8, -3)
+        bg = ""
+        if selected:
+            bg = p.nav_selected_bg
+        elif hovered:
+            bg = p.nav_hover_bg
+        if bg:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(bg))
+            painter.drawRoundedRect(item_rect, 10, 10)
+
+        icon = index.data(Qt.DecorationRole)
+        icon_size = 22
+        if collapsed:
+            icon_rect = QRect(
+                item_rect.center().x() - icon_size // 2,
+                item_rect.center().y() - icon_size // 2,
+                icon_size,
+                icon_size,
+            )
+        else:
+            icon_rect = QRect(item_rect.left() + 14, item_rect.center().y() - icon_size // 2, icon_size, icon_size)
+
+        if icon and not icon.isNull():
+            icon.paint(painter, icon_rect, Qt.AlignCenter)
+
+        if not collapsed:
+            text = index.data(Qt.DisplayRole) or index.data(Qt.UserRole) or ""
+            text_rect = item_rect.adjusted(14 + icon_size + 14, 0, -12, 0)
+            painter.setPen(QColor(p.nav_selected_fg if selected else p.text_secondary))
+            font = option.font
+            font.setWeight(600 if selected else 500)
+            painter.setFont(font)
+            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, str(text))
+
+        painter.restore()
+
+
 class NavigationWindow(QMainWindow):
     def __init__(self, title: str, user: User) -> None:
         super().__init__()
@@ -69,12 +124,14 @@ class NavigationWindow(QMainWindow):
         # 侧边导航
         self._nav = QListWidget()
         self._nav.setObjectName("navList")
+        self._nav.setProperty("collapsed", False)
         self._nav.setIconSize(QSize(18, 18))
         self._nav.setMinimumWidth(NAV_COLLAPSED_WIDTH)
         self._nav.setMaximumWidth(NAV_EXPANDED_WIDTH)
         self._nav.resize(NAV_EXPANDED_WIDTH, self._nav.height())
         self._nav.setSpacing(2)
         self._nav.setFocusPolicy(Qt.NoFocus)
+        self._nav.setItemDelegate(_SidebarItemDelegate(self._nav))
 
         self._stack = QStackedWidget()
         self._nav.currentRowChanged.connect(self._on_page_changed)
@@ -138,6 +195,9 @@ class NavigationWindow(QMainWindow):
         self._page_keys = []
         for key, title, widget, icon in pages:
             item = QListWidgetItem(title)
+            item.setData(Qt.UserRole, title)
+            item.setToolTip(title)
+            item.setSizeHint(QSize(NAV_EXPANDED_WIDTH - 16, 54))
             if icon:
                 item.setIcon(icon)
             self._nav.addItem(item)
@@ -146,19 +206,13 @@ class NavigationWindow(QMainWindow):
             self._page_titles.append(title)
             self._pages.append(widget)
 
+        self._sync_nav_items_for_sidebar_state()
         self._apply_default_page()
 
     def _toggle_sidebar(self) -> None:
         self._nav_expanded = not self._nav_expanded
         target = NAV_EXPANDED_WIDTH if self._nav_expanded else NAV_COLLAPSED_WIDTH
-
-        # 更新导航项文字
-        for i in range(self._nav.count()):
-            item = self._nav.item(i)
-            if self._nav_expanded:
-                item.setText(self._page_titles[i])
-            else:
-                item.setText("")
+        self._sync_nav_items_for_sidebar_state()
 
         # 动画
         self._anim = QPropertyAnimation(self._nav, b"minimumWidth")
@@ -179,6 +233,19 @@ class NavigationWindow(QMainWindow):
 
         # 更新按钮箭头
         self._toggle_btn.setText("☰" if self._nav_expanded else "≫")
+
+    def _sync_nav_items_for_sidebar_state(self) -> None:
+        self._nav.setProperty("collapsed", not self._nav_expanded)
+        self._nav.style().unpolish(self._nav)
+        self._nav.style().polish(self._nav)
+        width = NAV_EXPANDED_WIDTH - 16 if self._nav_expanded else NAV_COLLAPSED_WIDTH - 16
+        for i in range(self._nav.count()):
+            item = self._nav.item(i)
+            title = self._page_titles[i] if i < len(self._page_titles) else item.data(Qt.UserRole) or ""
+            item.setText(title if self._nav_expanded else "")
+            item.setToolTip(str(title))
+            item.setSizeHint(QSize(width, 54))
+        self._nav.viewport().update()
 
     def _on_sidebar_anim_finished(self) -> None:
         """侧边栏收起/展开动画结束后，递归重排所有内部组件几何。
