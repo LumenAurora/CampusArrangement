@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QAction, QActionGroup, QFont
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QWidget
 
 from app.ui.theme import DARK, LIGHT, Palette, build_stylesheet
 
@@ -31,6 +31,18 @@ QListWidget#navList::item { padding: 8px 14px; }
 """
     app.setStyleSheet(build_stylesheet(p) + overrides)
     app.setFont(QFont("Helvetica Neue", 13))
+
+
+def refresh_dynamic_styles(app: QApplication | None) -> None:
+    """Refresh widgets with inline palette-derived styles after theme changes."""
+    if app is None:
+        return
+    for window in app.topLevelWidgets():
+        widgets = [window, *window.findChildren(QWidget)]
+        for widget in widgets:
+            refresh_theme = getattr(widget, "refresh_theme", None)
+            if callable(refresh_theme):
+                refresh_theme()
 
 
 def get_theme() -> str:
