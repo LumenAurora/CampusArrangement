@@ -198,13 +198,6 @@ def _to_user(record: dict) -> User:
                 notification_mode=NotificationMode(record.get("notification_mode", "in_app")))
 
 
-def _strip_secrets(record: dict | None) -> dict:
-    """剔除用户记录中的敏感字段（如 password_hash），返回可安全返回给前端的 dict。"""
-    if not record:
-        return {}
-    return {k: v for k, v in record.items() if k != "password_hash"}
-
-
 def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
     if not authorization:
         raise HTTPException(status_code=401, detail="缺少认证信息")

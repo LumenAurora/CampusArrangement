@@ -66,7 +66,11 @@ class ApiClient:
         return self._request("DELETE", path, json=json, require_auth=require_auth)
 
     def post_file(self, path: str, field_name: str, file_path: str, require_auth: bool = True) -> Any:
-        with open(file_path, "rb") as fh:
+        try:
+            fh = open(file_path, "rb")
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            raise ValueError(f"无法读取文件 {file_path}: {exc}") from exc
+        with fh:
             return self._request("POST", path, files={field_name: fh}, require_auth=require_auth)
 
     def _request(

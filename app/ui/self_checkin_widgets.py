@@ -229,25 +229,26 @@ class SelfCheckInPanel(QWidget):
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
         self._activity_selector.blockSignals(True)
-        self._activity_selector.clear()
-        # Show CLOSED/ARCHIVED + OPEN with checkin window configured
-        allowed_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value, ActivityStatus.OPEN.value}
-        for activity in activities:
-            status = activity.get("status", "draft")
-            if status not in allowed_statuses:
-                continue
-            if status == ActivityStatus.OPEN.value:
-                if not activity.get("checkin_start") and not activity.get("checkin_end"):
-                    continue  # OPEN without checkin window — skip
-            mode = activity.get("checkin_mode", "manual")
-            try:
-                mode_enum = CheckInMode(mode)
-            except ValueError:
-                continue
-            if mode_enum not in _SELF_CHECKIN_MODES:
-                continue
-            self._activity_selector.addItem(activity["name"], activity["id"])
-        self._activity_selector.blockSignals(False)
+        try:
+            self._activity_selector.clear()
+            allowed_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value, ActivityStatus.OPEN.value}
+            for activity in activities:
+                status = activity.get("status", "draft")
+                if status not in allowed_statuses:
+                    continue
+                if status == ActivityStatus.OPEN.value:
+                    if not activity.get("checkin_start") and not activity.get("checkin_end"):
+                        continue
+                mode = activity.get("checkin_mode", "manual")
+                try:
+                    mode_enum = CheckInMode(mode)
+                except ValueError:
+                    continue
+                if mode_enum not in _SELF_CHECKIN_MODES:
+                    continue
+                self._activity_selector.addItem(activity["name"], activity["id"])
+        finally:
+            self._activity_selector.blockSignals(False)
         self._on_activity_changed()
 
     # ------------------------------------------------------------------

@@ -57,11 +57,6 @@ class _StatCard(QFrame):
 
     def __init__(self, title: str, value: str, icon_symbol: str = "", parent=None) -> None:
         super().__init__(parent)
-        p = _p()
-        self.setStyleSheet(
-            f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
-            f"border-radius: 10px; }}"
-        )
         layout = QHBoxLayout()
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
@@ -70,11 +65,8 @@ class _StatCard(QFrame):
         text_area = QVBoxLayout()
         text_area.setSpacing(4)
         self._title = QLabel(title)
-        self._title.setStyleSheet(f"color: {p.text_tertiary}; font-size: 12px; font-weight: 500; border: none;")
         self._value = QLabel(value)
-        self._value.setStyleSheet(f"color: {p.text_primary}; font-size: 24px; font-weight: 700; border: none;")
         self._subtitle = QLabel("")
-        self._subtitle.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
         text_area.addWidget(self._title)
         text_area.addWidget(self._value)
         text_area.addWidget(self._subtitle)
@@ -82,13 +74,25 @@ class _StatCard(QFrame):
 
         # 右侧：图标区
         icon_lbl = QLabel(icon_symbol)
+        self._icon_lbl = icon_lbl
         icon_lbl.setAlignment(Qt.AlignCenter)
         icon_lbl.setFixedSize(40, 40)
-        icon_lbl.setStyleSheet(
-            f"background: {p.accent_soft}; border-radius: 8px; font-size: 18px; border: none;"
-        )
         layout.addWidget(icon_lbl)
         self.setLayout(layout)
+        self.refresh_theme()
+
+    def refresh_theme(self) -> None:
+        p = _p()
+        self.setStyleSheet(
+            f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
+            f"border-radius: 10px; }}"
+        )
+        self._title.setStyleSheet(f"color: {p.text_tertiary}; font-size: 12px; font-weight: 500; border: none;")
+        self._value.setStyleSheet(f"color: {p.text_primary}; font-size: 24px; font-weight: 700; border: none;")
+        self._subtitle.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
+        self._icon_lbl.setStyleSheet(
+            f"background: {p.accent_soft}; border-radius: 8px; font-size: 18px; border: none;"
+        )
 
     def set_value(self, text: str) -> None:
         self._value.setText(text)
@@ -137,8 +141,8 @@ class GroupAdminPanel(QWidget):
         layout.addLayout(stats_row)
 
         # ── 工具栏 ──────────────────────────────────────
-        toolbar = QFrame()
-        toolbar.setStyleSheet(
+        self._toolbar = QFrame()
+        self._toolbar.setStyleSheet(
             f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
             f"border-radius: 10px; padding: 10px 14px; }}"
         )
@@ -160,8 +164,8 @@ class GroupAdminPanel(QWidget):
         self._delete_btn.setEnabled(False)
         t_layout.addWidget(self._delete_btn)
         t_layout.addWidget(self._create_btn)
-        toolbar.setLayout(t_layout)
-        layout.addWidget(toolbar)
+        self._toolbar.setLayout(t_layout)
+        layout.addWidget(self._toolbar)
 
         # ── 创建小组（可折叠，默认隐藏） ──────────────────
         self._create_section = QWidget()
@@ -217,9 +221,9 @@ class GroupAdminPanel(QWidget):
         group_widget = QWidget()
         group_layout = QVBoxLayout()
         group_layout.setContentsMargins(0, 0, 0, 0)
-        group_label = QLabel("小组")
-        group_label.setStyleSheet(f"font-weight: 600; color: {p.text_secondary}; font-size: 12px; border: none;")
-        group_layout.addWidget(group_label)
+        self._group_label = QLabel("小组")
+        self._group_label.setStyleSheet(f"font-weight: 600; color: {p.text_secondary}; font-size: 12px; border: none;")
+        group_layout.addWidget(self._group_label)
         self._group_table = QTableWidget(0, 5)
         self._group_table.setHorizontalHeaderLabels(["ID", "名称", "描述", "成员", "创建者"])
         configure_table(self._group_table)
@@ -259,8 +263,8 @@ class GroupAdminPanel(QWidget):
         # 待审批标题 + 计数徽章
         pending_header_row = QHBoxLayout()
         pending_header_row.setSpacing(8)
-        pending_title = QLabel("待审批申请")
-        pending_title.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none;")
+        self._pending_title = QLabel("待审批申请")
+        self._pending_title.setStyleSheet(f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none;")
         self._pending_badge = QLabel("0")
         self._pending_badge.setFixedSize(22, 22)
         self._pending_badge.setAlignment(Qt.AlignCenter)
@@ -268,7 +272,7 @@ class GroupAdminPanel(QWidget):
             f"background: {p.accent_soft}; color: {p.accent}; border-radius: 11px; "
             f"font-size: 11px; font-weight: 700; border: none;"
         )
-        pending_header_row.addWidget(pending_title)
+        pending_header_row.addWidget(self._pending_title)
         pending_header_row.addWidget(self._pending_badge)
         pending_header_row.addStretch()
         right_layout.addLayout(pending_header_row)
@@ -287,8 +291,8 @@ class GroupAdminPanel(QWidget):
         right_layout.addWidget(self._pending_scroll, 1)
 
         # 快速操作卡片（参考 HTML 的 gradient card）
-        quick_card = QFrame()
-        quick_card.setStyleSheet(
+        self._quick_card = QFrame()
+        self._quick_card.setStyleSheet(
             f"QFrame {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
             f"stop:0 {p.accent}, stop:1 {p.accent_hover}); border-radius: 12px; }}"
         )
@@ -314,13 +318,40 @@ class GroupAdminPanel(QWidget):
             )
             btn.clicked.connect(lambda checked, a=action: self._quick_action(a))
             quick_layout.addWidget(btn)
-        quick_card.setLayout(quick_layout)
-        right_layout.addWidget(quick_card)
+        self._quick_card.setLayout(quick_layout)
+        right_layout.addWidget(self._quick_card)
         right_panel.setLayout(right_layout)
         content.addWidget(right_panel, 1)
 
         layout.addLayout(content, 1)
         self.setLayout(layout)
+
+    def refresh_theme(self) -> None:
+        p = _p()
+        for card in (self._stat_total, self._stat_members, self._stat_pending, self._stat_active):
+            card.refresh_theme()
+        self._toolbar.setStyleSheet(
+            f"QFrame {{ background: {p.bg_card}; border: 1px solid {p.border_light}; "
+            f"border-radius: 10px; padding: 10px 14px; }}"
+        )
+        self._group_label.setStyleSheet(
+            f"font-weight: 600; color: {p.text_secondary}; font-size: 12px; border: none;"
+        )
+        self._member_label.setStyleSheet(
+            f"color: {p.text_tertiary}; font-size: 12px; font-weight: 500; border: none;"
+        )
+        self._pending_title.setStyleSheet(
+            f"font-weight: 700; font-size: 13px; color: {p.text_primary}; border: none;"
+        )
+        self._pending_badge.setStyleSheet(
+            f"background: {p.accent_soft}; color: {p.accent}; border-radius: 11px; "
+            f"font-size: 11px; font-weight: 700; border: none;"
+        )
+        self._quick_card.setStyleSheet(
+            f"QFrame {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            f"stop:0 {p.accent}, stop:1 {p.accent_hover}); border-radius: 12px; }}"
+        )
+        self._load_pending()
 
     # ═══════════════════════════════════════════════════════════
     # 创建表单切换
@@ -793,7 +824,10 @@ class GroupAdminPanel(QWidget):
     def _delete_group(self) -> None:
         if not self._selected_group_id:
             return
-        reply = QMessageBox.question(self, "确认删除", "确定要删除此小组吗？所有成员将被移除。",
+        members = self._repo.list_members(self._selected_group_id)
+        approved_count = sum(1 for m in members if m.get("status") == "approved")
+        msg = f"确定要删除此小组吗？{approved_count} 名成员将被移除。"
+        reply = QMessageBox.question(self, "确认删除", msg,
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply != QMessageBox.Yes:
             return

@@ -35,9 +35,10 @@ def _p():
 class ActivityCard(QFrame):
     """单张活动卡片 — 对应 HTML 的 workflow-card。"""
 
-    def __init__(self, activity: dict, parent=None) -> None:
+    def __init__(self, activity: dict, reg_count: int = 0, parent=None) -> None:
         super().__init__(parent)
         self._activity = activity
+        self._reg_count = reg_count
         self._selected = False
         self._build()
 
@@ -119,7 +120,7 @@ class ActivityCard(QFrame):
         se = (a.get("signup_end") or "")[:16]
         time_lbl = QLabel(f"🗓 报名: {ss} → {se}" if ss else "🗓 未设置")
         time_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
-        cap_lbl = QLabel(f"👤 0 人已报名")
+        cap_lbl = QLabel(f"👤 {self._reg_count} 人已报名")
         cap_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
         bottom_row.addWidget(time_lbl)
         bottom_row.addWidget(cap_lbl)
@@ -344,10 +345,17 @@ class WorkflowTimeline(QWidget):
             ("end", "结束报名", "报名截止后自动结束", ["closed", "archived"]),
         ]
 
+        # 确定当前活动处于哪个步骤：从最后一个步骤向前找第一个 active 的
+        current_key = None
+        for key, _title, _desc, active_in in reversed(step_defs):
+            if s in active_in:
+                current_key = key
+                break
+
         for i, (key, title, desc, active_in) in enumerate(step_defs):
             is_active = s in active_in
-            is_first_active = s == active_in[0] if len(active_in) > 0 and is_active else (is_active and i == 0)
-            step = self._build_step(i + 1, key, title, desc, is_active, is_active and s == active_in[0] if len(active_in) > 0 else False, p)
+            is_current = is_active and key == current_key
+            step = self._build_step(i + 1, key, title, desc, is_active, is_current, p)
             self._steps_layout.addWidget(step)
 
         self._steps_layout.addStretch()
