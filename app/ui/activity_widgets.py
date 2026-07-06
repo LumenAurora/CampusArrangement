@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QFileDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -41,6 +42,8 @@ from app.domain.exceptions import PermissionDenied, ValidationError
 from app.domain.models import AllocationMode, ActivityType, CheckInMode, Role, SignupMode, SlotType, User
 from app.infrastructure.notifications import notify
 from app.infrastructure.repositories import ActivityRepository, RegistrationRepository
+from app.infrastructure.exporter import export_to_excel
+from app.infrastructure.repositories import UserRepository
 from app.ui.activity_guided import GuidedActivityPanel
 from app.ui.activity_workflow import ActivityCard, WorkflowTimeline
 from app.ui.style import FORM_LAYOUT_FLAT, FORM_LAYOUT_GUIDED, get_form_layout_mode, get_palette
@@ -319,6 +322,10 @@ class ActivityPanel(QWidget):
         create_btn.setMinimumHeight(40)
         create_btn.clicked.connect(self._open_create_dialog)
         tb_layout.addWidget(create_btn)
+        export_regs_btn = QPushButton("导出报名名单")
+        export_regs_btn.setObjectName("secondaryButton")
+        export_regs_btn.clicked.connect(self._export_registrations)
+        tb_layout.addWidget(export_regs_btn)
 
         tb_layout.addWidget(self._search_box, 1)
         tb_layout.addWidget(self._status_filter)
@@ -485,6 +492,51 @@ class ActivityPanel(QWidget):
             if self._activity_selector.itemData(i) == activity_id:
                 self._activity_selector.setCurrentIndex(i)
                 break
+
+    def _export_registrations(self) -> None:
+        activity_id, activity_name = self._get_selected_activity()
+        if not activity_id:
+            QMessageBox.information(self, "导出", "请先在活动列表中选择一个活动。")
+            return
+        reg_repo = RegistrationRepository()
+        try:
+            rows = reg_repo.list_by_activity(activity_id)
+        except Exception:
+            rows = []
+        if not rows:
+            QMessageBox.information(self, "导出", "该活动暂无报名记录。")
+            return
+
+        # Map users and slots to readable names
+        user_repo = UserRepository()
+        slots = self._activity_service.list_slots(activity_id)
+        slot_map = {s['id']: format_slot_name(s) for s in slots}
+
+        export_rows: list[dict] = []
+        for idx, r in enumerate(rows, start=1):
+            uid = r.get('user_id')
+            sid = r.get('slot_id')
+            user = user_repo.get_by_id(uid) if uid else None
+            export_rows.append({
+                '序号': idx,
+                '报名ID': r.get('id'),
+                '用户ID': uid,
+                '用户名': user.get('username') if user else uid,
+                '时段ID': sid,
+                '时段名称': slot_map.get(sid, sid),
+                '优先级': r.get('priority'),
+                '状态': r.get('status'),
+                '报名时间': format_datetime(r.get('created_at')),
+            })
+
+        filepath, _ = QFileDialog.getSaveFileName(self, "导出报名名单", f"{activity_name or activity_id}_registrations.xlsx", "Excel 文件 (*.xlsx)")
+        if not filepath:
+            return
+        try:
+            export_to_excel(export_rows, filepath)
+            QMessageBox.information(self, "导出成功", f"已导出 {len(export_rows)} 条报名记录到：\n{filepath}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出失败：{exc}")
 
     def _on_workflow_add_slot(self) -> None:
         """工作流中点击「添加时段」：弹出简洁的时段添加对话框。"""

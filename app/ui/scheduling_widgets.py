@@ -453,9 +453,42 @@ class SchedulingPanel(QWidget):
         if not path:
             return
         set_banner(self._message, "info", "")
+        # Build human-readable export rows (替换 id 为用户名/时段名，格式化时间)
         rows = self._schedule_repo.list_by_activity(activity_id)
         try:
-            export_to_excel(rows, path)
+            users = {user['id']: user['username'] for user in self._user_repo.list_all()}
+            slots = self._activity_service.list_slots(activity_id)
+            slot_map = {s['id']: format_slot_name(s) for s in slots}
+            slot_type_map = {}
+            for s in slots:
+                slot_type_raw = s.get('slot_type', 'time_slot')
+                slot_type_map[s['id']] = {
+                    'time_slot': '时段',
+                    'topic': '选题',
+                    'course': '课程',
+                    'custom_option': '自定义',
+                }.get(slot_type_raw, '其他')
+
+            export_rows: list[dict] = []
+            for idx, r in enumerate(rows, start=1):
+                created = r.get('created_at')
+                created_str = format_datetime(created) if created else ''
+                user_id = r.get('user_id')
+                slot_id = r.get('slot_id')
+                export_rows.append(
+                    {
+                        '序号': idx,
+                        '用户ID': user_id,
+                        '用户名': users.get(user_id, user_id),
+                        '时段ID': slot_id,
+                        '时段名称': slot_map.get(slot_id, slot_id),
+                        '选项类型': slot_type_map.get(slot_id, '-'),
+                        '地点': self._activity_info._location_label.text() if self._activity_info else '',
+                        '生成时间': created_str,
+                    }
+                )
+
+            export_to_excel(export_rows, path)
         except Exception as exc:
             set_banner(self._message, "error", f"导出失败：{exc}")
             return

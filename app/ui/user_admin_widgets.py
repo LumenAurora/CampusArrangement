@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QMessageBox,
 )
+from PySide6.QtWidgets import QFileDialog
 
 from app.application.user_service import UserService
 from app.domain.exceptions import PermissionDenied, ValidationError
@@ -28,6 +29,7 @@ from app.infrastructure.repositories import (
     ScheduleRepository,
     UserRepository,
 )
+from app.infrastructure.exporter import export_to_excel
 from app.ui.style import get_palette
 from app.ui.ui_utils import configure_table, format_datetime, make_page_header, set_banner, set_table_empty, StyledComboBox
 
@@ -143,7 +145,11 @@ class UserAdminPanel(QWidget):
         self._delete_btn = QPushButton("删除选中用户")
         self._delete_btn.setObjectName("dangerButton")
         self._delete_btn.clicked.connect(self._delete_user)
+        self._export_users_btn = QPushButton("导出用户列表")
+        self._export_users_btn.setObjectName("primaryButton")
+        self._export_users_btn.clicked.connect(self._export_users)
         delete_btn_layout.addWidget(self._delete_btn)
+        delete_btn_layout.addWidget(self._export_users_btn)
         list_layout.addLayout(delete_btn_layout)
 
         list_group.setLayout(list_layout)
@@ -308,6 +314,30 @@ class UserAdminPanel(QWidget):
             self._pending_table.setItem(row_index, 2, _make_user_status_item(user.get("status", UserStatus.PENDING_REVIEW.value)))
             self._pending_table.setItem(row_index, 3, QTableWidgetItem(format_datetime(user.get("created_at", ""))))
         self._pending_table.setColumnHidden(0, True)
+
+    def _export_users(self) -> None:
+        users = self._user_repo.list_all()
+        if not users:
+            QMessageBox.information(self, "导出", "没有可导出的用户数据。")
+            return
+        rows: list[dict] = []
+        for u in users:
+            rows.append({
+                "用户ID": u.get("id", ""),
+                "用户名": u.get("username", ""),
+                "角色": u.get("role", ""),
+                "状态": u.get("status", ""),
+                "创建时间": format_datetime(u.get("created_at", "")),
+            })
+
+        filepath, _ = QFileDialog.getSaveFileName(self, "导出用户列表", "users.xlsx", "Excel 文件 (*.xlsx)")
+        if not filepath:
+            return
+        try:
+            export_to_excel(rows, filepath)
+            QMessageBox.information(self, "导出成功", f"已导出 {len(rows)} 条用户记录到：\n{filepath}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出失败：{exc}")
 
     # ── 主刷新 ─────────────────────────────────────────────────
 
