@@ -312,6 +312,13 @@ class RegistrationPanel(QWidget):
         self._activity_selector.setMinimumWidth(220)
         self._slot_selector = StyledComboBox()
         self._slot_selector.setMinimumWidth(220)
+        # 志愿序号输入框（GREEDY 模式显示，数字越小越优先）
+        self._priority_spin = QSpinBox()
+        self._priority_spin.setRange(1, 99)
+        self._priority_spin.setValue(1)
+        self._priority_spin.setMinimumWidth(100)
+        self._priority_spin.setToolTip("数字越小越优先，1为第一志愿")
+        self._priority_hint = QLabel("志愿序号（越小越优先）")
         # 意愿点输入框（仅 POINTS 模式活动显示，默认隐藏）
         self._points_spin = QSpinBox()
         self._points_spin.setRange(0, MAX_POINTS)
@@ -364,6 +371,12 @@ class RegistrationPanel(QWidget):
         self._submit_btn.clicked.connect(self._register)
         action_row.addWidget(self._submit_btn)
         form.addRow(action_row)
+        # 志愿序号行（GREEDY 模式显示）
+        priority_row = QHBoxLayout()
+        priority_row.addWidget(self._priority_hint)
+        priority_row.addWidget(self._priority_spin)
+        priority_row.addStretch()
+        form.addRow(priority_row)
         # 意愿点输入行（仅 POINTS 模式活动显示，默认隐藏）
         points_row = QHBoxLayout()
         points_row.addWidget(self._points_hint)
@@ -378,9 +391,9 @@ class RegistrationPanel(QWidget):
         form_layout.addLayout(form)
         form_group.setLayout(form_layout)
 
-        # 「我的报名」表格：新增「意愿点」列，仅在 POINTS 模式活动下显示数值
-        self._my_reg_table = QTableWidget(0, 6)
-        self._my_reg_table.setHorizontalHeaderLabels(["报名ID", "活动", "时段", "状态", "意愿点", "操作"])
+        # 「我的报名」表格：包含志愿序号和意愿点列
+        self._my_reg_table = QTableWidget(0, 7)
+        self._my_reg_table.setHorizontalHeaderLabels(["报名ID", "活动", "时段", "志愿", "状态", "意愿点", "操作"])
         configure_table(self._my_reg_table)
 
         my_reg_group = QGroupBox("我的报名")
@@ -427,7 +440,7 @@ class RegistrationPanel(QWidget):
 
     def _on_my_reg_double_clicked(self, row: int, _col: int) -> None:
         data = {}
-        for col, key in enumerate(["报名ID", "活动", "时段", "状态", "意愿点"]):
+        for col, key in enumerate(["报名ID", "活动", "时段", "志愿", "状态", "意愿点"]):
             item = self._my_reg_table.item(row, col)
             data[key] = item.text() if item else "—"
         ItemDetailDialog("报名详情", data, self).exec()
@@ -476,7 +489,9 @@ class RegistrationPanel(QWidget):
         self._slot_grid._selected_slot_id = None
         if not activity_id:
             self._countdown_label.set_times("", "")
-            # 无活动时隐藏意愿点输入框
+            # 无活动时隐藏志愿序号和意愿点输入框
+            self._priority_spin.setVisible(False)
+            self._priority_hint.setVisible(False)
             self._points_spin.setVisible(False)
             self._points_hint.setVisible(False)
             return
@@ -508,7 +523,9 @@ class RegistrationPanel(QWidget):
         if not top_slots:
             set_table_empty(self._slot_table, 8, "暂无选项")
             self._slot_grid.set_slots([], signup_mode)
-            # 无选项时隐藏意愿点输入框
+            # 无选项时隐藏志愿序号和意愿点输入框
+            self._priority_spin.setVisible(False)
+            self._priority_hint.setVisible(False)
             self._points_spin.setVisible(False)
             self._points_hint.setVisible(False)
             return
@@ -567,8 +584,26 @@ class RegistrationPanel(QWidget):
 
         self._slot_table.setColumnHidden(0, True)
 
+        allocation_mode = AllocationMode(activity.get("allocation_mode", AllocationMode.GREEDY.value)) if activity else AllocationMode.GREEDY
+
+        # 志愿序号：GREEDY 模式显示，其他模式隐藏
+        if allocation_mode == AllocationMode.GREEDY:
+            self._priority_spin.setVisible(True)
+            self._priority_spin.setEnabled(can_signup)
+            self._priority_hint.setVisible(True)
+            # 显示已用志愿序号，提示用户选择未使用的序号
+            if can_signup:
+                used_priorities = self._get_used_priorities(activity_id)
+                if used_priorities:
+                    used_str = "、".join(str(p) for p in sorted(used_priorities))
+                    self._priority_hint.setText(f"志愿序号（已用: {used_str}）")
+                else:
+                    self._priority_hint.setText("志愿序号（越小越优先）")
+        else:
+            self._priority_spin.setVisible(False)
+            self._priority_hint.setVisible(False)
+
         # 意愿点模式：显示点数输入框并实时更新剩余点数
-        allocation_mode = activity.get("allocation_mode", AllocationMode.GREEDY.value) if activity else AllocationMode.GREEDY.value
         if allocation_mode == AllocationMode.POINTS.value:
             used = self._get_used_points(activity_id)
             remaining = max(0, MAX_POINTS - used)
@@ -597,7 +632,7 @@ class RegistrationPanel(QWidget):
         except Exception:
             regs = []
         if not regs:
-            set_table_empty(self._my_reg_table, 6, "暂无报名记录")
+            set_table_empty(self._my_reg_table, 7, "暂无报名记录")
             return
         raw_activities = self._activity_service.list_activities()
         activities = {a["id"]: a["name"] for a in raw_activities}
@@ -621,8 +656,13 @@ class RegistrationPanel(QWidget):
             slot = slots.get(reg["slot_id"])
             slot_text = format_slot_name(slot) if slot else "-"
             self._my_reg_table.setItem(row_index, 2, QTableWidgetItem(slot_text))
+            # 志愿序号列：显示 priority 值（越小越优先）
+            priority_text = str(reg.get("priority", 1))
+            priority_item = QTableWidgetItem(priority_text)
+            priority_item.setTextAlignment(Qt.AlignCenter)
+            self._my_reg_table.setItem(row_index, 3, priority_item)
             status_text = format_status(reg["status"])
-            self._my_reg_table.setItem(row_index, 3, QTableWidgetItem(status_text))
+            self._my_reg_table.setItem(row_index, 4, QTableWidgetItem(status_text))
             # 意愿点列：仅在 POINTS 模式活动下显示数值，否则显示 "-"
             alloc = activity_alloc_map.get(reg["activity_id"], AllocationMode.GREEDY.value)
             if alloc == AllocationMode.POINTS.value:
@@ -631,7 +671,7 @@ class RegistrationPanel(QWidget):
                 points_text = "-"
             points_item = QTableWidgetItem(points_text)
             points_item.setTextAlignment(Qt.AlignCenter)
-            self._my_reg_table.setItem(row_index, 4, points_item)
+            self._my_reg_table.setItem(row_index, 5, points_item)
             # 取消按钮：仅当报名状态允许且活动未关闭/未归档时才显示
             reg_cancellable = reg["status"] in (
                 RegistrationStatus.PENDING.value,
@@ -645,9 +685,9 @@ class RegistrationPanel(QWidget):
                 cancel_btn.setObjectName("dangerButton")
                 cancel_btn.setCursor(Qt.PointingHandCursor)
                 cancel_btn.clicked.connect(lambda checked, rid=reg["id"]: self._cancel_registration(rid))
-                self._my_reg_table.setCellWidget(row_index, 5, cancel_btn)
+                self._my_reg_table.setCellWidget(row_index, 6, cancel_btn)
             else:
-                self._my_reg_table.setItem(row_index, 5, QTableWidgetItem("-"))
+                self._my_reg_table.setItem(row_index, 6, QTableWidgetItem("-"))
         self._my_reg_table.setColumnHidden(0, True)
 
     def _register(self) -> None:
@@ -665,7 +705,7 @@ class RegistrationPanel(QWidget):
                 user_id=self._user.id,
                 activity_id=activity_id,
                 slot_id=slot_id,
-                priority=1,
+                priority=self._priority_spin.value(),
                 points=points,
             )
             set_banner(self._message, "success", "报名成功")
@@ -690,6 +730,18 @@ class RegistrationPanel(QWidget):
             return sum(int(r.get("points", 0)) for r in active)
         except Exception:
             return 0
+
+    def _get_used_priorities(self, activity_id: str) -> set[int]:
+        """获取用户在该活动已使用的志愿序号。"""
+        try:
+            regs = self._reg_repo.list_by_user_activity(self._user.id, activity_id)
+            active = [
+                r for r in regs
+                if r.get("status") not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)
+            ]
+            return {int(r.get("priority", 0)) for r in active}
+        except Exception:
+            return set()
 
     def _on_points_changed(self) -> None:
         """意愿点输入变化时实时更新剩余点数显示。"""
