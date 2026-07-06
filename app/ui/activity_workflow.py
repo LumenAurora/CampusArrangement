@@ -35,9 +35,10 @@ def _p():
 class ActivityCard(QFrame):
     """单张活动卡片 — 对应 HTML 的 workflow-card。"""
 
-    def __init__(self, activity: dict, parent=None) -> None:
+    def __init__(self, activity: dict, registrations_count: int = 0, parent=None) -> None:
         super().__init__(parent)
         self._activity = activity
+        self._registrations_count = registrations_count
         self._selected = False
         self._build()
 
@@ -119,7 +120,7 @@ class ActivityCard(QFrame):
         se = (a.get("signup_end") or "")[:16]
         time_lbl = QLabel(f"🗓 报名: {ss} → {se}" if ss else "🗓 未设置")
         time_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
-        cap_lbl = QLabel(f"👤 0 人已报名")
+        cap_lbl = QLabel(f"👤 {self._registrations_count} 人已报名")
         cap_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
         bottom_row.addWidget(time_lbl)
         bottom_row.addWidget(cap_lbl)

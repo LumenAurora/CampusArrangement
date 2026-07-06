@@ -1214,7 +1214,13 @@ class ActivityPanel(QWidget):
             return
 
         for i, a in enumerate(activities):
-            card = ActivityCard(a)
+            # 统计该活动下所有 slot 的 used_count 作为已报名人数显示
+            try:
+                slots = self._service.list_slots(a.get("id")) if hasattr(self, '_service') else []
+                registrations_count = sum(int(s.get("used_count", 0)) for s in slots)
+            except Exception:
+                registrations_count = 0
+            card = ActivityCard(a, registrations_count=registrations_count)
             card.mousePressEvent = lambda e, aid=a["id"]: self._on_card_clicked(aid)
             self._card_layout.insertWidget(i, card)
         self._card_layout.addStretch()
