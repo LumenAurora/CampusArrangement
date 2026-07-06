@@ -215,6 +215,10 @@ class ActivityService:
             slot = TimeSlot.create_topic(activity_id, name, capacity, metadata)
         elif slot_type == SlotType.COURSE:
             slot = TimeSlot.create_course(activity_id, name, capacity, metadata)
+        elif slot_type == SlotType.SEAT:
+            slot = TimeSlot.create_seat(activity_id, name, capacity, metadata)
+        elif slot_type == SlotType.CUSTOM_OPTION:
+            slot = TimeSlot.create_custom_option(activity_id, name, capacity, metadata)
         else:
             raise ValidationError(f"不支持的选项类型: {slot_type}")
         self._slot_repo.create(slot)
