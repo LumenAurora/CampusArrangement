@@ -250,6 +250,13 @@ class NavigationWindow(QMainWindow):
     def _apply_theme(app: QApplication, theme: str) -> None:
         set_theme(theme)
         apply_app_style(app, theme)
+        if app is None:
+            return
+        for window in app.topLevelWidgets():
+            for widget in [window, *window.findChildren(QWidget)]:
+                refresh_theme = getattr(widget, "refresh_theme", None)
+                if callable(refresh_theme):
+                    refresh_theme()
 
     @staticmethod
     def _apply_density(app: QApplication, density: str) -> None:
