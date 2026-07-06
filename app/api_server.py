@@ -794,7 +794,10 @@ def add_slot(
                 capacity=payload.capacity,
             )
         else:
-            slot_type = SlotType(payload.slot_type)
+            try:
+                slot_type = SlotType(payload.slot_type)
+            except ValueError as exc:
+                raise ValidationError(f"无效的选项类型: {payload.slot_type}") from exc
             if slot_type == SlotType.TIME_SLOT:
                 if not payload.start_time or not payload.end_time:
                     raise ValidationError("时段类型必须设置开始和结束时间")

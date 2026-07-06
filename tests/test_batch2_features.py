@@ -684,6 +684,22 @@ class RemoteRepoMethodTests(unittest.TestCase):
 
         self.assertEqual(err.exception.status_code, 403)
 
+    def test_invalid_slot_type_is_rejected_as_bad_request(self) -> None:
+        from fastapi import HTTPException
+
+        from app.api_server import SlotCreateRequest, add_slot
+
+        admin = User.create("admin", Role.SUPER_ADMIN)
+
+        with self.assertRaises(HTTPException) as err:
+            add_slot(
+                "act1",
+                SlotCreateRequest(slot_type="not_a_slot_type", name="坏选项", capacity=1),
+                current_user=admin,
+            )
+
+        self.assertEqual(err.exception.status_code, 400)
+
     def test_organizer_user_record_lists_only_include_owned_activities(self) -> None:
         from app.api_server import list_checkins, list_registrations, list_schedules
 
