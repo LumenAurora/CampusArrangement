@@ -467,26 +467,25 @@ class RegistrationPanel(QWidget):
                 if not a.get("group_id") or self._group_repo.is_member(a.get("group_id", ""), self._user.id)
             ]
         self._activity_selector.blockSignals(True)
-        try:
-            self._activity_selector.clear()
-            if not activities:
-                set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动或加入小组")
-                self._load_my_registrations()
-                return
-            open_activities = [a for a in activities if a.get("status") == ActivityStatus.OPEN.value]
-            other_activities = [a for a in activities if a.get("status") != ActivityStatus.OPEN.value]
-            for activity in open_activities:
-                at = activity.get("activity_type", "time_slot")
-                mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
-                status_text = format_activity_status(activity)
-                self._activity_selector.addItem(f"{activity['name']} [{mode_tag}] ({status_text})", activity["id"])
-            if other_activities:
-                self._activity_selector.insertSeparator(self._activity_selector.count())
-                for activity in other_activities:
-                    status_text = format_activity_status(activity)
-                    self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
-        finally:
+        self._activity_selector.clear()
+        if not activities:
+            set_table_empty(self._slot_table, 8, "暂无活动，请等待管理员创建活动或加入小组")
             self._activity_selector.blockSignals(False)
+            self._load_my_registrations()
+            return
+        open_activities = [a for a in activities if a.get("status") == ActivityStatus.OPEN.value]
+        other_activities = [a for a in activities if a.get("status") != ActivityStatus.OPEN.value]
+        for activity in open_activities:
+            at = activity.get("activity_type", "time_slot")
+            mode_tag = "时段" if at == ActivityType.TIME_SLOT.value else "选项"
+            status_text = format_activity_status(activity)
+            self._activity_selector.addItem(f"{activity['name']} [{mode_tag}] ({status_text})", activity["id"])
+        if other_activities:
+            self._activity_selector.insertSeparator(self._activity_selector.count())
+            for activity in other_activities:
+                status_text = format_activity_status(activity)
+                self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
+        self._activity_selector.blockSignals(False)
         self._load_slots()
         self._load_my_registrations()
 

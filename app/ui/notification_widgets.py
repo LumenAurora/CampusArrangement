@@ -217,12 +217,6 @@ class NotificationCenterPanel(QWidget):
         self._update_summary()
 
     def _delete_read(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self, "确认删除", "确定要删除所有已读通知吗？此操作不可撤销。",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            return
         count = self._repo.delete_read_by_user(self._user.id)
         if count > 0:
             self.refresh()

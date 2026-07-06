@@ -205,23 +205,23 @@ class CheckInPanel(QWidget):
     def refresh(self) -> None:
         activities = self._activity_service.list_activities()
         self._activity_selector.blockSignals(True)
-        try:
-            self._activity_selector.clear()
-            if not activities:
-                set_table_empty(self._table, 6, "暂无活动")
-                return
-            visible_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value, ActivityStatus.OPEN.value}
-            for activity in activities:
-                status = activity.get("status", "draft")
-                if status not in visible_statuses:
-                    continue
-                if status == ActivityStatus.OPEN.value:
-                    if not activity.get("checkin_start") and not activity.get("checkin_end"):
-                        continue
-                status_text = format_activity_status(activity)
-                self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
-        finally:
+        self._activity_selector.clear()
+        if not activities:
+            set_table_empty(self._table, 6, "暂无活动")
             self._activity_selector.blockSignals(False)
+            return
+        # Show CLOSED/ARCHIVED activities, plus OPEN ones with a configured checkin window
+        visible_statuses = {ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value, ActivityStatus.OPEN.value}
+        for activity in activities:
+            status = activity.get("status", "draft")
+            if status not in visible_statuses:
+                continue
+            if status == ActivityStatus.OPEN.value:
+                if not activity.get("checkin_start") and not activity.get("checkin_end"):
+                    continue  # OPEN without checkin window — skip
+            status_text = format_activity_status(activity)
+            self._activity_selector.addItem(f"{activity['name']} ({status_text})", activity["id"])
+        self._activity_selector.blockSignals(False)
         self._load_results()
 
     def _on_checkin_double_clicked(self, row: int, _col: int) -> None:
@@ -325,19 +325,10 @@ class CheckInPanel(QWidget):
         self._table.setColumnHidden(4, True)
         self._table.setColumnHidden(5, True)
 
-        # Auto-refresh for activities that support check-in (CLOSED, ARCHIVED, or OPEN with checkin window)
-        if activity:
-            status = activity.get("status", "")
-            has_checkin = (
-                status in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value)
-                or (status == ActivityStatus.OPEN.value
-                    and (activity.get("checkin_start") or activity.get("checkin_end")))
-            )
-            if has_checkin:
-                if not self._refresh_timer.isActive():
-                    self._refresh_timer.start(10000)
-            else:
-                self._refresh_timer.stop()
+        # Start auto-refresh for closed or archived activities (both allow check-in)
+        if activity and activity.get("status") in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value):
+            if not self._refresh_timer.isActive():
+                self._refresh_timer.start(10000)  # Refresh every 10 seconds
         else:
             self._refresh_timer.stop()
 
