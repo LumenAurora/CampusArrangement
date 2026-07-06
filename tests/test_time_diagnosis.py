@@ -67,10 +67,10 @@ class TimeDiagnosisTests(unittest.TestCase):
         )
 
         self._admin = self._user_service.register(
-            current_user=None, username="admin", password="pass123", role=Role.SUPER_ADMIN,
+            current_user=None, username="admin", password="pass", role=Role.SUPER_ADMIN,
         )
         self._user = self._user_service.register(
-            current_user=self._admin, username="testuser", password="pass123", role=Role.USER,
+            current_user=self._admin, username="testuser", password="pass", role=Role.USER,
         )
 
     # ── 辅助方法：模拟UI创建活动的完整链路 ───────────────────────

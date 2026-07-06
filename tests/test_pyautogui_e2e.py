@@ -88,7 +88,7 @@ def services(fresh_db):
     user_service = UserService(user_repo)
     # 预置 admin 账号（与 app.main.ensure_admin 行为一致）
     if not user_repo.get_by_username("admin"):
-        user_service.register(current_user=None, username="admin", password="admin12", role=Role.SUPER_ADMIN)
+        user_service.register(current_user=None, username="admin", password="admin", role=Role.SUPER_ADMIN)
 
     activity_repo = ActivityRepository()
     slot_repo = TimeSlotRepository()
@@ -150,7 +150,7 @@ def test_login_success_admin(qapp: QApplication, services) -> None:
     # 模拟键入用户名/密码
     QTest.keyClicks(dialog._username, "admin")
     QTest.keyClick(dialog._username, Qt.Key_Tab)
-    QTest.keyClicks(dialog._password, "admin12")
+    QTest.keyClicks(dialog._password, "admin")
     qapp.processEvents()
 
     # 点击登录按钮
@@ -216,7 +216,7 @@ def test_enter_key_submits_login(qapp: QApplication, services) -> None:
 
     QTest.keyClicks(dialog._username, "admin")
     QTest.keyClick(dialog._username, Qt.Key_Tab)
-    QTest.keyClicks(dialog._password, "admin12")
+    QTest.keyClicks(dialog._password, "admin")
     # 在密码框按回车
     QTest.keyClick(dialog._password, Qt.Key_Return)
     qapp.processEvents()
@@ -229,7 +229,7 @@ def test_enter_key_submits_login(qapp: QApplication, services) -> None:
 
 def _build_admin_window(services, qapp) -> AdminWindow:
     """复用 main.py 的组装逻辑，构造一个已登录的 AdminWindow。"""
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     window = AdminWindow(
         user=admin_user,
         activity_service=services.activity_service,
@@ -330,7 +330,7 @@ def test_admin_window_page_switching_via_shortcut(qapp: QApplication, services) 
 
 def test_admin_activity_page_repeated_refresh_and_selection(qapp: QApplication, services) -> None:
     """活动管理页重复刷新并重建行内按钮时，不应因选择信号重入而崩溃。"""
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     now = datetime.now(timezone.utc)
     activity = Activity.create(
         name="活动管理刷新回归",
@@ -385,7 +385,7 @@ def test_dashboard_renders_calendar_section_for_admin(qapp: QApplication, servic
 def test_dashboard_calendar_shows_activity_event(qapp: QApplication, services) -> None:
     """插入活动后，日历应收集到对应事件。"""
     # 创建一个活动 + 一个时段，触发日历事件收集
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     now = datetime.now(timezone.utc)
     activity = Activity.create(
         name="E2E测试活动",
@@ -423,7 +423,7 @@ def test_dashboard_calendar_shows_activity_event(qapp: QApplication, services) -
 
 def test_client_window_opens_after_full_signup_schedule_checkin_flow(qapp: QApplication, services) -> None:
     """主流程冒烟：报名、排班、签到后学生端各页仍能打开刷新。"""
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     student = services.user_service.register(admin_user, "student_smoke", "pass1234", Role.USER)
     now = datetime.now(timezone.utc)
     activity = Activity.create(
@@ -475,7 +475,7 @@ def test_client_window_opens_after_full_signup_schedule_checkin_flow(qapp: QAppl
 
 def test_client_notification_center_marks_message_read(qapp: QApplication, services) -> None:
     """通知中心冒烟：学生端显示通知页，点击未读消息后标记已读。"""
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     student = services.user_service.register(admin_user, "notice_student", "pass1234", Role.USER)
     created = notify_user(student.id, "排班结果", "你已被分配到志愿服务 A 时段")
     assert created is not None
@@ -504,7 +504,7 @@ def test_client_notification_center_marks_message_read(qapp: QApplication, servi
 
 def test_client_topbar_displays_student_role_label(qapp: QApplication, services) -> None:
     """学生端顶栏菜单应显示中文角色名，而不是底层枚举值 user。"""
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     student = services.user_service.register(admin_user, "role_label_student", "pass1234", Role.USER)
 
     window = _build_client_window(services, student, qapp)
@@ -518,7 +518,7 @@ def test_client_topbar_displays_student_role_label(qapp: QApplication, services)
 
 def test_admin_window_opens_after_full_signup_schedule_checkin_flow(qapp: QApplication, services) -> None:
     """主流程冒烟：有报名/排班/签到数据后管理端各页仍能打开刷新。"""
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     student = services.user_service.register(admin_user, "admin_smoke_student", "pass1234", Role.USER)
     now = datetime.now(timezone.utc)
     activity = Activity.create(
@@ -583,7 +583,7 @@ def test_duplicate_activity_atomicity(qapp: QApplication, services) -> None:
 
     回归 P2 修复：duplicate_activity 用 transaction() 包裹。
     """
-    admin_user = services.user_service.authenticate("admin", "admin12")
+    admin_user = services.user_service.authenticate("admin", "admin")
     now = datetime.now(timezone.utc)
     source = Activity.create(
         name="原子性回归-源活动",

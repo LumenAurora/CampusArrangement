@@ -36,6 +36,7 @@ from app.ui.style import (
     get_density,
     get_palette,
     get_theme,
+    refresh_dynamic_styles,
     set_density,
     set_theme,
 )
@@ -114,36 +115,10 @@ class NavigationWindow(QMainWindow):
 
         # 键盘快捷键：Ctrl+1 ~ Ctrl+5 切换页面
         self._page_shortcuts: list[QShortcut] = []
-        self._rebuild_page_shortcuts()
-
-    def _rebuild_page_shortcuts(self) -> None:
-        """根据当前页面数量重建 Ctrl+1..9 快捷键。"""
-        for s in self._page_shortcuts:
-            s.setEnabled(False)
-            s.deleteLater()
-        self._page_shortcuts.clear()
-        count = min(len(self._page_keys), 9)
-        for i in range(count):
+        for i in range(5):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
             shortcut.activated.connect(lambda checked=False, idx=i: self._switch_to_page(idx))
             self._page_shortcuts.append(shortcut)
-        # Ctrl+Tab / Ctrl+Shift+Tab for prev/next
-        next_sc = QShortcut(QKeySequence("Ctrl+Tab"), self)
-        next_sc.activated.connect(self._next_page)
-        self._page_shortcuts.append(next_sc)
-        prev_sc = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
-        prev_sc.activated.connect(self._prev_page)
-        self._page_shortcuts.append(prev_sc)
-
-    def _next_page(self) -> None:
-        current = self._nav.currentRow()
-        if current + 1 < self._nav.count():
-            self._nav.setCurrentRow(current + 1)
-
-    def _prev_page(self) -> None:
-        current = self._nav.currentRow()
-        if current > 0:
-            self._nav.setCurrentRow(current - 1)
 
     def closeEvent(self, event) -> None:
         """窗口关闭时保存几何信息。"""
@@ -172,7 +147,6 @@ class NavigationWindow(QMainWindow):
             self._pages.append(widget)
 
         self._apply_default_page()
-        self._rebuild_page_shortcuts()
 
     def _toggle_sidebar(self) -> None:
         self._nav_expanded = not self._nav_expanded
@@ -199,11 +173,8 @@ class NavigationWindow(QMainWindow):
         self._anim2.setEndValue(target)
         self._anim2.start()
 
-        # 动画结束后触发页面重排，先断开旧连接避免回调累积
-        try:
-            self._anim2.finished.disconnect(self._on_sidebar_anim_finished)
-        except (TypeError, RuntimeError):
-            pass
+        # 关键修复：动画结束后触发当前页面重排，让其内的表格
+        # 按 nav 收起后释放的宽度重新计算几何，避免横向溢出/滚动条残留。
         self._anim2.finished.connect(self._on_sidebar_anim_finished)
 
         # 更新按钮箭头
@@ -280,11 +251,13 @@ class NavigationWindow(QMainWindow):
     def _apply_theme(app: QApplication, theme: str) -> None:
         set_theme(theme)
         apply_app_style(app, theme)
+        refresh_dynamic_styles(app)
 
     @staticmethod
     def _apply_density(app: QApplication, density: str) -> None:
         set_density(density)
         apply_app_style(app, get_theme())
+        refresh_dynamic_styles(app)
 
     def _build_topbar(self, user: User) -> QFrame:
         bar = QFrame()

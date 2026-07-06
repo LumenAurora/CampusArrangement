@@ -35,10 +35,10 @@ def _p():
 class ActivityCard(QFrame):
     """单张活动卡片 — 对应 HTML 的 workflow-card。"""
 
-    def __init__(self, activity: dict, reg_count: int = 0, parent=None) -> None:
+    def __init__(self, activity: dict, registrations_count: int = 0, parent=None) -> None:
         super().__init__(parent)
         self._activity = activity
-        self._reg_count = reg_count
+        self._registrations_count = registrations_count
         self._selected = False
         self._build()
 
@@ -52,7 +52,12 @@ class ActivityCard(QFrame):
             f"ActivityCard[selected=true] {{ border: 2px solid {p.accent}; background: {p.accent_soft}; }}"
         )
 
-        layout = QVBoxLayout()
+        layout = self.layout()
+        if layout is not None:
+            self._clear_layout(layout)
+        else:
+            layout = QVBoxLayout()
+            self.setLayout(layout)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
@@ -120,14 +125,25 @@ class ActivityCard(QFrame):
         se = (a.get("signup_end") or "")[:16]
         time_lbl = QLabel(f"🗓 报名: {ss} → {se}" if ss else "🗓 未设置")
         time_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
-        cap_lbl = QLabel(f"👤 {self._reg_count} 人已报名")
+        cap_lbl = QLabel(f"👤 {self._registrations_count} 人已报名")
         cap_lbl.setStyleSheet(f"color: {p.text_tertiary}; font-size: 11px; border: none;")
         bottom_row.addWidget(time_lbl)
         bottom_row.addWidget(cap_lbl)
         bottom_row.addStretch()
         layout.addLayout(bottom_row)
 
-        self.setLayout(layout)
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                ActivityCard._clear_layout(item.layout())
+
+    def refresh_theme(self) -> None:
+        self._build()
+        self.set_selected(self._selected)
 
     def _build_workflow_bar(self, a: dict, p) -> QWidget:
         """构建工作流进度条 — 5 步骤：编辑→提交→发布→进行→结束。"""
@@ -217,7 +233,12 @@ class WorkflowTimeline(QWidget):
 
     def _build(self) -> None:
         p = _p()
-        layout = QVBoxLayout()
+        layout = self.layout()
+        if layout is not None:
+            self._clear_layout(layout)
+        else:
+            layout = QVBoxLayout()
+            self.setLayout(layout)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -260,7 +281,19 @@ class WorkflowTimeline(QWidget):
         self._config_card = self._build_config_card()
         layout.addWidget(self._config_card)
 
-        self.setLayout(layout)
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                WorkflowTimeline._clear_layout(item.layout())
+
+    def refresh_theme(self) -> None:
+        activity = self._activity
+        self._build()
+        self.set_activity(activity)
 
     def _build_config_card(self) -> QWidget:
         p = _p()
@@ -345,17 +378,10 @@ class WorkflowTimeline(QWidget):
             ("end", "结束报名", "报名截止后自动结束", ["closed", "archived"]),
         ]
 
-        # 确定当前活动处于哪个步骤：从最后一个步骤向前找第一个 active 的
-        current_key = None
-        for key, _title, _desc, active_in in reversed(step_defs):
-            if s in active_in:
-                current_key = key
-                break
-
         for i, (key, title, desc, active_in) in enumerate(step_defs):
             is_active = s in active_in
-            is_current = is_active and key == current_key
-            step = self._build_step(i + 1, key, title, desc, is_active, is_current, p)
+            is_first_active = s == active_in[0] if len(active_in) > 0 and is_active else (is_active and i == 0)
+            step = self._build_step(i + 1, key, title, desc, is_active, is_active and s == active_in[0] if len(active_in) > 0 else False, p)
             self._steps_layout.addWidget(step)
 
         self._steps_layout.addStretch()

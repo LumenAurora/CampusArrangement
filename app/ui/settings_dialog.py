@@ -40,6 +40,7 @@ from app.ui.style import (
     get_form_layout_mode,
     get_palette,
     get_theme,
+    refresh_dynamic_styles,
     set_default_page,
     set_density,
     set_form_layout_mode,
@@ -245,11 +246,10 @@ class SettingsDialog(QDialog):
                     message = f"服务端返回 {resp.status_code}"
             except requests.RequestException:
                 message = "无法连接"
-            # QSettings must be accessed from main thread; defer palette read to _update()
-
+            p = get_palette()
+            color = p.success_fg if ok else p.error_fg
+            # Update UI on main thread
             def _update() -> None:
-                p = get_palette()
-                color = p.success_fg if ok else p.error_fg
                 self._test_btn.setText(message)
                 self._test_btn.setStyleSheet(
                     f"color: {color}; font-weight: 600; border: 1px solid {color}; "
@@ -335,4 +335,5 @@ class SettingsDialog(QDialog):
             use_tls=self._email_tls.isChecked(),
         )
         apply_app_style(self._app, get_theme())
+        refresh_dynamic_styles(self._app)
         self.accept()

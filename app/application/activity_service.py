@@ -214,19 +214,7 @@ class ActivityService:
         elif slot_type == SlotType.TOPIC:
             slot = TimeSlot.create_topic(activity_id, name, capacity, metadata)
         elif slot_type == SlotType.COURSE:
-            slot = TimeSlot.create_course(activity_id, name, capacity,
-                                          course_info={"description": metadata} if metadata else {})
-        elif slot_type in (SlotType.CUSTOM_OPTION, SlotType.SEAT):
-            slot = TimeSlot(
-                id=str(uuid4()),
-                activity_id=activity_id,
-                slot_type=slot_type,
-                name=name,
-                capacity=capacity,
-                used_count=0,
-                parent_slot_id=None,
-                metadata=metadata,
-            )
+            slot = TimeSlot.create_course(activity_id, name, capacity, metadata)
         else:
             raise ValidationError(f"不支持的选项类型: {slot_type}")
         self._slot_repo.create(slot)
@@ -291,10 +279,10 @@ class ActivityService:
             raise PermissionDenied("无权操作该活动")
 
     def _check_reviewer(self, user: User, activity: dict) -> None:
-        """审核人不能是活动创建者（超级管理员除外）。"""
+        """审核人不能是活动创建者"""
         if user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER}:
             raise PermissionDenied("仅组织者或管理员可审核")
-        if user.role != Role.SUPER_ADMIN and activity["owner_id"] == user.id:
+        if activity["owner_id"] == user.id:
             raise PermissionDenied("不能审核自己创建的活动")
 
     def publish_activity(self, user: User, activity_id: str) -> None:

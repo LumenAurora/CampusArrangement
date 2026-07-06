@@ -18,8 +18,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from PySide6.QtCore import QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCalendarWidget,
@@ -485,19 +483,20 @@ class GuidedActivityPanel(QWidget):
         layout.setSpacing(12)
 
         # 日历可视化选择
-        cal_group = QGroupBox("📅 选择活动日期")
+        self._calendar_group = QGroupBox("📅 选择活动日期")
         cal_layout = QVBoxLayout()
         cal_layout.setContentsMargins(12, 12, 12, 12)
         self._calendar = QCalendarWidget()
         self._calendar.setGridVisible(True)
         self._calendar.setMinimumHeight(240)
         self._calendar.setMaximumHeight(280)
+        self._calendar.selectionChanged.connect(self._update_slot_preview)
         cal_layout.addWidget(self._calendar)
-        cal_group.setLayout(cal_layout)
-        layout.addWidget(cal_group)
+        self._calendar_group.setLayout(cal_layout)
+        layout.addWidget(self._calendar_group)
 
         # 快速添加时段
-        quick_group = QGroupBox("⏱ 添加时段")
+        self._quick_slot_group = QGroupBox("⏱ 添加时段")
         quick_layout = QVBoxLayout()
         quick_layout.setContentsMargins(12, 12, 12, 12)
         quick_layout.setSpacing(8)
@@ -506,24 +505,30 @@ class GuidedActivityPanel(QWidget):
         name_row.setSpacing(8)
         name_row.addWidget(QLabel("名称"))
         self._slot_name = QLineEdit()
-        self._slot_name.setPlaceholderText("如：上午场")
+        self._slot_name.setPlaceholderText("不填则自动生成，如：07月06日 09:00-10:00")
         self._slot_name.setMinimumHeight(36)
+        self._slot_name.textChanged.connect(self._update_slot_preview)
         name_row.addWidget(self._slot_name, 1)
 
+        self._slot_time_widget = QWidget()
         time_row = QHBoxLayout()
+        time_row.setContentsMargins(0, 0, 0, 0)
         time_row.setSpacing(8)
         self._slot_start = QDateTimeEdit(QDateTime.currentDateTime().addSecs(3600))
         self._slot_start.setCalendarPopup(True)
         self._slot_start.setDisplayFormat("HH:mm")
         self._slot_start.setMinimumHeight(36)
+        self._slot_start.timeChanged.connect(self._update_slot_preview)
         self._slot_end = QDateTimeEdit(QDateTime.currentDateTime().addSecs(7200))
         self._slot_end.setCalendarPopup(True)
         self._slot_end.setDisplayFormat("HH:mm")
         self._slot_end.setMinimumHeight(36)
+        self._slot_end.timeChanged.connect(self._update_slot_preview)
         time_row.addWidget(QLabel("起"))
         time_row.addWidget(self._slot_start, 1)
         time_row.addWidget(QLabel("迄"))
         time_row.addWidget(self._slot_end, 1)
+        self._slot_time_widget.setLayout(time_row)
 
         cap_row = QHBoxLayout()
         cap_row.setSpacing(8)
@@ -532,14 +537,29 @@ class GuidedActivityPanel(QWidget):
         self._slot_capacity.setRange(1, 10000)
         self._slot_capacity.setValue(30)
         self._slot_capacity.setMinimumHeight(36)
+        self._slot_capacity.valueChanged.connect(self._update_slot_preview)
         cap_row.addWidget(self._slot_capacity)
         cap_row.addStretch()
 
         quick_layout.addLayout(name_row)
-        quick_layout.addLayout(time_row)
+        quick_layout.addWidget(self._slot_time_widget)
         quick_layout.addLayout(cap_row)
-        quick_group.setLayout(quick_layout)
-        layout.addWidget(quick_group)
+
+        self._slot_err = QLabel("")
+        self._slot_err.setStyleSheet(f"color: {p.error_fg}; font-size: 11px; padding: 0 4px;")
+        self._slot_err.setVisible(False)
+        quick_layout.addWidget(self._slot_err)
+
+        self._slot_preview = QLabel("")
+        self._slot_preview.setWordWrap(True)
+        self._slot_preview.setStyleSheet(
+            f"color: {p.text_secondary}; font-size: 12px; padding: 8px 10px; "
+            f"background: {p.bg_input}; border-radius: 6px;"
+        )
+        quick_layout.addWidget(self._slot_preview)
+
+        self._quick_slot_group.setLayout(quick_layout)
+        layout.addWidget(self._quick_slot_group)
 
         # 提示
         hint = QLabel("💡 创建活动后可在「添加选项」中批量管理时段和岗位")
@@ -550,6 +570,7 @@ class GuidedActivityPanel(QWidget):
 
         layout.addStretch()
         page.setLayout(layout)
+        self._update_slot_preview()
         return page
 
     # ═══════════════════════════════════════════════════════════
@@ -624,6 +645,10 @@ class GuidedActivityPanel(QWidget):
         elif self._current_step == 2:
             if not self._validate_signup_time():
                 return
+        elif self._current_step == 3:
+            if not self._validate_slot_time():
+                set_banner(self._message, "error", "请修正时段时间")
+                return
 
         self._go_step(self._current_step + 1)
 
@@ -639,6 +664,16 @@ class GuidedActivityPanel(QWidget):
         self._location_label.setVisible(is_ts)
         self._location.setVisible(is_ts)
         self._checkin_section.setVisible(is_ts)
+        if hasattr(self, "_calendar_group"):
+            self._calendar_group.setVisible(is_ts)
+            self._slot_time_widget.setVisible(is_ts)
+            self._quick_slot_group.setTitle("⏱ 添加时段" if is_ts else "🧩 添加报名选项")
+            self._slot_name.setPlaceholderText(
+                "不填则自动生成，如：07月06日 09:00-10:00"
+                if is_ts else
+                "不填则自动创建：默认选项"
+            )
+            self._update_slot_preview()
 
     def _on_mode_changed(self, btn) -> None:
         mode = self._mode_cards.current_data()
@@ -653,6 +688,54 @@ class GuidedActivityPanel(QWidget):
         if not ok:
             self._signup_err.setText("⚠ 截止必须晚于开始")
         return ok
+
+    def _slot_datetimes(self) -> tuple[object, object]:
+        cal_date = self._calendar.selectedDate()
+        start = QDateTime(cal_date, self._slot_start.time()).toPython()
+        end = QDateTime(cal_date, self._slot_end.time()).toPython()
+        return start, end
+
+    def _default_slot_name(self) -> str:
+        if not self._is_time_slot():
+            return "默认选项"
+        start, end = self._slot_datetimes()
+        return f"{start.strftime('%m月%d日 %H:%M')}-{end.strftime('%H:%M')}"
+
+    def _validate_slot_time(self) -> bool:
+        if not self._is_time_slot():
+            if hasattr(self, "_slot_err"):
+                self._slot_err.setVisible(False)
+            return True
+        start, end = self._slot_datetimes()
+        ok = end > start
+        if hasattr(self, "_slot_err"):
+            self._slot_err.setVisible(not ok)
+            if not ok:
+                self._slot_err.setText("⚠ 时段结束时间必须晚于开始时间")
+        return ok
+
+    def _update_slot_preview(self, *args) -> None:
+        if not hasattr(self, "_slot_preview"):
+            return
+        p = get_palette()
+        if self._is_time_slot():
+            start, end = self._slot_datetimes()
+            slot_name = self._slot_name.text().strip() or self._default_slot_name()
+            self._slot_preview.setText(
+                f"将自动创建可报名时段：{slot_name} · "
+                f"{start.strftime('%Y-%m-%d %H:%M')} 至 {end.strftime('%H:%M')} · "
+                f"容量 {self._slot_capacity.value()} 人"
+            )
+        else:
+            option_name = self._slot_name.text().strip() or self._default_slot_name()
+            self._slot_preview.setText(
+                f"将自动创建可报名选项：{option_name} · 容量 {self._slot_capacity.value()} 人"
+            )
+        self._slot_preview.setStyleSheet(
+            f"color: {p.text_secondary}; font-size: 12px; padding: 8px 10px; "
+            f"background: {p.bg_input}; border-radius: 6px;"
+        )
+        self._validate_slot_time()
 
     def _on_checkin_sync_toggled(self, checked: bool) -> None:
         if checked:
@@ -780,10 +863,9 @@ class GuidedActivityPanel(QWidget):
             ck_text = self._checkin_mode.card_text(ck_idx) if ck_idx >= 0 else "手动"
             lines.append(f"✅ 签到：{ck_text}")
 
-        if self._slot_name.text().strip():
-            lines.append(f"⏱ 初始时段：{self._slot_name.text()} ({self._slot_capacity.value()}人)")
-        else:
-            lines.append("⏱ 创建后添加时段")
+        slot_label = "初始时段" if is_ts else "初始选项"
+        slot_name = self._slot_name.text().strip() or self._default_slot_name()
+        lines.append(f"⏱ {slot_label}：{slot_name} ({self._slot_capacity.value()}人)")
 
         self._summary.setText("<br>".join(lines))
 
@@ -801,6 +883,10 @@ class GuidedActivityPanel(QWidget):
         if not self._validate_signup_time():
             set_banner(self._message, "error", "请修正报名时间")
             self._go_step(2)
+            return
+        if not self._validate_slot_time():
+            set_banner(self._message, "error", "请修正时段时间")
+            self._go_step(3)
             return
 
         try:
@@ -849,21 +935,11 @@ class GuidedActivityPanel(QWidget):
                 allow_multiple_slots=self._allow_multiple_slots.isChecked(),
             )
 
-            # 自动创建初始时段
-            slot_name = self._slot_name.text().strip()
-            if slot_name and is_ts:
-                try:
-                    # 合并日历日期 + 时间
-                    cal_date = self._calendar.selectedDate()
-                    # Use naive datetime (no tzinfo) for consistency with the rest of the app
-                    slot_start = datetime(
-                        cal_date.year(), cal_date.month(), cal_date.day(),
-                        self._slot_start.time().hour(), self._slot_start.time().minute(),
-                    )
-                    slot_end = datetime(
-                        cal_date.year(), cal_date.month(), cal_date.day(),
-                        self._slot_end.time().hour(), self._slot_end.time().minute(),
-                    )
+            # 自动创建初始时段/选项，避免活动创建后没有可报名项目。
+            slot_name = self._slot_name.text().strip() or self._default_slot_name()
+            try:
+                if is_ts:
+                    slot_start, slot_end = self._slot_datetimes()
                     self._service.add_slot(
                         user=self._user,
                         activity_id=activity.id,
@@ -872,12 +948,20 @@ class GuidedActivityPanel(QWidget):
                         end_time=slot_end,
                         capacity=self._slot_capacity.value(),
                     )
-                except (ValidationError, PermissionDenied):
-                    import logging as _log
-                    _log.getLogger(__name__).warning("自动添加初始时段失败，活动已创建", exc_info=True)
-                except Exception:
-                    import logging as _log
-                    _log.getLogger(__name__).exception("自动添加初始时段异常")
+                else:
+                    self._service.add_slot_generic(
+                        user=self._user,
+                        activity_id=activity.id,
+                        slot_type=SlotType.CUSTOM_OPTION,
+                        name=slot_name,
+                        capacity=self._slot_capacity.value(),
+                    )
+            except (ValidationError, PermissionDenied):
+                import logging as _log
+                _log.getLogger(__name__).warning("自动添加初始报名项目失败，活动已创建", exc_info=True)
+            except Exception:
+                import logging as _log
+                _log.getLogger(__name__).exception("自动添加初始报名项目异常")
 
             set_banner(self._message, "success", f"活动「{name}」创建成功")
             if hasattr(self, "_on_created") and callable(self._on_created):
@@ -889,6 +973,8 @@ class GuidedActivityPanel(QWidget):
             self._details.clear()
             self._location.clear()
             self._slot_name.clear()
+            self._slot_capacity.setValue(30)
+            self._update_slot_preview()
             self._go_step(0)
 
         except (PermissionDenied, ValidationError) as exc:

@@ -198,6 +198,13 @@ def _to_user(record: dict) -> User:
                 notification_mode=NotificationMode(record.get("notification_mode", "in_app")))
 
 
+def _strip_secrets(record: dict | None) -> dict:
+    """剔除用户记录中的敏感字段（如 password_hash），返回可安全返回给前端的 dict。"""
+    if not record:
+        return {}
+    return {k: v for k, v in record.items() if k != "password_hash"}
+
+
 def _get_current_user(authorization: Optional[str] = Header(None)) -> User:
     if not authorization:
         raise HTTPException(status_code=401, detail="缺少认证信息")
@@ -241,6 +248,20 @@ def _check_activity_access(user: User, activity_id: str) -> dict:
     if user.role != Role.SUPER_ADMIN and activity.get("owner_id") != user.id:
         raise HTTPException(status_code=403, detail="无权访问该活动的数据")
     return activity
+
+
+def _filter_records_by_activity_access(user: User, records: list[dict]) -> list[dict]:
+    """Filter user-scoped records so organizers only see records for owned activities."""
+    if user.role == Role.SUPER_ADMIN:
+        return records
+    if user.role != Role.ORGANIZER:
+        return records
+    visible: list[dict] = []
+    for record in records:
+        activity = activity_repo.get(str(record.get("activity_id", "")))
+        if activity and activity.get("owner_id") == user.id:
+            visible.append(record)
+    return visible
 
 
 def _handle_domain_error(exc: Exception) -> None:
@@ -773,7 +794,10 @@ def add_slot(
                 capacity=payload.capacity,
             )
         else:
-            slot_type = SlotType(payload.slot_type)
+            try:
+                slot_type = SlotType(payload.slot_type)
+            except ValueError as exc:
+                raise ValidationError(f"无效的选项类型: {payload.slot_type}") from exc
             if slot_type == SlotType.TIME_SLOT:
                 if not payload.start_time or not payload.end_time:
                     raise ValidationError("时段类型必须设置开始和结束时间")
@@ -831,7 +855,7 @@ def list_registrations(
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
-        return reg_repo.list_by_user(user_id)
+        return _filter_records_by_activity_access(current_user, reg_repo.list_by_user(user_id))
     return []
 
 
@@ -909,7 +933,7 @@ def list_schedules(
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
-        return schedule_repo.list_by_user(user_id)
+        return _filter_records_by_activity_access(current_user, schedule_repo.list_by_user(user_id))
     raise HTTPException(status_code=400, detail="必须提供 activity_id 或 user_id")
 
 @app.get("/checkins")
@@ -924,7 +948,7 @@ def list_checkins(
     if user_id:
         if current_user.role not in {Role.SUPER_ADMIN, Role.ORGANIZER} and current_user.id != user_id:
             raise HTTPException(status_code=403, detail="权限不足")
-        return checkin_repo.list_by_user(user_id)
+        return _filter_records_by_activity_access(current_user, checkin_repo.list_by_user(user_id))
     return []
 
 
