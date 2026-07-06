@@ -793,7 +793,10 @@ class GroupAdminPanel(QWidget):
     def _delete_group(self) -> None:
         if not self._selected_group_id:
             return
-        reply = QMessageBox.question(self, "确认删除", "确定要删除此小组吗？所有成员将被移除。",
+        members = self._repo.list_members(self._selected_group_id)
+        approved_count = sum(1 for m in members if m.get("status") == "approved")
+        msg = f"确定要删除此小组吗？{approved_count} 名成员将被移除。"
+        reply = QMessageBox.question(self, "确认删除", msg,
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply != QMessageBox.Yes:
             return

@@ -325,10 +325,19 @@ class CheckInPanel(QWidget):
         self._table.setColumnHidden(4, True)
         self._table.setColumnHidden(5, True)
 
-        # Start auto-refresh for closed or archived activities (both allow check-in)
-        if activity and activity.get("status") in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value):
-            if not self._refresh_timer.isActive():
-                self._refresh_timer.start(10000)  # Refresh every 10 seconds
+        # Auto-refresh for activities that support check-in (CLOSED, ARCHIVED, or OPEN with checkin window)
+        if activity:
+            status = activity.get("status", "")
+            has_checkin = (
+                status in (ActivityStatus.CLOSED.value, ActivityStatus.ARCHIVED.value)
+                or (status == ActivityStatus.OPEN.value
+                    and (activity.get("checkin_start") or activity.get("checkin_end")))
+            )
+            if has_checkin:
+                if not self._refresh_timer.isActive():
+                    self._refresh_timer.start(10000)
+            else:
+                self._refresh_timer.stop()
         else:
             self._refresh_timer.stop()
 

@@ -20,8 +20,10 @@ class UserService:
 
         if not username or not username.strip():
             raise ValidationError("用户名不能为空")
-        if not password or len(password) < 4:
-            raise ValidationError("密码长度不能少于4位")
+        if len(username.strip()) > 50:
+            raise ValidationError("用户名不能超过50个字符")
+        if not password or len(password) < 6:
+            raise ValidationError("密码长度不能少于6位")
         if self._user_repo.get_by_username(username.strip()):
             raise ValidationError("用户名已存在")
         user = User.create(username=username.strip(), role=role)
@@ -32,8 +34,10 @@ class UserService:
         """用户自助注册，注册后状态为待审批"""
         if not username or not username.strip():
             raise ValidationError("用户名不能为空")
-        if not password or len(password) < 4:
-            raise ValidationError("密码长度不能少于4位")
+        if len(username.strip()) > 50:
+            raise ValidationError("用户名不能超过50个字符")
+        if not password or len(password) < 6:
+            raise ValidationError("密码长度不能少于6位")
         if self._user_repo.get_by_username(username.strip()):
             raise ValidationError("用户名已存在")
         user = User.create(username=username.strip(), role=Role.USER, status=UserStatus.PENDING_REVIEW)

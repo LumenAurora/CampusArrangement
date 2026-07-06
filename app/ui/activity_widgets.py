@@ -115,13 +115,14 @@ class _CapacityBar(QWidget):
 
 
 class ActivityPanel(QWidget):
-    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None, group_repo=None) -> None:
+    def __init__(self, activity_service: ActivityService, user: User, scheduling_service: SchedulingService | None = None, activity_repo: ActivityRepository | None = None, group_repo=None, reg_repo: RegistrationRepository | None = None) -> None:
         super().__init__()
         self._service = activity_service
         self._user = user
         self._scheduling_service = scheduling_service
         self._activity_repo = activity_repo
         self._group_repo = group_repo
+        self._reg_repo = reg_repo
 
         self._guided_panel = None  # 仅在向导模式下初始化
 
@@ -1214,7 +1215,14 @@ class ActivityPanel(QWidget):
             return
 
         for i, a in enumerate(activities):
-            card = ActivityCard(a)
+            reg_count = 0
+            if self._reg_repo:
+                try:
+                    regs = self._reg_repo.list_by_activity(a["id"])
+                    reg_count = sum(1 for r in regs if r.get("status") not in ("cancelled", "not_assigned"))
+                except Exception:
+                    pass
+            card = ActivityCard(a, reg_count=reg_count)
             card.mousePressEvent = lambda e, aid=a["id"]: self._on_card_clicked(aid)
             self._card_layout.insertWidget(i, card)
         self._card_layout.addStretch()
