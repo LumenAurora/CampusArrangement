@@ -246,6 +246,38 @@ class TimeSlot:
         )
 
     @staticmethod
+    def create_seat(activity_id: str, name: str, capacity: int, description: str = "") -> "TimeSlot":
+        """创建座位类型的报名选项"""
+        import json
+        metadata = json.dumps({"description": description})
+        return TimeSlot(
+            id=str(uuid4()),
+            activity_id=activity_id,
+            slot_type=SlotType.SEAT,
+            name=name,
+            capacity=capacity,
+            used_count=0,
+            parent_slot_id=None,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def create_custom_option(activity_id: str, name: str, capacity: int, description: str = "") -> "TimeSlot":
+        """创建自定义类型的报名选项"""
+        import json
+        metadata = json.dumps({"description": description})
+        return TimeSlot(
+            id=str(uuid4()),
+            activity_id=activity_id,
+            slot_type=SlotType.CUSTOM_OPTION,
+            name=name,
+            capacity=capacity,
+            used_count=0,
+            parent_slot_id=None,
+            metadata=metadata,
+        )
+
+    @staticmethod
     def create_position(activity_id: str, parent_slot_id: str, name: str, capacity: int) -> "TimeSlot":
         """创建时段下的子岗位（如：接待员、引导员等）"""
         return TimeSlot(

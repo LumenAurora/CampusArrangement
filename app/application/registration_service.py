@@ -73,13 +73,6 @@ class RegistrationService:
             active_slot = [r for r in existing_slot if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
             if active_slot:
                 raise ValidationError("您已报名该时段，请勿重复报名")
-            # GREEDY 模式：兼报时校验志愿序号不可重复（事务外预检）
-            if allocation_mode == AllocationMode.GREEDY:
-                existing_all = self._reg_repo.list_by_user_activity(user_id, activity_id)
-                active_all = [r for r in existing_all if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
-                used_priorities = {r.get("priority") for r in active_all}
-                if priority in used_priorities:
-                    raise ValidationError(f"志愿序号 {priority} 已被使用，同一活动内每个时段需使用不同的志愿序号")
         else:
             # 单报模式：检查同一 activity 是否已有 active 报名
             existing = self._reg_repo.list_by_user_activity(user_id, activity_id)
@@ -97,9 +90,6 @@ class RegistrationService:
                 # BEGIN IMMEDIATE 已串行化写，重新读取保证一致性
                 if allocation_mode == AllocationMode.POINTS:
                     self._validate_points_total_in_txn(conn, user_id, activity_id, points)
-                # 事务内重新校验志愿序号唯一性
-                if allocation_mode == AllocationMode.GREEDY and allow_multiple:
-                    self._validate_priority_unique_in_txn(conn, user_id, activity_id, priority)
                 # 先取消NOT_ASSIGNED记录
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
@@ -117,9 +107,6 @@ class RegistrationService:
                 # 事务内重新校验意愿点总数，防止 TOCTOU 竞态
                 if allocation_mode == AllocationMode.POINTS:
                     self._validate_points_total_in_txn(conn, user_id, activity_id, points)
-                # 事务内重新校验志愿序号唯一性
-                if allocation_mode == AllocationMode.GREEDY and allow_multiple:
-                    self._validate_priority_unique_in_txn(conn, user_id, activity_id, priority)
                 for rid in not_assigned_ids:
                     self._reg_repo.update_status(rid, RegistrationStatus.CANCELLED, conn=conn)
                 self._reg_repo.create(registration, conn=conn)
@@ -148,14 +135,6 @@ class RegistrationService:
         total_used = sum(int(r.get("points", 0)) for r in txn_active) + points
         if total_used > MAX_POINTS:
             raise ValidationError(f"意愿点总数超过上限 {MAX_POINTS}（已用 {total_used - points}，本次 {points}）")
-
-    def _validate_priority_unique_in_txn(self, conn, user_id: str, activity_id: str, priority: int) -> None:
-        """事务内校验同一活动内志愿序号不可重复。"""
-        txn_existing = self._reg_repo.list_by_user_activity(user_id, activity_id, conn=conn)
-        txn_active = [r for r in txn_existing if r["status"] not in (RegistrationStatus.CANCELLED.value, RegistrationStatus.NOT_ASSIGNED.value)]
-        used_priorities = {r.get("priority") for r in txn_active}
-        if priority in used_priorities:
-            raise ValidationError(f"志愿序号 {priority} 已被使用，同一活动内每个时段需使用不同的志愿序号")
 
     def cancel(self, user_id: str, registration_id: str) -> None:
         reg = self._reg_repo.get(registration_id)

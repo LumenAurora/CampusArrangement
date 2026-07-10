@@ -8,13 +8,18 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import PySide6
 import pytest
 
 _DB_PATH = os.path.join(tempfile.gettempdir(), "campus_full_workflow_test.db")
 if os.path.exists(_DB_PATH):
     os.remove(_DB_PATH)
 os.environ["CAMPUS_DB_PATH"] = _DB_PATH
+_QT_PLUGIN_PATH = Path(PySide6.__file__).resolve().parent / "Qt" / "plugins"
+if _QT_PLUGIN_PATH.exists():
+    os.environ.setdefault("QT_PLUGIN_PATH", str(_QT_PLUGIN_PATH))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt, QTimer
@@ -1306,7 +1311,7 @@ def test_wf30_settings_dialog(qapp, services):
     from app.ui.style import get_theme, get_form_layout_mode, FORM_LAYOUT_FLAT, FORM_LAYOUT_GUIDED
 
     # SettingsDialog needs pages list; use minimal mock
-    pages = [("dummy", "Dummy", QWidget(), None)]
+    pages = [("dummy", "Dummy")]
 
     dialog = SettingsDialog(qapp, pages)
     dialog.show()

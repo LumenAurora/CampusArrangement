@@ -503,6 +503,7 @@ class RegistrationPanel(QWidget):
         is_open = activity.get("status") == ActivityStatus.OPEN.value if activity else False
         # 计算是否在报名时间窗口内
         can_signup = False
+        blocked_reason = ""
         if is_open:
             now = datetime.now(timezone.utc)
             signup_start = activity.get("signup_start") if activity else None
@@ -512,10 +513,12 @@ class RegistrationPanel(QWidget):
                 start = to_utc(signup_start)
                 if now < start:
                     can_signup = False
+                    blocked_reason = "报名尚未开始"
             if signup_end:
                 end = to_utc(signup_end)
                 if now > end:
                     can_signup = False
+                    blocked_reason = "报名已截止"
         slots = self._activity_service.list_slots(activity_id)
 
         # 过滤掉子岗位（用户报名选择父时段，排班系统分配岗位）
@@ -614,6 +617,8 @@ class RegistrationPanel(QWidget):
         else:
             self._slot_selector.setEnabled(can_signup)
             self._submit_btn.setEnabled(can_signup)
+        if blocked_reason:
+            set_banner(self._message, "error", blocked_reason)
 
     def _load_my_registrations(self) -> None:
         try:

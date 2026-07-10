@@ -18,25 +18,31 @@ class UserService:
             if current_user.role == Role.ORGANIZER and role != Role.USER:
                 raise PermissionDenied("组织者只能创建普通用户")
 
-        if not username or not username.strip():
+        username = username.strip() if username else ""
+        if not username:
             raise ValidationError("用户名不能为空")
+        if len(username) > 50:
+            raise ValidationError("用户名长度不能超过50位")
         if not password or len(password) < 4:
             raise ValidationError("密码长度不能少于4位")
-        if self._user_repo.get_by_username(username.strip()):
+        if self._user_repo.get_by_username(username):
             raise ValidationError("用户名已存在")
-        user = User.create(username=username.strip(), role=role)
+        user = User.create(username=username, role=role)
         self._user_repo.create(user, hash_password(password))
         return user
 
     def self_register(self, username: str, password: str) -> User:
         """用户自助注册，注册后状态为待审批"""
-        if not username or not username.strip():
+        username = username.strip() if username else ""
+        if not username:
             raise ValidationError("用户名不能为空")
+        if len(username) > 50:
+            raise ValidationError("用户名长度不能超过50位")
         if not password or len(password) < 4:
             raise ValidationError("密码长度不能少于4位")
-        if self._user_repo.get_by_username(username.strip()):
+        if self._user_repo.get_by_username(username):
             raise ValidationError("用户名已存在")
-        user = User.create(username=username.strip(), role=Role.USER, status=UserStatus.PENDING_REVIEW)
+        user = User.create(username=username, role=Role.USER, status=UserStatus.PENDING_REVIEW)
         self._user_repo.create(user, hash_password(password))
         return user
 
